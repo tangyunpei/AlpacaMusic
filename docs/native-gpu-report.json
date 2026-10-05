@@ -1,0 +1,10 @@
+{
+  "cpuEncodeP95MS" : 0.21895833560847677,
+  "device" : "Apple M5 Max",
+  "elapsedSeconds" : 59.994583750001766,
+  "frames" : 3600,
+  "gpuMaxMS" : 2.9208749983808957,
+  "gpuP95MS" : 1.8660833338799421,
+  "mode" : "offscreen Metal, 1920x1080, 160x160 points, glow on",
+  "scope" : "Local offscreen GPU budget only; not a three-minute displayed-frame or reference-hardware acceptance claim."
+}

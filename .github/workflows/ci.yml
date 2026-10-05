@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-script-tests:
+    name: Build script tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test version and publication logic
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+  swift-tests:
+    name: Swift tests and SDK audit
+    runs-on: xcode-27
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check required Swift and SDK versions
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+          xcrun --sdk macosx --show-sdk-version
+          python3 - <<'PY'
+          import re
+          import subprocess
+          swift = subprocess.check_output(["xcrun", "swift", "--version"], text=True)
+          match = re.search(r"Swift version (\d+)\.(\d+)", swift)
+          if match is None or tuple(map(int, match.groups())) < (6, 4):
+              raise SystemExit("CI requires Swift 6.4 or newer.")
+          sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-version"], text=True).strip()
+          if int(sdk.split(".")[0]) < 27:
+              raise SystemExit("CI requires macOS SDK 27 or newer.")
+          PY
+      - name: Run Swift tests without account credentials
+        run: swift test
+      - name: Audit APIs against the current SDK
+        run: ./scripts/check-sdk-apis.sh
+
