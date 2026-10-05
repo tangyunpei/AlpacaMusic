@@ -9,17 +9,51 @@ private actor NativeFixtureProvider: DirectMusicProvider {
     private var pendingPartial: CheckedContinuation<Void, Never>?
     private var shouldReturnPartial = false
     private(set) var partialReadStarted = false
+    private var pauseProfile = false
+    private var pauseSearch = false
+    private var pendingProfile: CheckedContinuation<Void, Never>?
+    private var pendingSearch: CheckedContinuation<Void, Never>?
+    private var profilePauseObserver: CheckedContinuation<Void, Never>?
+    private var searchPauseObserver: CheckedContinuation<Void, Never>?
+    private(set) var pausedSearchCookies: [MusicSessionCookie] = []
     func delay(_ value: Bool) { delayed = value }
     func preparePartial() { shouldReturnPartial = true; partialReadStarted = false }
     func releasePartial() { pendingPartial?.resume(); pendingPartial = nil }
+    func prepareAccountSwitch() { pauseProfile = true; pauseSearch = true; pausedSearchCookies = [] }
+    func waitForProfilePause() async {
+        if pendingProfile != nil { return }
+        await withCheckedContinuation { profilePauseObserver = $0 }
+    }
+    func waitForSearchPause() async {
+        if pendingSearch != nil { return }
+        await withCheckedContinuation { searchPauseObserver = $0 }
+    }
+    func releaseProfile() { pendingProfile?.resume(); pendingProfile = nil }
+    func releaseSearch() { pendingSearch?.resume(); pendingSearch = nil }
     private func wait() async { if delayed { try? await Task.sleep(for: .milliseconds(100)) } }
     func profile(cookies: [MusicSessionCookie]) async throws -> MusicAccountProfile {
         profileCalls += 1
+        if pauseProfile {
+            pauseProfile = false
+            await withCheckedContinuation { continuation in
+                pendingProfile = continuation
+                profilePauseObserver?.resume(); profilePauseObserver = nil
+            }
+        }
         await wait()
         guard let value = cookies.first(where: { $0.name == "MUSIC_U" }), ["fixture-session", "fixture-other"].contains(value.value) else { throw MusicError.message("登录失效") }
         return .init(id: value.value == "fixture-session" ? "42" : "84", displayName: "Fixture")
     }
-    func search(_ query: String, cookies: [MusicSessionCookie]) async throws -> [Track] { await wait(); return [nativeTrack("1")] }
+    func search(_ query: String, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        if pauseSearch {
+            pauseSearch = false; pausedSearchCookies = cookies
+            await withCheckedContinuation { continuation in
+                pendingSearch = continuation
+                searchPauseObserver?.resume(); searchPauseObserver = nil
+            }
+        }
+        await wait(); return [nativeTrack("1")]
+    }
     func playlists(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicPlaylist] { [.init(id: "p1", name: "歌单", trackCount: 1, source: .netease)] }
     func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie]) async throws -> [Track] {
         if shouldReturnPartial {
@@ -166,11 +200,17 @@ private actor RestoreCredentialStore: MusicCredentialStoring {
         let provider = NativeFixtureProvider()
         let client = NativeMusicClient(providers: [provider], credentials: MemoryMusicCredentialStore())
         _ = try await client.connect(.netease, cookies: nativeCookies)
-        await provider.delay(true)
+        // Gate both provider calls so CPU load cannot reorder authentication and search.
+        await provider.prepareAccountSwitch()
         let replacement = Task { try await client.connect(.netease, cookies: [.init(name: "MUSIC_U", value: "fixture-other", domain: ".music.163.com")]) }
-        try await Task.sleep(for: .milliseconds(20))
+        await provider.waitForProfilePause()
         let oldAccountSearch = Task { try await client.search("test", source: .netease) }
-        #expect(try await replacement.value.id == "84")
+        await provider.waitForSearchPause()
+        #expect(await provider.pausedSearchCookies == nativeCookies)
+        await provider.releaseProfile()
+        let replacementResult = await replacement.result
+        await provider.releaseSearch()
+        #expect(try replacementResult.get().id == "84")
         await #expect(throws: CancellationError.self) { try await oldAccountSearch.value }
     }
     @Test func partialPlaylistFromOldAccountOrCanceledReadCannotEscape() async throws {
