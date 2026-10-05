@@ -1,0 +1,11 @@
+# App icon generation prompts
+
+Mode: built-in imagegen. Asset type: logo-brand. Both outputs are opaque square artwork. The second output is the project source asset.
+
+## Initial generation
+
+Use case: logo-brand. Asset type: production macOS app icon artwork for AlpacaMusic, square opaque master image. Create one original, exceptionally simple Bauhaus geometric alpaca-and-music brand mark, not a grid of proposals. A clearly recognizable upright alpaca head with two long pointed upright ears and a short muzzle, integrated with one bold circular headphone/record shape so it reads as a music player at small size. Build the silhouette from a few precise flat geometric forms: circles, strong rectangles and one restrained triangle. Warm ivory background #F1EBDD filling the entire square, charcoal #202020, vermilion #B83228, cobalt blue #245CA8, golden yellow #E4BC35. Balanced, architectural, playful without being a detailed cartoon. The alpaca silhouette and music association should be immediately clear. Center the coherent mark, occupy about 70 percent of the square with generous even margins. Strong solid shapes, crisp smooth vector-like edges, no fine strokes, no tiny facial decoration. No words, letters, numbers, watermark, photographic textures, gradients, lighting, shadows, bevels, glass, 3D, borders or rounded-square tile: the macOS build will apply the tile shape and outer padding itself. Output exactly one finished icon artwork.
+
+## Production cleanup
+
+Use case: style-transfer / logo-brand production cleanup. Edit this AlpacaMusic icon artwork. Preserve the exact alpaca silhouette, upright ears, headphone design, cheerful minimal face, all shape positions, scale and margins. Change only the rendering finish: remove ALL gradients, grain, paper texture, shading, highlights and mottling. Make every region a perfectly uniform flat solid fill with crisp smooth edges, like a clean vector brand mark. Exact fills: background and face warm ivory #F1EBDD, alpaca dark silhouette and facial features charcoal #202020, headphone band cobalt #245CA8, earcup outer disc vermilion #B83228, earcup inner disc golden yellow #E4BC35. Keep it a square opaque artwork with no frame, no rounded-square outer tile, no text or watermark. The original geometry and overall drawing must remain unchanged.

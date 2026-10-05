@@ -1,0 +1,59 @@
+# SwiftPM, Xcode and local build output
+/.build/
+/.swiftpm/
+/build/
+/DerivedData/
+
+# macOS and developer-specific IDE state
+.DS_Store
+._*
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+
+# Local signing configuration and environment values
+signing.local.plist
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Private signing keys and provisioning exports
+*.p8
+*.p12
+*.pfx
+*.key
+*.pem
+*.mobileprovision
+*.provisionprofile
+
+# Packaged applications, installers and debug archives
+*.app/
+*.dmg
+*.pkg
+*.xcarchive/
+*.dSYM/
+/AlpacaMusic-*.zip
+
+# Local diagnostics and coverage output
+*.log
+*.xcresult/
+*.crash
+*.ips
+*.profraw
+*.profdata
+/notary-*.json
+/notarization-*.json
+
+# Personal library exports and local credential dumps
+library-v1*.json
+cookies.local.*
+credentials.local.*
+
+# Python cache and local environments used by build scripts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/

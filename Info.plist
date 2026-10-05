@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>AlpacaMusic</string>
+<key>CFBundleDisplayName</key><string>AlpacaMusic</string>
+<key>CFBundleIdentifier</key><string>dev.byalpaca.music</string>
+<key>CFBundleExecutable</key><string>AlpacaMusic</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.1.5</string>
+<key>CFBundleVersion</key><string>6</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
+<key>LSMinimumSystemVersion</key><string>26.0</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSLocalNetworkUsageDescription</key><string>连接你配置的本地音乐服务和网络音频设备。</string>
+<key>NSAppleMusicUsageDescription</key><string>使用你的 Apple Music 账户播放音乐，并检查订阅播放权限。</string>
+<key>AlpacaMusicMusicKitConfigured</key><false/>
+<key>AlpacaMusicMusicKitTeamIdentifier</key><string></string>
+<key>NSAppTransportSecurity</key><dict>
+<key>NSAllowsArbitraryLoads</key><true/>
+</dict>
+<key>NSHumanReadableCopyright</key><string>© 2026 byalpaca</string>
+</dict></plist>
