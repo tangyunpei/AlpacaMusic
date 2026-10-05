@@ -54,8 +54,12 @@ jobs:
           if int(sdk.split(".")[0]) < 27:
               raise SystemExit("CI requires macOS SDK 27 or newer.")
           PY
-      - name: Run Swift tests without account credentials
-        run: swift test
+      # Single-input PCM expires after 500 ms. Run these suites before the
+      # concurrent rendering suites, so cold Metal compilation cannot starve
+      # the analyzer worker on a shared runner. Both steps cover the full suite.
+      - name: Test audio analysis with fresh PCM
+        run: swift test --filter 'AudioAnalyzerTests|AudioWaveformTests'
+      - name: Run remaining Swift tests without account credentials
+        run: swift test --skip 'AudioAnalyzerTests|AudioWaveformTests'
       - name: Audit APIs against the current SDK
         run: ./scripts/check-sdk-apis.sh
-
