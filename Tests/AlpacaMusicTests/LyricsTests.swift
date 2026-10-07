@@ -143,7 +143,7 @@ private func lyricCookies(_ value: String) -> [MusicSessionCookie] { [.init(name
         try await controller.importFile(url: file, for: first)
         #expect(controller.document == nil)
         await controller.load(track: first)
-        #expect(controller.document?.sourceDescription == "手动导入")
+        #expect(controller.document?.sourceDescription == L10n.string("手动导入"))
         #expect(controller.document?.lines.first?.text == "User fixture")
         let restored = LyricsController(client: client, directory: location)
         await restored.load(track: first)
@@ -184,7 +184,7 @@ struct LyricsProviderTests {
         let value = try await provider.lyrics(lyricTrack("1"), cookies: lyricCookies("fixture-session"))
         #expect(value?.text == "[00:01]Fixture"); #expect(value?.translation == "[00:01]译文")
         let request = try #require(requests.withLock { $0.first })
-        #expect(request.url?.host == "music.163.com"); #expect(request.url?.path == "/weapi/song/lyric")
+        #expect(request.url?.host == "interface3.music.163.com"); #expect(request.url?.path == "/eapi/song/lyric/v1")
         #expect(request.httpMethod == "POST")
         let instrumental = NeteaseDirectProvider(http: NativeMusicHTTP(transport: { request in
             (Data(#"{"code":200,"nolyric":true}"#.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
@@ -195,6 +195,9 @@ struct LyricsProviderTests {
         let cookies = [MusicSessionCookie(name: "uin", value: "o12345678", domain: ".y.qq.com"), MusicSessionCookie(name: "qqmusic_key", value: "fixture", domain: ".y.qq.com")]
         for malformed in [false, true] {
             let provider = QQDirectProvider(http: NativeMusicHTTP(transport: { request in
+                if request.url?.host == "u.y.qq.com" {
+                    return (Data(#"{"code":0,"req_0":{"code":0,"data":{"lyric":""}}}"#.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }
                 #expect(request.url?.host == "c.y.qq.com")
                 #expect(request.url?.path == "/lyric/fcgi-bin/fcg_query_lyric_new.fcg")
                 #expect(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.contains { $0.name == "songmid" && $0.value == "fixtureMID" } == true)

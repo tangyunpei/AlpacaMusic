@@ -38,7 +38,7 @@ actor NativeMusicClient {
         guard !values.isEmpty else { return nil }
         let profile = try await provider(source).profile(cookies: values)
         try validate(source, token)
-        guard !profile.id.isEmpty, !profile.displayName.isEmpty else { throw MusicError.message("无法确认账户身份，请重新登录") }
+        guard !profile.id.isEmpty, !profile.displayName.isEmpty else { throw MusicError.message(L10n.string("无法确认账户身份，请重新登录")) }
         // Restoring already saved credentials only validates and publishes the session.
         // Rewriting them can need a separate macOS Keychain authorization after an update.
         sessions[source] = Session(cookies: values, profile: profile)
@@ -50,10 +50,10 @@ actor NativeMusicClient {
         if attempts[source]?.id != attemptID { attempts[source] = ConnectionAttempt(id: attemptID, previous: sessions[source]) }
         let token = advanceGeneration(source)
         let values = DirectMusicAccess.sessionCookies(cookies, for: source)
-        guard !values.isEmpty else { throw MusicError.message("尚未检测到\(source.title)登录，请先在网页完成登录或扫码确认") }
+        guard !values.isEmpty else { throw MusicError.message(L10n.string("尚未检测到\(source.title)登录，请先在网页完成登录或扫码确认")) }
         let profile = try await provider(source).profile(cookies: values)
         try validate(source, token)
-        guard !profile.id.isEmpty, !profile.displayName.isEmpty else { throw MusicError.message("无法确认账户身份，请重新登录") }
+        guard !profile.id.isEmpty, !profile.displayName.isEmpty else { throw MusicError.message(L10n.string("无法确认账户身份，请重新登录")) }
         do {
             try await persist(values, source: source)
             try validate(source, token)
@@ -112,7 +112,7 @@ actor NativeMusicClient {
         let (session, token) = try snapshot(track.source)
         let result = try await provider(track.source).preparePlayback(track, cookies: session.cookies)
         try validate(track.source, token)
-        guard result.source == track.source, result.id == track.id else { throw MusicError.message("平台返回的歌曲身份已变化，已停止播放") }
+        guard result.source == track.source, result.id == track.id else { throw MusicError.message(L10n.string("平台返回的歌曲身份已变化，已停止播放")) }
         return result
     }
     func resolve(_ track: Track) async throws -> URL {
@@ -177,7 +177,7 @@ actor NativeMusicClient {
         return token
     }
     private func provider(_ source: MusicSource) throws -> any DirectMusicProvider {
-        guard let value = providers[source] else { throw MusicError.message("此平台尚不支持应用内连接") }
+        guard let value = providers[source] else { throw MusicError.message(L10n.string("此平台尚不支持应用内连接")) }
         return value
     }
     private func persist(_ cookies: [MusicSessionCookie]?, source: MusicSource) async throws {
@@ -199,7 +199,7 @@ actor NativeMusicClient {
         guard generations[source] == token else { throw CancellationError() }
     }
     private func snapshot(_ source: MusicSource) throws -> (Session, UUID) {
-        guard let value = sessions[source] else { throw MusicError.message("请先在音源页登录\(source.title)") }
+        guard let value = sessions[source] else { throw MusicError.message(L10n.string("请先在音源页登录\(source.title)")) }
         return (value, generation(source))
     }
 }
@@ -235,7 +235,7 @@ struct ConnectedMusicState {
                 states[source] = ConnectedMusicState(profile: profile)
             } catch {
                 guard generations[source] == token else { continue }
-                states[source] = ConnectedMusicState(error: "登录恢复失败，请重新连接。\(error.localizedDescription)")
+                states[source] = ConnectedMusicState(error: L10n.string("登录恢复失败，请重新连接。\(error.localizedDescription)"))
             }
         }
     }

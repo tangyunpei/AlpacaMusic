@@ -41,8 +41,8 @@ final class SpotifyService {
     }
     func configure(_ value: String) throws {
         let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard Self.validClientID(clean) else { throw MusicError.message("Client ID 应为 Spotify 提供的 32 位标识，请勿填写 Client Secret。") }
-        guard !isBusy, profile == nil else { throw MusicError.message("请先断开 Spotify，再更换应用配置。") }
+        guard Self.validClientID(clean) else { throw MusicError.message(L10n.string("Client ID 应为 Spotify 提供的 32 位标识，请勿填写 Client Secret。")) }
+        guard !isBusy, profile == nil else { throw MusicError.message(L10n.string("请先断开 Spotify，再更换应用配置。")) }
         sessionID = UUID(); token = nil; error = nil
         clientID = clean; defaults.set(clean, forKey: Self.clientKey)
         defaults.set(false, forKey: Self.enabledKey)
@@ -136,7 +136,7 @@ final class SpotifyService {
         try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
     func startPlayback(_ track: Track, at position: Double, session: UUID) async throws {
-        guard track.source == .spotify, let id = track.sourceID, !id.isEmpty else { throw MusicError.message("Spotify 歌曲标识无效。") }
+        guard track.source == .spotify, let id = track.sourceID, !id.isEmpty else { throw MusicError.message(L10n.string("Spotify 歌曲标识无效。")) }
         let accountSession = sessionID
         playbackSession = session; playbackTrack = id
         try await command { [self] in
@@ -149,7 +149,7 @@ final class SpotifyService {
                 ? candidates.first(where: { $0.isActive && !$0.isRestricted && $0.id != nil })
                 : candidates.first(where: { $0.id == selectedDeviceID && !$0.isRestricted })
             guard let device, let deviceID = device.id else {
-                throw MusicError.message("请先在 Spotify 官方 App 或网页播放器播放一次，或在音源页选择可用设备，然后重试。")
+                throw MusicError.message(L10n.string("请先在 Spotify 官方 App 或网页播放器播放一次，或在音源页选择可用设备，然后重试。"))
             }
             playbackDevice = deviceID
             try await authorized { try await api.play(trackID: id, deviceID: deviceID, position: position, accessToken: $0) }
@@ -177,7 +177,7 @@ final class SpotifyService {
             let snapshot = try await authorized { try await api.playbackState(accessToken: $0) }
             try validatePlayback(session, account: account)
             guard let snapshot, snapshot.deviceID == device, snapshot.trackID == expectedTrack else {
-                throw MusicError.message("Spotify 已切换播放曲目或设备，请重新选择歌曲。")
+                throw MusicError.message(L10n.string("Spotify 已切换播放曲目或设备，请重新选择歌曲。"))
             }
             try await authorized { try await api.seek(to: seconds, deviceID: device, accessToken: $0) }
         }
@@ -196,7 +196,7 @@ final class SpotifyService {
     }
     private func authorized<T: Sendable>(_ operation: @Sendable (String) async throws -> T) async throws -> T {
         let generation = sessionID
-        guard let current = token else { throw MusicError.message("请先在音源页连接 Spotify。") }
+        guard let current = token else { throw MusicError.message(L10n.string("请先在音源页连接 Spotify。")) }
         let valid = current.isExpired() ? try await refresh() : current
         try validateSession(generation)
         do {
@@ -219,7 +219,7 @@ final class SpotifyService {
             try validateSession(generation)
             return value
         }
-        guard let previous = token else { throw MusicError.message("Spotify 登录已失效，请重新连接。") }
+        guard let previous = token else { throw MusicError.message(L10n.string("Spotify 登录已失效，请重新连接。")) }
         let operation = UUID(); refreshID = operation
         let id = clientID
         let task = Task { [self] in
@@ -241,6 +241,6 @@ final class SpotifyService {
         if let error = error as? SpotifyAPIError { return error.localizedDescription }
         if let error = error as? MusicError { return error.localizedDescription }
         if let error = error as? SpotifyAuthorizationError { return error.localizedDescription }
-        return PlaybackErrorMessage.describe(error, source: .spotify, fallback: "Spotify 请求未完成，请检查网络后重试。")
+        return PlaybackErrorMessage.describe(error, source: .spotify, fallback: L10n.string("Spotify 请求未完成，请检查网络后重试。"))
     }
 }

@@ -3,8 +3,17 @@ import Testing
 @testable import AlpacaMusic
 
 @Suite struct NativeMusicHTTPTests {
-    @Test(arguments: [(401, "需要有效登录"), (403, "平台拒绝访问"), (404, "接口或资源未找到"), (429, "请求过于频繁"), (500, "平台服务暂时异常"), (503, "平台服务暂时异常"), (418, "平台未能完成请求")])
-    func responseStatusExplainsTheFailureWithoutExposingServerContent(_ status: Int, _ expected: String) async throws {
+    @Test(arguments: [401, 403, 404, 429, 500, 503, 418])
+    func responseStatusExplainsTheFailureWithoutExposingServerContent(_ status: Int) async throws {
+        let expected: String
+        switch status {
+        case 401: expected = L10n.string("请求需要有效登录，请在音源页重新登录后重试")
+        case 403: expected = L10n.string("平台拒绝访问，请在官网确认账号权限或验证提示；具体原因未确认")
+        case 404: expected = L10n.string("请求的接口或资源未找到，具体原因未确认")
+        case 429: expected = L10n.string("请求过于频繁，请稍后重试")
+        case 500..<600: expected = L10n.string("平台服务暂时异常，请稍后重试")
+        default: expected = L10n.string("平台未能完成请求，请稍后重试")
+        }
         let url = try #require(URL(string: "https://music.163.com/weapi/fixture?token=private-url"))
         let http = NativeMusicHTTP(transport: { request in
             (Data("private-response MUSIC_U=private-cookie".utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
@@ -15,9 +24,8 @@ import Testing
             Issue.record("An unsuccessful HTTP response was accepted")
         } catch {
             let message = error.localizedDescription
-            #expect(message.contains(expected) && message.contains("HTTP \(status)"))
+            #expect(message == L10n.string("\(MusicSource.netease.title)：\(expected)（HTTP \(String(status))）"))
             #expect(!message.contains("private-") && !message.contains("MUSIC_U") && !message.contains("https://"))
-            if status != 401 { #expect(!message.contains("重新登录")) }
         }
     }
 
@@ -30,9 +38,9 @@ import Testing
             _ = try await http.data(for: URLRequest(url: url), source: .netease, cookies: [])
             Issue.record("An off-platform response was accepted")
         } catch {
-            #expect(error.localizedDescription.contains("已阻止偏离"))
+            #expect(error.localizedDescription == L10n.string("已阻止偏离\(MusicSource.netease.title)原请求地址的响应（HTTP \(String(401))）"))
             #expect(error.localizedDescription.contains("HTTP 401"))
-            #expect(!error.localizedDescription.contains("重新登录") && !error.localizedDescription.contains("unrelated.invalid"))
+            #expect(!error.localizedDescription.contains("unrelated.invalid"))
         }
     }
 }

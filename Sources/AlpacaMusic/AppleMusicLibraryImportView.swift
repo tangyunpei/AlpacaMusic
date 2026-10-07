@@ -8,7 +8,7 @@ private enum AppleMusicImportSelection {
         switch self { case .songs: "all-library-songs"; case .playlist(let playlist): "playlist:\(playlist.id)" }
     }
     var title: String {
-        switch self { case .songs: "全部歌曲"; case .playlist(let playlist): playlist.name }
+        switch self { case .songs: L10n.string("全部歌曲"); case .playlist(let playlist): playlist.name }
     }
 }
 
@@ -29,24 +29,24 @@ struct AppleMusicLibraryImportView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            SheetHeading(title: "导入 Apple Music 曲库", subtitle: "") {
+            SheetHeading(title: L10n.string("导入 Apple Music 曲库"), subtitle: "") {
                 cancelImport(); dismiss()
             }
-            Text("仅导入歌曲资料和歌单，不下载音频。再次导入会更新资料并保留本地收藏，修改不会同步回 Apple Music。")
+            Text(L10n.string("仅导入歌曲资料和歌单，不下载音频。再次导入会更新资料并保留本地收藏，修改不会同步回 Apple Music。"))
                 .font(.system(size: 11)).foregroundStyle(palette.secondary).lineSpacing(5)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 14) {
                 Image(systemName: "music.note.house").font(.system(size: 24)).foregroundStyle(palette.accent)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("全部歌曲").font(.system(size: 13, weight: .medium))
-                    Text("个人曲库中的歌曲及专辑曲目").font(.system(size: 10)).foregroundStyle(palette.secondary)
+                    Text(L10n.string("全部歌曲")).font(.system(size: 13, weight: .medium))
+                    Text(L10n.string("个人曲库中的歌曲及专辑曲目")).font(.system(size: 10)).foregroundStyle(palette.secondary)
                     if let count = receipts[AppleMusicImportSelection.songs.id] {
-                        Text("已导入 \(count) 首歌曲").font(.system(size: 10)).foregroundStyle(palette.accent)
+                        Text(L10n.string("已导入 \(count) 首歌曲")).font(.system(size: 10)).foregroundStyle(palette.accent)
                     }
                 }
                 Spacer()
-                Button(receipts[AppleMusicImportSelection.songs.id] == nil ? "导入全部歌曲" : "再次导入") { startImport(.songs) }
+                Button(receipts[AppleMusicImportSelection.songs.id] == nil ? L10n.string("导入全部歌曲") : L10n.string("再次导入")) { startImport(.songs) }
                     .buttonStyle(QuietButtonStyle()).disabled(importing != nil || !model.appleMusic.isEnabled)
                     .accessibilityIdentifier("apple-music-import-all-songs")
             }.padding(16).background(palette.accent.opacity(0.055), in: .rect(cornerRadius: 10))
@@ -56,7 +56,7 @@ struct AppleMusicLibraryImportView: View {
                     ProgressView().controlSize(.small)
                     Text(progress).font(.system(size: 11))
                     Spacer()
-                    Button("取消") { cancelImport() }.buttonStyle(QuietButtonStyle())
+                    Button(L10n.string("取消")) { cancelImport() }.buttonStyle(QuietButtonStyle())
                 }.accessibilityIdentifier("apple-music-import-progress")
             }
             if let importError {
@@ -66,15 +66,15 @@ struct AppleMusicLibraryImportView: View {
             }
 
             HStack {
-                Text("我的歌单").font(.system(size: 13, weight: .medium))
-                Text("\(playlists.count) 个").font(.system(size: 10)).foregroundStyle(palette.secondary)
+                Text(L10n.string("我的歌单")).font(.system(size: 13, weight: .medium))
+                Text(L10n.string("\(playlists.count) 个")).font(.system(size: 10)).foregroundStyle(palette.secondary)
                 Spacer()
                 if isLoading { ProgressView().controlSize(.small) }
-                Button("刷新歌单") { refreshID = UUID() }.buttonStyle(QuietButtonStyle())
+                Button(L10n.string("刷新歌单")) { refreshID = UUID() }.buttonStyle(QuietButtonStyle())
                     .disabled(isLoading || importing != nil)
             }
             if let listError {
-                Text("获取歌单失败：\(listError)").font(.system(size: 11)).foregroundStyle(.orange)
+                Text(L10n.string("获取歌单失败：\(listError)")).font(.system(size: 11)).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
             ScrollView {
@@ -85,21 +85,21 @@ struct AppleMusicLibraryImportView: View {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(playlist.name).font(.system(size: 12))
                                 if let count = receipts[AppleMusicImportSelection.playlist(playlist).id] {
-                                    Text("已导入 \(count) 首歌曲").font(.system(size: 10)).foregroundStyle(palette.accent)
+                                    Text(L10n.string("已导入 \(count) 首歌曲")).font(.system(size: 10)).foregroundStyle(palette.accent)
                                 } else {
-                                    Text(playlist.trackCount.map { "\($0) 首歌曲" } ?? "歌曲数量待读取")
+                                    Text(playlist.trackCount.map { L10n.string("\($0) 首歌曲") } ?? L10n.string("歌曲数量待读取"))
                                         .font(.system(size: 10)).foregroundStyle(palette.secondary)
                                 }
                             }
                             Spacer()
-                            Button(receipts[AppleMusicImportSelection.playlist(playlist).id] == nil ? "导入" : "再次导入") {
+                            Button(receipts[AppleMusicImportSelection.playlist(playlist).id] == nil ? L10n.string("导入") : L10n.string("再次导入")) {
                                 startImport(.playlist(playlist))
                             }.buttonStyle(QuietButtonStyle()).disabled(importing != nil || !model.appleMusic.isEnabled)
-                                .accessibilityLabel("导入 Apple Music 歌单 \(playlist.name)")
+                                .accessibilityLabel(L10n.string("导入 Apple Music 歌单 \(playlist.name)"))
                         }.padding(14).background(palette.accent.opacity(0.035), in: .rect(cornerRadius: 8))
                     }
                     if !isLoading && playlists.isEmpty && listError == nil {
-                        Text("当前账号没有可读取的歌单")
+                        Text(L10n.string("当前账号没有可读取的歌单"))
                             .font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.vertical, 24)
                     }
                 }
@@ -124,7 +124,7 @@ struct AppleMusicLibraryImportView: View {
         } catch is CancellationError { }
         catch {
             guard !Task.isCancelled, refreshID == requestID else { return }
-            listError = PlaybackErrorMessage.describe(error, source: .appleMusic, fallback: "请检查 Apple Music 连接后重试。")
+            listError = PlaybackErrorMessage.describe(error, source: .appleMusic, fallback: L10n.string("请检查 Apple Music 连接后重试。"))
         }
     }
 
@@ -138,7 +138,7 @@ struct AppleMusicLibraryImportView: View {
         let operation = UUID(); operationID = operation
         let session = model.appleMusic.librarySessionID
         importing = selection; importError = nil
-        progress = "正在读取「\(selection.title)」…"
+        progress = L10n.string("正在读取「\(selection.title)」…")
         importTask = Task { @MainActor in
             defer {
                 if operationID == operation { importing = nil; progress = nil; importTask = nil }
@@ -155,7 +155,7 @@ struct AppleMusicLibraryImportView: View {
                 try Task.checkCancellation()
                 try model.appleMusic.validateLibrarySession(session)
                 guard operationID == operation else { return }
-                progress = "正在保存 \(tracks.count) 首歌曲…"
+                progress = L10n.string("正在保存 \(tracks.count) 首歌曲…")
                 let count: Int
                 switch selection {
                 case .songs:
@@ -170,14 +170,14 @@ struct AppleMusicLibraryImportView: View {
                 }
                 guard !Task.isCancelled, operationID == operation else { return }
                 receipts[selection.id] = count
-                model.notify("已导入「\(selection.title)」：\(count) 首歌曲")
+                model.notify(L10n.string("已导入「\(selection.title)」：\(count) 首歌曲"))
             } catch is CancellationError {
                 if !Task.isCancelled, operationID == operation {
-                    importError = "Apple Music 连接已变化，请确认当前账户后重试。"
+                    importError = L10n.string("Apple Music 连接已变化，请确认当前账户后重试。")
                 }
             } catch {
                 guard !Task.isCancelled, operationID == operation else { return }
-                importError = "「\(selection.title)」导入失败：\(PlaybackErrorMessage.describe(error, source: .appleMusic, fallback: "请重试。"))"
+                importError = L10n.string("「\(selection.title)」导入失败：\(PlaybackErrorMessage.describe(error, source: .appleMusic, fallback: L10n.string("请重试。")))")
             }
         }
     }

@@ -2,7 +2,7 @@ import Foundation
 
 enum MusicSource: String, Codable, CaseIterable, Sendable {
     case local, appleMusic, spotify, netease, qq, soda, url, demo
-    var title: String { switch self { case .local: "本地音乐"; case .appleMusic: "Apple Music"; case .spotify: "Spotify"; case .netease: "网易云音乐"; case .qq: "QQ 音乐"; case .soda: "汽水音乐"; case .url: "音频链接"; case .demo: "原创试听" } }
+    var title: String { switch self { case .local: L10n.string("本地音乐"); case .appleMusic: "Apple Music"; case .spotify: "Spotify"; case .netease: L10n.string("网易云音乐"); case .qq: L10n.string("QQ 音乐"); case .soda: L10n.string("汽水音乐"); case .url: L10n.string("音频链接"); case .demo: L10n.string("原创试听") } }
     var symbol: String { switch self { case .local: "folder"; case .appleMusic: "music.note"; case .spotify: "dot.radiowaves.left.and.right"; case .netease: "opticaldisc"; case .qq: "headphones"; case .soda: "drop"; case .url: "link"; case .demo: "waveform" } }
     var supportsAudioAnalysis: Bool { self != .appleMusic && self != .spotify }
 }
@@ -88,11 +88,11 @@ struct VisualSettings: Codable, Equatable, Sendable {
     var reduceMotion: Bool = false
     var batterySaver: Bool = true
     static let standard = VisualSettings()
-    static let presets: [(name: String, settings: VisualSettings)] = [
-        ("平静", VisualSettings(pointSize: 1.6, depth: 0.30, bounce: 0.10, speed: 2, idle: 0.015)),
-        ("跃动", VisualSettings(pointSize: 1.9, depth: 0.35, bounce: 0.22, speed: 5, idle: 0.010)),
-        ("深邃", VisualSettings(pointSize: 1.7, depth: 0.65, bounce: 0.14, speed: 3, idle: 0.012))
-    ]
+    static var presets: [(name: String, settings: VisualSettings)] { [
+        (L10n.string("平静"), VisualSettings(pointSize: 1.6, depth: 0.30, bounce: 0.10, speed: 2, idle: 0.015)),
+        (L10n.string("跃动"), VisualSettings(pointSize: 1.9, depth: 0.35, bounce: 0.22, speed: 5, idle: 0.010)),
+        (L10n.string("深邃"), VisualSettings(pointSize: 1.7, depth: 0.65, bounce: 0.14, speed: 3, idle: 0.012))
+    ] }
 }
 struct VisualPreset: Identifiable, Codable, Sendable { var id: String = UUID().uuidString; var name: String; var settings: VisualSettings }
 struct PartialPlaylistImport: Sendable {
@@ -113,6 +113,6 @@ enum MusicError: LocalizedError, Sendable {
     }
 }
 func formattedTime(_ value: Double) -> String {
-    guard value.isFinite, value >= 0 else { return "直播" }
+    guard value.isFinite, value >= 0 else { return L10n.string("直播") }
     return String(format: "%d:%02d", Int(value) / 60, Int(value) % 60)
 }

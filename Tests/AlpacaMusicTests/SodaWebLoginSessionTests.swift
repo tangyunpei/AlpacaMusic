@@ -16,14 +16,14 @@ import WebKit
         } catch {
             #expect(error is MusicError)
             #expect(!(error is CancellationError))
-            #expect(error.localizedDescription.contains(message))
+            #expect(error.localizedDescription == message)
         }
     }
 
     @Test func unpreparedBrowserReportsInitializationRatherThanInvalidRequest() async {
         let session = SodaWebLoginSession()
         defer { session.cancel() }
-        await expectMusicFailure("初始化尚未完成") {
+        await expectMusicFailure(L10n.string("汽水音乐登录初始化尚未完成，请重新打开登录。")) {
             _ = try await session.send(request)
         }
     }
@@ -34,10 +34,10 @@ import WebKit
         session.webViewWebContentProcessDidTerminate(view)
         #expect(session.webView == nil)
 
-        await expectMusicFailure("网页进程已中断") {
+        await expectMusicFailure(L10n.string("汽水音乐登录网页进程已中断，请重新打开登录。")) {
             _ = try await session.send(request)
         }
-        await expectMusicFailure("网页进程已中断") {
+        await expectMusicFailure(L10n.string("汽水音乐登录网页进程已中断，请重新打开登录。")) {
             _ = try await session.snapshotCookies()
         }
     }

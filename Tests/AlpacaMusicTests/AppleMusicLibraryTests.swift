@@ -69,7 +69,10 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
         let first = try libraryPage([librarySong("i.one")], next: "/v1/me/library/songs?offset=1", total: 2)
         let fixture = LibraryFixtureTransport([first]); fixture.failureAt = 2
         do { _ = try await AppleMusicLibraryClient(transport: fixture.data).songs(); Issue.record("Returned truncated library") }
-        catch { #expect(error.localizedDescription.contains("超时")) }
+        catch {
+            let context = L10n.string("读取\(L10n.string("个人歌曲"))第 \(2) 页（已读取 \(1) 条）")
+            #expect(error.localizedDescription == L10n.string("\(context)：\(L10n.string("网络请求超时，请重试。"))"))
+        }
         let missing = try LibraryFixtureTransport([libraryPage([librarySong("i.one")], total: 2)])
         await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(transport: missing.data).songs() }
     }
@@ -100,7 +103,10 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
         var video = librarySong("i.video"); video["type"] = "library-music-videos"
         let fixture = try LibraryFixtureTransport([libraryPage([librarySong("i.one"), video])])
         do { _ = try await AppleMusicLibraryClient(transport: fixture.data).songs(); Issue.record("Silently dropped video") }
-        catch { #expect(error.localizedDescription.contains("非歌曲")) }
+        catch {
+            let context = L10n.string("Apple Music 第 \(2) 首歌曲")
+            #expect(error.localizedDescription == L10n.string("\(context)是当前不支持的非歌曲项目，本次未导入。"))
+        }
     }
 
     @Test func cancelledOrInvalidatedReadCannotFetchAnotherPage() async throws {
@@ -192,7 +198,19 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
         catch {
             let description = error.localizedDescription
             #expect(description.contains(failure.rawValue))
-            #expect(description.contains("个人歌曲第 2 页")); #expect(description.contains("已读取 1 条"))
+            let context = L10n.string("读取\(L10n.string("个人歌曲"))第 \(2) 页（已读取 \(1) 条）")
+            let expected: String
+            switch failure {
+            case .unknown: expected = L10n.string("系统未说明 Apple Music 认证失败的具体原因，请稍后重试（unknown）。")
+            case .permissionDenied: expected = L10n.string("本应用未获 Apple Music 访问许可，请在系统设置检查媒体与 Apple Music 权限（permissionDenied）。")
+            case .userTokenRevoked: expected = L10n.string("当前账户的 Apple Music 授权已失效，请在本应用重新连接（userTokenRevoked）。")
+            case .userNotSignedIn: expected = L10n.string("Apple Music 尚未登录，请先在音乐 App 中登录订阅账户（userNotSignedIn）。")
+            case .privacyAcknowledgementRequired: expected = L10n.string("Apple Music 需要确认隐私提示，请打开音乐 App 完成确认后重试（privacyAcknowledgementRequired）。")
+            case .developerTokenRequestFailed: expected = L10n.string("系统未能获取本应用的 Apple Music 认证，请检查网络及 MusicKit 配置后重试（developerTokenRequestFailed）。")
+            case .userTokenRequestFailed: expected = L10n.string("系统未能获取当前账户的 Apple Music 授权，请检查音乐 App 的登录及网络后重试（userTokenRequestFailed）。")
+            @unknown default: expected = L10n.string("系统返回尚未识别的 Apple Music 认证错误，请稍后重试（unrecognizedMusicTokenError）。")
+            }
+            #expect(description == L10n.string("\(context)：\(expected)"))
             #expect(!description.contains("secretSongID")); #expect(!description.contains("https://"))
         }
         #expect(count == 2) // Do not retry authorization failures automatically.
@@ -223,11 +241,17 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
             do { _ = try await AppleMusicLibraryClient(transport: fixture.data).songs(); Issue.record("Invalid row was accepted") }
             catch {
                 let description = error.localizedDescription
-                #expect(description.contains("第 2 首"))
+                let context = L10n.string("Apple Music 第 \(2) 首歌曲")
+                let expected: String
+                switch problem {
+                case "identity":
+                    let idLength = "private invalid identity".count
+                    expected = L10n.string("\(context)标识不能作为安全的资源路径（曲库类型：\(L10n.string("是"))，长度：\(idLength)），本次未导入。")
+                case "attributes": expected = L10n.string("\(context)缺少歌曲资料（attributes），本次未导入。")
+                default: expected = L10n.string("\(context)缺少歌曲名称（name），本次未导入。")
+                }
+                #expect(description == expected)
                 #expect(!description.contains("private"))
-                if problem == "identity" {
-                    #expect(description.contains("曲库类型：是")); #expect(description.contains("长度："))
-                } else { #expect(description.contains(problem)) }
             }
         }
     }

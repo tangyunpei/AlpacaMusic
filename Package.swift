@@ -2,10 +2,11 @@
 import PackageDescription
 let package = Package(
     name: "AlpacaMusic",
+    defaultLocalization: "en",
     platforms: [.macOS("26.0")],
     products: [.executable(name: "AlpacaMusic", targets: ["AlpacaMusic"])],
     targets: [
-        .executableTarget(name: "AlpacaMusic", resources: [.copy("Resources")], swiftSettings: [.unsafeFlags(["-warnings-as-errors"])]),
+        .executableTarget(name: "AlpacaMusic", resources: [.copy("Resources"), .process("Localization")], swiftSettings: [.unsafeFlags(["-warnings-as-errors"])]),
         .testTarget(name: "AlpacaMusicTests", dependencies: ["AlpacaMusic"], swiftSettings: [.unsafeFlags(["-warnings-as-errors"])])
     ],
     swiftLanguageModes: [.v6]

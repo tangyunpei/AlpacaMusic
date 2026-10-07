@@ -189,7 +189,7 @@ final class ParticleFieldPipeline {
         guard let vertex = library.makeFunction(name: "fieldVertex"), let fragment = library.makeFunction(name: "fieldFragment"),
               let backgroundVertex = library.makeFunction(name: "fieldBackgroundVertex"),
               let backgroundFragment = library.makeFunction(name: "fieldBackgroundFragment") else {
-            throw MusicError.message("无法加载粒子视效着色器")
+            throw MusicError.message(L10n.string("无法加载粒子视效着色器"))
         }
         func make(vertex: any MTLFunction, fragment: any MTLFunction, blending: Bool, additive: Bool, name: String) throws -> any MTLRenderPipelineState {
             let descriptor = MTLRenderPipelineDescriptor()
@@ -212,7 +212,7 @@ final class ParticleFieldPipeline {
 
     static func shaderSource() throws -> String {
         guard let url = Bundle.module.url(forResource: "ParticleField", withExtension: "metal", subdirectory: "Resources") else {
-            throw MusicError.message("缺少粒子视效着色器")
+            throw MusicError.message(L10n.string("缺少粒子视效着色器"))
         }
         return try String(contentsOf: url, encoding: .utf8)
     }

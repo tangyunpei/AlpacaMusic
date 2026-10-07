@@ -78,7 +78,7 @@ private struct FlatDepthProvider: DepthProvider {
     #expect(point.positionDepthSeed.z == 0.25)
     #expect(point.colorLuminance.x > 0.99 && point.colorLuminance.y == 0)
     #expect(abs(point.scatter.w - Float(128) / 255) < 0.00001)
-    #expect(MemoryLayout<CloudPoint>.stride == 48)
+    #expect(MemoryLayout<CloudPoint>.stride == 64)
 }
 
 @Test func visualizationAudioDoesNotFabricateUnavailableOrPausedSpectrum() {
@@ -165,11 +165,78 @@ private struct FlatDepthProvider: DepthProvider {
     #expect(MemoryLayout<CloudUniforms>.stride == 208)
 }
 
+@Test @MainActor func gpuCoverMotionProtectsDetailsAndRemainsBoundedAtMaximumSettings() throws {
+    let device = try #require(MTLCreateSystemDefaultDevice())
+    let queue = try #require(device.makeCommandQueue())
+    let probe = """
+    kernel void coverMotionProbe(const device CloudPoint *points [[buffer(0)]],
+                                 constant CloudUniforms &u [[buffer(1)]],
+                                 device float4 *output [[buffer(2)]], uint id [[thread_position_in_grid]]) {
+        output[id] = float4(cloudPosition(points[id], u), 1.0);
+    }
+    """
+    let library = try device.makeLibrary(source: MetalRenderer.shaderSource() + probe, options: nil)
+    let pipeline = try device.makeComputePipelineState(function: try #require(library.makeFunction(name: "coverMotionProbe")))
+    let points = [-1.0 as Float, 0, 1].flatMap { x in
+        [-1.0 as Float, 0, 1].flatMap { y in
+            [0.0 as Float, 0.5, 1].flatMap { depth in
+                [0.0 as Float, 1].map { detail in
+                    CloudPoint(positionDepthSeed: SIMD4(x, y, depth, 0.73),
+                               colorLuminance: SIMD4(0.2, 0.5, 0.8, 0.5), scatter: SIMD4(9, 9, 9, 1),
+                               geometryFeatures: SIMD4(detail, 1, 0, 0))
+                }
+            }
+        }
+    }
+    let pointBuffer = try points.withUnsafeBytes { try #require(device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)) }
+    let output = try #require(device.makeBuffer(length: points.count * MemoryLayout<SIMD4<Float>>.stride, options: .storageModeShared))
+    func positions(time: Float, scheme: Float, bounce: Float, idle: Float, beat: Float, enabled: Float) throws -> [SIMD4<Float>] {
+        var uniforms = CloudUniforms(projection: matrix_identity_float4x4, modelView: matrix_identity_float4x4,
+            motion: SIMD4(time, 1, beat, 1), shape: SIMD4(1, bounce, idle, 4),
+            wave: SIMD4(10, 8, 0, scheme), behavior: SIMD4(1, enabled, 0, 1), viewport: SIMD4(900, 0, 1, 3))
+        let command = try #require(queue.makeCommandBuffer()), encoder = try #require(command.makeComputeCommandEncoder())
+        encoder.setComputePipelineState(pipeline); encoder.setBuffer(pointBuffer, offset: 0, index: 0)
+        encoder.setBytes(&uniforms, length: MemoryLayout<CloudUniforms>.stride, index: 1)
+        encoder.setBuffer(output, offset: 0, index: 2)
+        encoder.dispatchThreads(MTLSize(width: points.count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: min(points.count, pipeline.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+        encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
+        #expect(command.status == .completed)
+        return Array(UnsafeBufferPointer(start: output.contents().assumingMemoryBound(to: SIMD4<Float>.self), count: points.count))
+    }
+    let staticPositions = try positions(time: 0, scheme: 0, bounce: 0, idle: 0, beat: 0, enabled: 0)
+    for settings: (bounce: Float, idle: Float) in [(0.16, 0.012), (0.4, 0.05)] {
+        for scheme: Float in [0, 1] {
+            for frame in 0..<24 {
+                let animated = try positions(time: Float(frame) * 0.31, scheme: scheme, bounce: settings.bounce, idle: settings.idle, beat: 1, enabled: 1)
+                var maximum: Float = 0
+                for index in points.indices {
+                    let difference = animated[index] - staticPositions[index]
+                    maximum = max(maximum, simd_length(SIMD3(difference.x, difference.y, difference.z)))
+                    #expect(animated[index].x.isFinite && animated[index].y.isFinite && animated[index].z.isFinite)
+                }
+                // Includes the continuous wave, 0.5% coherent scale pulse and
+                // depth accent; this is measured from actual GPU positions.
+                #expect(maximum <= 0.051)
+            }
+        }
+    }
+    let pulse = try positions(time: 0.4, scheme: 0, bounce: 0.4, idle: 0.05, beat: 1, enabled: 1)
+    // The adjacent center samples differ only in their detail-protection flag.
+    let centerFlat = 26, centerProtected = 27
+    let flatShift = simd_length(pulse[centerFlat] - staticPositions[centerFlat])
+    let protectedShift = simd_length(pulse[centerProtected] - staticPositions[centerProtected])
+    #expect(flatShift > 0.001 && protectedShift < flatShift * 0.6)
+    let reducedA = try positions(time: 0.4, scheme: 0, bounce: 0.4, idle: 0.05, beat: 1, enabled: 0)
+    let reducedB = try positions(time: 4.8, scheme: 1, bounce: 0.4, idle: 0.05, beat: 1, enabled: 0)
+    #expect(reducedA == staticPositions && reducedB == staticPositions)
+}
+
 @MainActor
 private final class OffscreenCloud {
     let device: any MTLDevice
     let queue: any MTLCommandQueue
     let pipeline: any MTLRenderPipelineState
+    let glowPipeline: any MTLRenderPipelineState
     let texture: any MTLTexture
     let points: any MTLBuffer
     let pointCount: Int
@@ -179,18 +246,23 @@ private final class OffscreenCloud {
         device = try #require(MTLCreateSystemDefaultDevice())
         queue = try #require(device.makeCommandQueue())
         let library = try device.makeLibrary(source: MetalRenderer.shaderSource(), options: nil)
-        let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.vertexFunction = library.makeFunction(name: "cloudVertex")
-        descriptor.fragmentFunction = library.makeFunction(name: "cloudFragment")
-        let attachment = descriptor.colorAttachments[0]!
-        attachment.pixelFormat = .bgra8Unorm_srgb; attachment.isBlendingEnabled = true
-        attachment.sourceRGBBlendFactor = .sourceAlpha; attachment.destinationRGBBlendFactor = .one
-        attachment.sourceAlphaBlendFactor = .one; attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        let currentDevice = device
+        func makePipeline(additive: Bool) throws -> any MTLRenderPipelineState {
+            let descriptor = MTLRenderPipelineDescriptor()
+            descriptor.vertexFunction = library.makeFunction(name: "cloudVertex")
+            descriptor.fragmentFunction = library.makeFunction(name: "cloudFragment")
+            let attachment = descriptor.colorAttachments[0]!
+            attachment.pixelFormat = .bgra8Unorm_srgb; attachment.isBlendingEnabled = true
+            attachment.sourceRGBBlendFactor = .sourceAlpha
+            attachment.destinationRGBBlendFactor = additive ? .one : .oneMinusSourceAlpha
+            attachment.sourceAlphaBlendFactor = .one; attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            return try currentDevice.makeRenderPipelineState(descriptor: descriptor)
+        }
+        pipeline = try makePipeline(additive: false)
+        glowPipeline = try makePipeline(additive: true)
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm_srgb, width: width, height: height, mipmapped: false)
         textureDescriptor.usage = [.renderTarget]; textureDescriptor.storageMode = .shared
         texture = try #require(device.makeTexture(descriptor: textureDescriptor))
-        let currentDevice = device
         points = try samples.points.withUnsafeBytes { try #require(currentDevice.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)) }
         pointCount = samples.points.count
         let tanHalf = tan(Float.pi * 42 / 360), yScale: Float = 1 / tanHalf, aspect = Float(width) / Float(height)
@@ -210,7 +282,12 @@ private final class OffscreenCloud {
         pass.colorAttachments[0].loadAction = .clear; pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         let encoder = try #require(command.makeRenderCommandEncoder(descriptor: pass))
-        encoder.setRenderPipelineState(pipeline); encoder.setVertexBuffer(points, offset: 0, index: 0)
+        encoder.setVertexBuffer(points, offset: 0, index: 0)
+        // Match production: faint additive halo first, unmodified color core last.
+        encoder.setRenderPipelineState(glowPipeline); uniforms.viewport.y = 1
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<CloudUniforms>.stride, index: 1)
+        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: pointCount)
+        encoder.setRenderPipelineState(pipeline); uniforms.viewport.y = 0
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<CloudUniforms>.stride, index: 1)
         encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: pointCount)
         encoder.endEncoding(); command.commit()

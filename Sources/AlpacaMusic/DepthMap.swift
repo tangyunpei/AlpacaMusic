@@ -76,38 +76,43 @@ struct LuminanceDepthProvider: DepthProvider {
     }
 }
 
-/// Three float4 values match the 48-byte Metal vertex layout without padding ambiguity.
+/// Four float4 values match the 64-byte Metal vertex layout without padding ambiguity.
 struct CloudPoint: Sendable {
     var positionDepthSeed: SIMD4<Float>
     var colorLuminance: SIMD4<Float>
     var scatter: SIMD4<Float>
+    var geometryFeatures: SIMD4<Float> = SIMD4(0, 1, 0, 0)
 }
 struct CloudSamples: Sendable { var points: [CloudPoint]; var density: Int }
 
 enum CloudSampler {
-    static func sample(_ image: ArtworkPixels, density: Int, seed: UInt64, provider: any DepthProvider = LuminanceDepthProvider()) async throws -> CloudSamples {
-        let depth = try await provider.compute(image, grid: density)
-        guard density > 1, depth.count == density * density else { throw DepthError.invalidGrid }
+    static func sample(_ image: ArtworkPixels, density: Int, seed: UInt64, provider: (any DepthProvider)? = nil) async throws -> CloudSamples {
+        try Task.checkCancellation()
+        guard (2...512).contains(density) else { throw DepthError.invalidGrid }
+        let field = try await ArtworkCloudField.make(image, grid: density)
+        let depth: [Float]
+        if let provider {
+            depth = try await provider.compute(image, grid: density)
+            guard depth.count == density * density else { throw DepthError.invalidGrid }
+        } else {
+            depth = field.cells.map(\.depth)
+        }
         var points: [CloudPoint] = []; points.reserveCapacity(density * density)
         var random = ArtworkRandom(seed: seed)
         let half = Float(density - 1) / 2
         for y in 0..<density {
-            let sy = min(image.height - 1, Int((Float(y) + 0.5) * Float(image.height) / Float(density)))
             for x in 0..<density {
-                let sx = min(image.width - 1, Int((Float(x) + 0.5) * Float(image.width) / Float(density)))
-                let pixel = (sy * image.width + sx) * 4
-                guard image.rgba[pixel + 3] >= 10 else { continue }
-                let alpha = Float(image.rgba[pixel + 3]) / 255
-                let r = min(1, Float(image.rgba[pixel]) / (255 * alpha)), g = min(1, Float(image.rgba[pixel + 1]) / (255 * alpha)), b = min(1, Float(image.rgba[pixel + 2]) / (255 * alpha))
-                func linear(_ x: Float) -> Float { x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4) }
+                let cell = field.cells[y * density + x]
+                guard cell.alpha >= 10 / 255 else { continue }
                 let pointSeed = random.next(), angle = random.next() * .pi * 2, z = random.next() * 2 - 1
-                let radius = 0.40 + random.next() * 0.60, ring = sqrt(1 - z * z)
+                let radius = 0.04 + random.next() * 0.10, ring = sqrt(max(0, 1 - z * z))
                 let d = depth[y * density + x]
                 let baseX = (Float(x) - half) / half, baseY = -(Float(y) - half) / half
                 points.append(CloudPoint(
                     positionDepthSeed: SIMD4(baseX, baseY, d.isFinite ? min(1, max(0, d)) : 0.5, pointSeed),
-                    colorLuminance: SIMD4(linear(r), linear(g), linear(b), 0.2126 * r + 0.7152 * g + 0.0722 * b),
-                    scatter: SIMD4(baseX * 0.72 + cos(angle) * ring * radius, baseY * 0.72 + sin(angle) * ring * radius, z * radius * 0.55 - 0.3, alpha)))
+                    colorLuminance: SIMD4(cell.linearColor, cell.perceptualLuminance),
+                    scatter: SIMD4(baseX + cos(angle) * ring * radius, baseY + sin(angle) * ring * radius, z * 0.13, cell.alpha),
+                    geometryFeatures: SIMD4(cell.detailProtection, 1, 0, 0)))
             }
             if y.isMultiple(of: 12) { try Task.checkCancellation(); await Task.yield() }
         }

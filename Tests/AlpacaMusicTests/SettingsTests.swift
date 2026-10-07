@@ -12,7 +12,7 @@ import Testing
     #expect(valid.idle == 0.012)
 }
 @Test func durationFormattingHandlesLiveStreams() {
-    #expect(formattedTime(.infinity) == "直播")
-    #expect(formattedTime(.nan) == "直播")
+    #expect(formattedTime(.infinity) == L10n.string("直播"))
+    #expect(formattedTime(.nan) == L10n.string("直播"))
     #expect(formattedTime(125) == "2:05")
 }
