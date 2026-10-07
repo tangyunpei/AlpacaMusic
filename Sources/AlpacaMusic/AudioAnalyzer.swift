@@ -199,7 +199,7 @@ final class AudioAnalyzer: @unchecked Sendable {
         } else {
             status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap)
         }
-        guard status == noErr, let tap else { Unmanaged<AudioAnalyzer>.fromOpaque(retained).release(); throw MusicError.message("无法建立音频分析通道（\(status)）。") }
+        guard status == noErr, let tap else { Unmanaged<AudioAnalyzer>.fromOpaque(retained).release(); throw MusicError.message(L10n.string("无法建立音频分析通道（\(String(status))）。")) }
         return tap
     }
 }

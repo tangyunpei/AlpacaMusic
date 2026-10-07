@@ -2,6 +2,7 @@ import Foundation
 
 enum LyricsFormat: String, Codable, Sendable { case lrc, srt, plain }
 enum LyricTiming: String, Codable, Sendable { case plain, line, word }
+enum LyricWordTimingOrigin: String, Codable, Sendable { case audioEstimate }
 enum LyricsStatus: String, Sendable { case idle, loading, ready, unavailable, failed }
 
 struct LyricWord: Identifiable, Codable, Equatable, Sendable {
@@ -17,6 +18,7 @@ struct LyricLine: Identifiable, Codable, Equatable, Sendable {
     var end: Double? = nil
     var words: [LyricWord] = []
     var translation: String? = nil
+    var wordTimingOrigin: LyricWordTimingOrigin? = nil
 }
 struct LyricDocument: Codable, Equatable, Sendable {
     var lines: [LyricLine]
@@ -63,12 +65,12 @@ enum LyricsParser {
     static let maximumBytes = 2 * 1024 * 1024
     static let maximumLines = 10_000
 
-    static func parse(_ text: String, format: LyricsFormat? = nil, sourceDescription: String = "歌词") throws -> LyricDocument {
-        guard text.utf8.count <= maximumBytes else { throw MusicError.message("歌词文件超过 2 MB，无法读取。") }
+    static func parse(_ text: String, format: LyricsFormat? = nil, sourceDescription: String = L10n.string("歌词")) throws -> LyricDocument {
+        guard text.utf8.count <= maximumBytes else { throw MusicError.message(L10n.string("歌词文件超过 2 MB，无法读取。")) }
         let normalized = text.replacingOccurrences(of: "\u{FEFF}", with: "").replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         let raw = normalized.components(separatedBy: "\n")
         guard raw.count <= maximumLines, raw.allSatisfy({ $0.utf8.count <= 32_768 }) else {
-            throw MusicError.message("歌词行数或单行长度过大，无法读取。")
+            throw MusicError.message(L10n.string("歌词行数或单行长度过大，无法读取。"))
         }
         let actual = format ?? (normalized.contains("-->") ? .srt : .lrc)
         let result: LyricDocument
@@ -78,7 +80,7 @@ enum LyricsParser {
         case .srt: result = try parseSRT(raw, sourceDescription: sourceDescription)
         case .lrc: result = try parseLRC(raw, sourceDescription: sourceDescription)
         }
-        guard !result.lines.isEmpty else { throw MusicError.message("没有找到可显示的歌词。") }
+        guard !result.lines.isEmpty else { throw MusicError.message(L10n.string("没有找到可显示的歌词。")) }
         return result
     }
 
@@ -112,7 +114,7 @@ enum LyricsParser {
     private static func validate(_ document: LyricDocument) throws {
         guard document.lines.count <= maximumLines,
               document.isInstrumental || !document.lines.isEmpty else {
-            throw MusicError.message("平台歌词为空或行数过多，无法读取。")
+            throw MusicError.message(L10n.string("平台歌词为空或行数过多，无法读取。"))
         }
         var bytes = 0, words = 0, previousLine = -Double.infinity
         func valid(_ value: Double) -> Bool { value.isFinite && value >= 0 && value <= 86_400 }
@@ -120,16 +122,16 @@ enum LyricsParser {
             bytes += line.text.utf8.count + (line.translation?.utf8.count ?? 0)
             words += line.words.count
             guard line.text.utf8.count <= 32_768, bytes <= maximumBytes, words <= 100_000 else {
-                throw MusicError.message("平台歌词内容过大，无法读取。")
+                throw MusicError.message(L10n.string("平台歌词内容过大，无法读取。"))
             }
             if let start = line.start {
                 guard valid(start), start >= previousLine,
                       line.end.map({ valid($0) && $0 > start }) ?? true else {
-                    throw MusicError.message("平台歌词句子时间无效，无法同步显示。")
+                    throw MusicError.message(L10n.string("平台歌词句子时间无效，无法同步显示。"))
                 }
                 previousLine = start
             } else if document.timing != .plain {
-                throw MusicError.message("平台歌词缺少句子时间。")
+                throw MusicError.message(L10n.string("平台歌词缺少句子时间。"))
             }
             var previousWord = line.start ?? 0
             for word in line.words {
@@ -138,7 +140,7 @@ enum LyricsParser {
                       valid(word.start), word.start >= previousWord,
                       word.end.map({ valid($0) && $0 > word.start }) ?? true,
                       line.end.map({ (word.end ?? word.start) <= $0 }) ?? true else {
-                    throw MusicError.message("平台逐字歌词时间无效，无法同步显示。")
+                    throw MusicError.message(L10n.string("平台逐字歌词时间无效，无法同步显示。"))
                 }
                 previousWord = word.start
             }
@@ -150,7 +152,7 @@ enum LyricsParser {
         for line in raw {
             let value = line.trimmingCharacters(in: .whitespaces)
             if value.lowercased().hasPrefix("[offset:"), value.hasSuffix("]"), let milliseconds = Double(value.dropFirst(8).dropLast()), milliseconds.isFinite {
-                guard abs(milliseconds) <= 86_400_000 else { throw MusicError.message("歌词时间偏移超出有效范围。") }
+                guard abs(milliseconds) <= 86_400_000 else { throw MusicError.message(L10n.string("歌词时间偏移超出有效范围。")) }
                 // Positive LRC offset advances lyrics relative to the audio.
                 offset = milliseconds / 1_000
             }
@@ -179,10 +181,10 @@ enum LyricsParser {
                 let text = words.isEmpty ? remainder : words.map(\.text).joined()
                 expandedBytes += text.utf8.count; expandedWords += words.count
                 guard expandedBytes <= maximumBytes, expandedWords <= 100_000 else {
-                    throw MusicError.message("重复时间标记展开后的歌词过大，无法读取。")
+                    throw MusicError.message(L10n.string("重复时间标记展开后的歌词过大，无法读取。"))
                 }
                 lines.append(.init(id: lines.count, text: text.trimmingCharacters(in: .whitespaces), start: max(0, time - offset), words: words))
-                guard lines.count <= maximumLines else { throw MusicError.message("歌词时间标记过多，无法读取。") }
+                guard lines.count <= maximumLines else { throw MusicError.message(L10n.string("歌词时间标记过多，无法读取。")) }
             }
         }
         return finalize(lines, sourceDescription: sourceDescription, title: title, artist: artist)
@@ -204,7 +206,7 @@ enum LyricsParser {
             let end = index + 1 < matches.count ? Range(matches[index + 1].range, in: text)!.lowerBound : text.endIndex
             let start = max(0, time + shift)
             if let previous = words.last {
-                guard start >= previous.start else { throw MusicError.message("逐字歌词时间顺序无效，无法同步显示。") }
+                guard start >= previous.start else { throw MusicError.message(L10n.string("逐字歌词时间顺序无效，无法同步显示。")) }
                 words[words.count - 1].end = start
             }
             let value = String(text[full.upperBound..<end])
@@ -218,10 +220,10 @@ enum LyricsParser {
         while index < raw.count {
             if raw[index].trimmingCharacters(in: .whitespaces).isEmpty { index += 1; continue }
             if Int(raw[index].trimmingCharacters(in: .whitespaces)) != nil { index += 1 }
-            guard index < raw.count else { throw MusicError.message("SRT 歌词缺少时间范围。") }
+            guard index < raw.count else { throw MusicError.message(L10n.string("SRT 歌词缺少时间范围。")) }
             let parts = raw[index].components(separatedBy: "-->")
             guard parts.count == 2, let start = srtTimestamp(parts[0]), let end = srtTimestamp(parts[1].trimmingCharacters(in: .whitespaces).components(separatedBy: " ")[0]), end > start else {
-                throw MusicError.message("SRT 歌词时间格式无效。")
+                throw MusicError.message(L10n.string("SRT 歌词时间格式无效。"))
             }
             index += 1
             var text: [String] = []

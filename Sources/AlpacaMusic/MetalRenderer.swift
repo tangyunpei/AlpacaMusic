@@ -63,8 +63,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private var elapsed: Float = 0
     private var energy: Float = 0
     private var beat: Float = 0
-    private var yaw: Float = 0.12, pitch: Float = -0.075, zoom: Float = 1
-    private var targetYaw: Float = 0.12, targetPitch: Float = -0.075, targetZoom: Float = 1
+    private var yaw: Float = 0.055, pitch: Float = -0.035, zoom: Float = 1
+    private var targetYaw: Float = 0.055, targetPitch: Float = -0.035, targetZoom: Float = 1
     private var velocity = SIMD2<Float>.zero
     private var dragging = false
     private var fpsStart = CACurrentMediaTime(), frames = 0
@@ -89,14 +89,14 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     init(view: MTKView, device: any MTLDevice, signal: @escaping @MainActor () -> AudioLevels) throws {
         self.view = view; self.device = device; self.signal = signal
-        guard let queue = device.makeCommandQueue() else { throw MusicError.message("无法建立 Metal 命令队列") }
+        guard let queue = device.makeCommandQueue() else { throw MusicError.message(L10n.string("无法建立 Metal 命令队列")) }
         self.queue = queue
         if let cached = Self.pipelineCache[device.registryID] { pipelines = cached }
         else {
             let source = try Self.shaderSource()
             let options = MTLCompileOptions()
             let library = try device.makeLibrary(source: source, options: options)
-            guard let vertex = library.makeFunction(name: "cloudVertex"), let fragment = library.makeFunction(name: "cloudFragment") else { throw MusicError.message("无法加载点云着色器") }
+            guard let vertex = library.makeFunction(name: "cloudVertex"), let fragment = library.makeFunction(name: "cloudFragment") else { throw MusicError.message(L10n.string("无法加载点云着色器")) }
             func pipeline(glow: Bool) throws -> any MTLRenderPipelineState {
                 let descriptor = MTLRenderPipelineDescriptor()
                 descriptor.label = glow ? "Album points / glow" : "Album points / normal"
@@ -126,7 +126,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     static func shaderSource() throws -> String {
-        guard let url = Bundle.module.url(forResource: "PointCloud", withExtension: "metal", subdirectory: "Resources") else { throw MusicError.message("缺少点云着色器") }
+        guard let url = Bundle.module.url(forResource: "PointCloud", withExtension: "metal", subdirectory: "Resources") else { throw MusicError.message(L10n.string("缺少点云着色器")) }
         return try String(contentsOf: url, encoding: .utf8)
     }
 
@@ -207,7 +207,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 let samples = try await worker.value
                 guard !Task.isCancelled, !stopped, generation == ownGeneration else { return }
                 let buffer = try makeBuffer(samples)
-                let now = CACurrentMediaTime(), duration = reducedMotion || !changed ? 0.2 : 1.05
+                let now = CACurrentMediaTime(), duration = reducedMotion || !changed ? 0.2 : 0.75
                 for i in layers.indices { layers[i].fadeAt = now; layers[i].fadeFrom = layers[i].opacity; layers[i].fadeDuration = duration }
                 layers.append(CloudLayer(samples: samples, buffer: buffer, created: now, duration: duration, assemble: changed))
                 while layers.count > 3 {
@@ -216,13 +216,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 }
                 builtKey = key; sampledGeneration = ownGeneration
                 if artwork.usedFallback, lastArtworkNotice != key {
-                    lastArtworkNotice = key; onNotice("封面读取失败，已使用生成封面。")
+                    lastArtworkNotice = key; onNotice(L10n.string("封面读取失败，已使用生成封面。"))
                 }
             } catch is CancellationError { }
             catch {
                 guard !Task.isCancelled, !stopped else { return }
                 if layers.isEmpty { onVisibility(false) }
-                onNotice("点云暂时不可用，音乐播放不受影响。")
+                onNotice(L10n.string("点云暂时不可用，音乐播放不受影响。"))
             }
             if generation == ownGeneration { isSampling = false; updateFrameRate(); view?.needsDisplay = true }
         }
@@ -230,7 +230,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     private func makeBuffer(_ samples: CloudSamples) throws -> any MTLBuffer {
         let buffer = samples.points.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) }
-        guard let buffer else { throw MusicError.message("没有足够的图形内存") }
+        guard let buffer else { throw MusicError.message(L10n.string("没有足够的图形内存")) }
         buffer.label = "Album points \(samples.density)"
         return buffer
     }
@@ -253,7 +253,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
     func endDrag() { dragging = false; requestInteractionFrame() }
     func magnify(_ factor: Float) { targetZoom = min(2.5, max(0.6, targetZoom * factor)); requestInteractionFrame() }
-    func resetCamera() { targetYaw = 0.12; targetPitch = -0.075; targetZoom = 1; velocity = .zero; requestInteractionFrame() }
+    func resetCamera() { targetYaw = 0.055; targetPitch = -0.035; targetZoom = 1; velocity = .zero; requestInteractionFrame() }
     private func clampPitch(_ value: Float) -> Float { min(.pi * 5 / 12, max(-.pi * 5 / 12, value)) }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { }
@@ -289,7 +289,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let command = queue.makeCommandBuffer(), let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { inFlight.signal(); return }
         command.label = "Album point cloud frame"
-        encoder.setRenderPipelineState(quality.glow ? pipelines.glow : pipelines.normal)
         let aspect = Float(max(1, view.drawableSize.width) / max(1, view.drawableSize.height))
         let fov = Float.pi * 42 / 180, tanHalf = tan(fov / 2)
         let distance = (1 / (tanHalf * 0.7)) * max(1, 1 / aspect)
@@ -304,15 +303,25 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             let dissolve = !reduce ? Float(layers[i].dissolveAt.map { min(1, (now - $0) / 0.4) } ?? 0) : 0
             let fade = Float(layers[i].fadeAt.map { min(1, (now - $0) / (reduce ? 0.2 : layers[i].fadeDuration)) } ?? 0)
             if fade >= 1 { layers.remove(at: i); continue }
-            let enteringOpacity = reduce || !layers[i].assemble ? progress : min(1, 0.25 + progress * 1.5)
+            let enteringOpacity = progress * progress * (3 - 2 * progress)
             layers[i].opacity = layers[i].fadeAt == nil ? enteringOpacity * (1 - dissolve * 0.72) : layers[i].fadeFrom * (1 - fade)
             var uniforms = CloudUniforms(projection: projection, modelView: modelView,
                 motion: SIMD4(elapsed, energy, beat, reduce || !layers[i].assemble ? 1 : progress),
                 shape: SIMD4(settings.depth, settings.bounce, settings.idle, settings.pointSize),
                 wave: SIMD4(settings.frequency, settings.speed, settings.invert ? 1 : 0, settings.scheme == 1 ? 1 : 0),
-                behavior: SIMD4(settings.beatPop ? 1 : 0, reduce ? 0 : 1, dissolve, layers[i].opacity),
+                behavior: SIMD4(settings.beatPop ? 1 : 0, !reduce && isPlaying ? 1 : 0, dissolve, layers[i].opacity),
                 viewport: SIMD4(Float(view.drawableSize.height) / (2 * tanHalf), quality.glow ? 1 : 0, 160 / Float(layers[i].samples.density), distance / zoom))
             encoder.setVertexBuffer(layers[i].buffer, offset: 0, index: 0)
+            // A restrained additive halo sits beneath an accurate color core.
+            // Never render the photographic core itself with additive blending.
+            if quality.glow {
+                encoder.setRenderPipelineState(pipelines.glow)
+                uniforms.viewport.y = 1
+                encoder.setVertexBytes(&uniforms, length: MemoryLayout<CloudUniforms>.stride, index: 1)
+                encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: layers[i].samples.points.count)
+            }
+            encoder.setRenderPipelineState(pipelines.normal)
+            uniforms.viewport.y = 0
             encoder.setVertexBytes(&uniforms, length: MemoryLayout<CloudUniforms>.stride, index: 1)
             encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: layers[i].samples.points.count)
         }

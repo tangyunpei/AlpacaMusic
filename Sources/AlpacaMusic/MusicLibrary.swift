@@ -27,12 +27,12 @@ private actor LibraryStorage {
         guard FileManager.default.fileExists(atPath: location.path(percentEncoded: false)) else { return (nil, nil) }
         let data: Data
         do { data = try Data(contentsOf: location) }
-        catch { throw MusicError.message("无法读取音乐资料库，请检查应用数据目录权限") }
+        catch { throw MusicError.message(L10n.string("无法读取音乐资料库，请检查应用数据目录权限")) }
         do {
             var state = try JSONDecoder().decode(LibrarySnapshot.self, from: data)
             guard state.version == 1, state.tracks.count <= 10000,
                   Set(state.tracks.map(\.id)).count == state.tracks.count,
-                  state.tracks.allSatisfy({ !$0.id.isEmpty && $0.duration.isFinite && $0.duration >= 0 && ($0.source != .local || $0.bookmark != nil) }) else { throw MusicError.message("资料库格式无效") }
+                  state.tracks.allSatisfy({ !$0.id.isEmpty && $0.duration.isFinite && $0.duration >= 0 && ($0.source != .local || $0.bookmark != nil) }) else { throw MusicError.message(L10n.string("资料库格式无效")) }
             state.sources = try SourceService.validatedConfigurations(state.sources)
             let ids = Set(state.tracks.map(\.id))
             state.favorites.formIntersection(ids)
@@ -56,7 +56,7 @@ private actor LibraryStorage {
         } catch {
             let backup = directory.appending(path: "library-v1.corrupt-\(UUID().uuidString).json")
             try FileManager.default.moveItem(at: location, to: backup)
-            return (LibrarySnapshot(), "音乐资料库格式损坏，已保留原始备份并创建空资料库。原始音频文件没有改动。")
+            return (LibrarySnapshot(), L10n.string("音乐资料库格式损坏，已保留原始备份并创建空资料库。原始音频文件没有改动。"))
         }
     }
 
@@ -162,7 +162,7 @@ private actor LibraryStorage {
     }
 
     func importURLs(_ urls: [URL]) async -> ImportResult {
-        guard !busy else { return ImportResult(errors: ["已有导入任务正在进行，请稍后再试"] ) }
+        guard !busy else { return ImportResult(errors: [L10n.string("已有导入任务正在进行，请稍后再试")] ) }
         busy = true
         defer { busy = false }
         let result = await importer.importURLs(urls)
@@ -176,7 +176,7 @@ private actor LibraryStorage {
         for track in additions {
             if let index = tracks.firstIndex(where: { $0.id == track.id }) { tracks[index] = track }
             else if tracks.count < 10000 { tracks.append(track) }
-            else { error = "音乐库最多保存 10000 首歌曲"; break }
+            else { error = L10n.string("音乐库最多保存 10000 首歌曲"); break }
         }
         persist()
     }
@@ -188,7 +188,7 @@ private actor LibraryStorage {
     }
     @discardableResult func createPlaylist(_ name: String) -> MusicPlaylist {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let playlist = MusicPlaylist(name: String((cleaned.isEmpty ? "未命名歌单" : cleaned).prefix(80)))
+        let playlist = MusicPlaylist(name: String((cleaned.isEmpty ? L10n.string("未命名歌单") : cleaned).prefix(80)))
         if !ready { startupMutations.append(.create(playlist)) }
         playlists.append(playlist); persist(); return playlist
     }
@@ -196,7 +196,7 @@ private actor LibraryStorage {
         guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
         if !ready { startupMutations.append(.addToPlaylist(id, track)) }
         if !tracks.contains(where: { $0.id == track.id }) {
-            guard tracks.count < 10000 else { error = "音乐库最多保存 10000 首歌曲"; return }
+            guard tracks.count < 10000 else { error = L10n.string("音乐库最多保存 10000 首歌曲"); return }
             tracks.append(track)
         }
         if !playlists[index].trackIDs.contains(track.id) { playlists[index].trackIDs.append(track.id) }
@@ -211,15 +211,15 @@ private actor LibraryStorage {
     /// deleting local edits or mutating the source platform's playlist.
     @discardableResult func importRemotePlaylist(_ remote: RemoteMusicPlaylist, accountID: String, tracks incoming: [Track]) throws -> MusicPlaylist {
         guard (DirectMusicAccess.sources.contains(remote.source) || remote.source == .appleMusic || remote.source == .spotify), !remote.id.isEmpty, !accountID.isEmpty,
-              incoming.allSatisfy({ $0.source == remote.source && !$0.id.isEmpty && $0.duration.isFinite && $0.duration >= 0 && ((remote.source != .appleMusic && remote.source != .spotify) || !($0.sourceID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }) else { throw MusicError.message("歌单内容无效，未导入") }
+              incoming.allSatisfy({ $0.source == remote.source && !$0.id.isEmpty && $0.duration.isFinite && $0.duration >= 0 && ((remote.source != .appleMusic && remote.source != .spotify) || !($0.sourceID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }) else { throw MusicError.message(L10n.string("歌单内容无效，未导入")) }
         var seen = Set<String>()
         let unique = incoming.filter { seen.insert($0.id).inserted }
         if remote.source == .appleMusic || remote.source == .spotify {
             let incomingIDs = Set(unique.map(\.id))
-            guard !tracks.contains(where: { incomingIDs.contains($0.id) && $0.source != remote.source }) else { throw MusicError.message("\(remote.source.title) 歌曲标识与其他来源冲突，此次歌单未导入") }
+            guard !tracks.contains(where: { incomingIDs.contains($0.id) && $0.source != remote.source }) else { throw MusicError.message(L10n.string("\(remote.source.title) 歌曲标识与其他来源冲突，此次歌单未导入")) }
         }
         let existingIDs = Set(tracks.map(\.id))
-        guard existingIDs.union(unique.map(\.id)).count <= 10000 else { throw MusicError.message("音乐库最多保存 10000 首；此次歌单未导入") }
+        guard existingIDs.union(unique.map(\.id)).count <= 10000 else { throw MusicError.message(L10n.string("音乐库最多保存 10000 首；此次歌单未导入")) }
         if !ready { startupMutations.append(.importRemote(remote, accountID, unique)) }
         // Encoding disambiguates arbitrary provider IDs without storing credentials.
         let identity = try JSONEncoder().encode([remote.source.rawValue, accountID, remote.id]).base64EncodedString()
@@ -245,11 +245,11 @@ private actor LibraryStorage {
     @discardableResult func importRemotePlaylistAndSave(_ remote: RemoteMusicPlaylist, accountID: String, tracks incoming: [Track]) async throws -> MusicPlaylist {
         await load()
         try Task.checkCancellation()
-        guard !persistenceBlocked else { throw MusicError.message("音乐资料库当前无法读取，未导入；请重新打开应用后重试。") }
+        guard !persistenceBlocked else { throw MusicError.message(L10n.string("音乐资料库当前无法读取，未导入；请重新打开应用后重试。")) }
         let playlist = try importRemotePlaylist(remote, accountID: accountID, tracks: incoming)
         if let result = await saveTask?.value {
             do { try result.get() }
-            catch { throw MusicError.message("歌单已加入当前会话，但未能保存到磁盘。\(error.localizedDescription)") }
+            catch { throw MusicError.message(L10n.string("歌单已加入当前会话，但未能保存到磁盘。\(error.localizedDescription)")) }
         }
         return playlist
     }
@@ -260,20 +260,20 @@ private actor LibraryStorage {
         try Task.checkCancellation()
         await load()
         try Task.checkCancellation()
-        guard !persistenceBlocked else { throw MusicError.message("音乐资料库当前无法读取，未导入；请重新打开应用后重试。") }
+        guard !persistenceBlocked else { throw MusicError.message(L10n.string("音乐资料库当前无法读取，未导入；请重新打开应用后重试。")) }
         guard incoming.allSatisfy({
             $0.source == .appleMusic && !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !($0.sourceID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             $0.duration.isFinite && $0.duration >= 0
-        }) else { throw MusicError.message("Apple Music 曲库内容无效，此次歌曲未导入") }
+        }) else { throw MusicError.message(L10n.string("Apple Music 曲库内容无效，此次歌曲未导入")) }
         var seen = Set<String>()
         let unique = incoming.filter { seen.insert($0.id).inserted }
         let indices = Dictionary(uniqueKeysWithValues: tracks.enumerated().map { ($0.element.id, $0.offset) })
         guard !unique.contains(where: { track in indices[track.id].map { tracks[$0].source != .appleMusic } ?? false }) else {
-            throw MusicError.message("Apple Music 歌曲标识与其他来源冲突，此次歌曲未导入")
+            throw MusicError.message(L10n.string("Apple Music 歌曲标识与其他来源冲突，此次歌曲未导入"))
         }
         guard Set(indices.keys).union(unique.map(\.id)).count <= 10000 else {
-            throw MusicError.message("音乐库最多保存 10000 首；此次 Apple Music 歌曲未导入")
+            throw MusicError.message(L10n.string("音乐库最多保存 10000 首；此次 Apple Music 歌曲未导入"))
         }
         try Task.checkCancellation()
         for track in unique {
@@ -286,7 +286,7 @@ private actor LibraryStorage {
         persist()
         if let result = await saveTask?.value {
             do { try result.get() }
-            catch { throw MusicError.message("Apple Music 歌曲已加入当前会话，但未能保存到磁盘。\(error.localizedDescription)") }
+            catch { throw MusicError.message(L10n.string("Apple Music 歌曲已加入当前会话，但未能保存到磁盘。\(error.localizedDescription)")) }
         }
         return unique.count
     }
@@ -302,7 +302,7 @@ private actor LibraryStorage {
         await load()
         try Task.checkCancellation()
         guard !persistenceBlocked else {
-            throw MusicError.message("音乐资料库当前无法读取，未导入；请重新打开应用后重试。")
+            throw MusicError.message(L10n.string("音乐资料库当前无法读取，未导入；请重新打开应用后重试。"))
         }
         guard incoming.allSatisfy({
             $0.source == .soda && !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -313,13 +313,13 @@ private actor LibraryStorage {
                 range.start.isFinite && range.start >= 0 && range.duration.isFinite && range.duration > 0 &&
                 range.start + range.duration <= range.fullDuration + 1
             } ?? true
-        }) else { throw MusicError.message("汽水音乐歌曲资料无效，未导入。") }
+        }) else { throw MusicError.message(L10n.string("汽水音乐歌曲资料无效，未导入。")) }
         var seen = Set<String>()
         let unique = incoming.filter { seen.insert($0.id).inserted }
         let indices = Dictionary(uniqueKeysWithValues: tracks.enumerated().map { ($0.element.id, $0.offset) })
         guard !unique.contains(where: { track in indices[track.id].map { tracks[$0].source != .soda } ?? false }),
               Set(indices.keys).union(unique.map(\.id)).count <= 10000 else {
-            throw MusicError.message("歌曲标识冲突或音乐库超过 10000 首，此次未导入。")
+            throw MusicError.message(L10n.string("歌曲标识冲突或音乐库超过 10000 首，此次未导入。"))
         }
         try Task.checkCancellation()
         for track in unique {
@@ -333,7 +333,7 @@ private actor LibraryStorage {
         persist()
         if let result = await saveTask?.value {
             do { try result.get() }
-            catch { throw MusicError.message("歌曲已加入当前会话，但未能保存到磁盘。\(error.localizedDescription)") }
+            catch { throw MusicError.message(L10n.string("歌曲已加入当前会话，但未能保存到磁盘。\(error.localizedDescription)")) }
         }
         return unique.count
     }
@@ -380,12 +380,12 @@ private actor LibraryStorage {
                 let value = error as NSError
                 let reason: String
                 switch CocoaError.Code(rawValue: value.code) {
-                case .fileWriteOutOfSpace where value.domain == NSCocoaErrorDomain: reason = "磁盘空间不足"
-                case .fileWriteNoPermission where value.domain == NSCocoaErrorDomain: reason = "没有写入资料库的权限"
-                case .fileWriteVolumeReadOnly where value.domain == NSCocoaErrorDomain: reason = "资料库所在磁盘为只读"
-                default: reason = "磁盘写入失败（错误码 \(value.code)）"
+                case .fileWriteOutOfSpace where value.domain == NSCocoaErrorDomain: reason = L10n.string("磁盘空间不足")
+                case .fileWriteNoPermission where value.domain == NSCocoaErrorDomain: reason = L10n.string("没有写入资料库的权限")
+                case .fileWriteVolumeReadOnly where value.domain == NSCocoaErrorDomain: reason = L10n.string("资料库所在磁盘为只读")
+                default: reason = L10n.string("磁盘写入失败（错误码 \(String(value.code))）")
                 }
-                let message = "无法保存音乐资料库：\(reason)。当前会话的更改尚未保存，请修复后重试保存。"
+                let message = L10n.string("无法保存音乐资料库：\(reason)。当前会话的更改尚未保存，请修复后重试保存。")
                 if let self, self.revision == revision { self.error = message; self.persistenceError = message }
                 return .failure(.message(message))
             }

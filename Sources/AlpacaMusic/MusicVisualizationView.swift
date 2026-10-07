@@ -40,8 +40,8 @@ struct MusicVisualizationView: View {
                 }
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.9), value: track?.id)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(mode.title)，\(track?.title ?? "AlpacaMusic")")
-                .accessibilityValue(!isPlaying ? "已暂停" : reduceMotion ? "减少动态，画面已静止" : track?.source.supportsAudioAnalysis == false ? "氛围模式，当前播放通道尚无实时音频采样" : "氛围运动，随可用音频变化")
+                .accessibilityLabel(L10n.string("\(mode.title)，\(track?.title ?? "AlpacaMusic")"))
+                .accessibilityValue(!isPlaying ? L10n.string("已暂停") : reduceMotion ? L10n.string("减少动态，画面已静止") : track?.source.supportsAudioAnalysis == false ? L10n.string("氛围模式，当前播放通道尚无实时音频采样") : L10n.string("氛围运动，随可用音频变化"))
             case .waveform, .spectrumBars:
                 TimelineView(.animation(minimumInterval: lowPower ? 1.0 / 30 : 1.0 / 60, paused: !animate)) { timeline in
                     let levels = isPlaying && scenePhase == .active && track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels()
@@ -62,8 +62,8 @@ struct MusicVisualizationView: View {
                     }
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(mode.title)，\(track?.title ?? "AlpacaMusic")")
-                .accessibilityValue(!isPlaying ? "已暂停" : reduceMotion ? "减少动态，画面已静止" : track?.source.supportsAudioAnalysis == false ? "当前播放通道尚无实时音频采样，显示静候画面" : mode == .spectrumBars ? "显示可用的真实音频频谱" : "显示可用的真实音频波形")
+                .accessibilityLabel(L10n.string("\(mode.title)，\(track?.title ?? "AlpacaMusic")"))
+                .accessibilityValue(!isPlaying ? L10n.string("已暂停") : reduceMotion ? L10n.string("减少动态，画面已静止") : track?.source.supportsAudioAnalysis == false ? L10n.string("当前播放通道尚无实时音频采样，显示静候画面") : mode == .spectrumBars ? L10n.string("显示可用的真实音频频谱") : L10n.string("显示可用的真实音频波形"))
                 .onChange(of: animate) { _, _ in clock.resetFrameDate() }
                 .onChange(of: track?.id) { _, _ in clock.resetSignal() }
             }
@@ -99,9 +99,9 @@ struct MusicVisualizationView: View {
 
     private func statusLabel(audioAvailable: Bool) -> some View {
         let unavailable = mode.isSignalDisplay
-            ? (track?.source.supportsAudioAnalysis == false ? "\(track?.source.title ?? "当前音源") · 尚无实时音频采样" : "等待音频采样")
-            : (track?.source.supportsAudioAnalysis == false ? "氛围模式 · 无实时频谱" : "氛围模式")
-        let label = !isPlaying ? "已暂停" : reduceMotion ? "减少动态" : audioAvailable ? "实时音频" : unavailable
+            ? (track?.source.supportsAudioAnalysis == false ? L10n.string("\(track?.source.title ?? L10n.string("当前音源")) · 尚无实时音频采样") : L10n.string("等待音频采样"))
+            : (track?.source.supportsAudioAnalysis == false ? L10n.string("氛围模式 · 无实时频谱") : L10n.string("氛围模式"))
+        let label = !isPlaying ? L10n.string("已暂停") : reduceMotion ? L10n.string("减少动态") : audioAvailable ? L10n.string("实时音频") : unavailable
         return HStack(spacing: 6) {
             Circle().fill(audioAvailable && isPlaying ? AppPalette.listeningRoom.highlight : .white.opacity(0.3)).frame(width: 3, height: 3)
             Text(label).font(.system(size: 9, weight: .medium)).tracking(0.6).foregroundStyle(.white.opacity(0.42))

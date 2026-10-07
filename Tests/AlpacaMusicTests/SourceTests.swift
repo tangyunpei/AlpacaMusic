@@ -69,9 +69,9 @@ private actor SourceFixture {
         #expect(results.first { $0.source == .netease }?.error?.contains("503") == true)
         #expect(results.first { $0.source == .qq }?.tracks.count == 1)
         let timeout = await service.test(config(.netease, suffix: "/timeout"))
-        #expect(!timeout.ok && timeout.message.contains("超时"))
+        #expect(!timeout.ok && timeout.message == L10n.string("音源请求超时，请检查服务是否可用"))
         let invalid = await service.test(config(.netease, suffix: "/html"))
-        #expect(!invalid.ok && invalid.message.contains("格式"))
+        #expect(!invalid.ok && invalid.message == L10n.string("服务返回格式不兼容，请检查 API 类型与版本"))
     }
     @Test func unavailableAndTrialSongsNeverTriggerAccessFallbacks() async throws {
         let fixture = SourceFixture(), service = SourceService(transport: { try await fixture.respond($0) })
@@ -92,11 +92,11 @@ private actor SourceFixture {
         let track = Track(id: "url", title: "Stream", artist: "Test", album: "Test", duration: 0, source: .url, url: URL(string: "https://audio.example/radio"))
         #expect(try await service.resolve(track, configurations: []).scheme == "https")
         let tested = await service.test(config(.qq))
-        #expect(tested.ok && tested.message.contains("权限"))
+        #expect(tested.ok && tested.message == L10n.string("搜索接口连接成功；歌曲播放权限将在选歌时检查"))
     }
     @Test func oversizedResponsesAreRejected() async {
         let service = SourceService(transport: { request in (Data(repeating: 32, count: 4 * 1024 * 1024 + 1), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!) })
         let result = await service.test(config(.qq))
-        #expect(!result.ok && result.message.contains("过大"))
+        #expect(!result.ok && result.message == L10n.string("音源响应过大"))
     }
 }

@@ -11,6 +11,61 @@ import Testing
         NeteaseDirectProvider(http: NativeMusicHTTP(transport: { request in try await fixture.respond(request) }))
     }
 
+    @Test func newLyricEnvelopeMatchesIndependentNodeAESVector() throws {
+        let payload = Data(#"{"id":"9","yv":0}"#.utf8)
+        #expect(String(decoding: try NeteaseLyricCrypto.encrypt(payload), as: UTF8.self) == "params=04AE33D34A93FE3EC22DA8FA305D290AB337D0FE5F36D211DE0D338CC6AA89D05E0BF73CD9F7CC4CE2B580F8F6AD4D1CCC094C41C35F758FAF9C81EFFFDDD51C36FA967D6E8D085FFF7761F600E8829657EE41157690F3EDAFF398893AD1AEAD")
+    }
+
+    @Test func yrcUsesNewOfficialRouteAndKeepsMeasuredTimes() async throws {
+        let fixture = NEFixture([.init(path: "/eapi/song/lyric/v1", json: try json([
+            "code": 200, "lrc": ["lyric": "[00:01]青山远"],
+            "yrc": ["lyric": "[1000,4200](1000,500,0)青(1800,600,0)山(3100,2100,0)远"],
+            "tlyric": ["lyric": "[00:01]Fixture translation"]
+        ]))])
+        let payload = try #require(try await provider(fixture).lyrics(playbackTrack, cookies: cookies))
+        let document = try LyricsParser.parse(payload, sourceDescription: "Fixture")
+        #expect(document.timing == .word)
+        #expect(document.lines[0].words.map(\.start) == [1, 1.8, 3.1])
+        #expect(document.lines[0].end == 5.2)
+        #expect(document.lines[0].translation == "Fixture translation")
+        #expect(await fixture.count == 1)
+        let request = try #require(await fixture.requests.first)
+        #expect(request.url?.host == "interface3.music.163.com")
+        #expect(request.timeoutInterval == 8)
+        #expect(request.value(forHTTPHeaderField: "Cookie")?.contains("MUSIC_U=fixture-session") == true)
+        #expect(String(decoding: request.httpBody ?? Data(), as: UTF8.self).hasPrefix("params="))
+    }
+
+    @Test func malformedYrcDoesNotDiscardValidLrcFromSameResponse() async throws {
+        let fixture = NEFixture([.init(path: "/eapi/song/lyric/v1", json: try json([
+            "code": 200, "lrc": ["lyric": "[00:01]Fixture fallback"],
+            "yrc": ["lyric": "[1000,2000](999,500,0)bad timing"],
+            "tlyric": ["lyric": "[00:01]译文"]
+        ]))])
+        let payload = try #require(try await provider(fixture).lyrics(playbackTrack, cookies: cookies))
+        #expect(payload.document == nil)
+        #expect(payload.text == "[00:01]Fixture fallback")
+        #expect(payload.translation == "[00:01]译文")
+        #expect(await fixture.count == 1)
+    }
+
+    @Test func newLyricFailureFallsBackToLegacyScopedRoute() async throws {
+        let fixture = NEFixture([
+            .init(path: "/eapi/song/lyric/v1", json: #"{"code":500}"#),
+            .init(path: "/weapi/song/lyric", json: #"{"code":200,"lrc":{"lyric":"[00:01]Legacy fixture"}}"#)
+        ])
+        #expect(try await provider(fixture).lyrics(playbackTrack, cookies: cookies)?.text == "[00:01]Legacy fixture")
+        #expect(await fixture.count == 2)
+    }
+
+    @Test func optionalYrcCancellationDoesNotStartFallbackRequest() async {
+        let value = NeteaseDirectProvider(http: NativeMusicHTTP(transport: { request in
+            #expect(request.url?.path == "/eapi/song/lyric/v1")
+            throw CancellationError()
+        }))
+        await #expect(throws: CancellationError.self) { try await value.lyrics(playbackTrack, cookies: cookies) }
+    }
+
     @Test func websiteEnvelopeMatchesIndependentAESAndRSAVector() throws {
         // Expected values computed independently with OpenSSL AES and integer RSA.
         let envelope = try NeteaseWebCrypto.encrypt(Data("{\"csrf_token\":\"\"}".utf8), secret: Data("0123456789abcdef".utf8))
@@ -178,48 +233,55 @@ import Testing
         let body = "{\"code\":200,\"data\":[{\"id\":9,\"code\":200,\"url\":\"https://m801.music.126.net/full.m4a?token=secret\",\"freeTrialInfo\":\(marker)}]}"
         let fixture = NEFixture([.init(path: "/weapi/song/enhance/player/url/v1", json: body)])
         let message = await failure { try await provider(fixture).resolve(playbackTrack, cookies: cookies) }
-        #expect(message.contains("无法确认完整播放") && message.contains("阶段：获取播放地址"))
-        #expect(!message.contains("仅返回试听片段") && !message.contains("secret") && !message.contains("https://"))
+        #expect(message == L10n.string("网易云返回的试听标记格式已变化，无法确认完整播放，已停止播放（\(neteasePlaybackDiagnosticExpectation(code: "200"))）"))
+        #expect(!message.contains("secret") && !message.contains("https://"))
         #expect(await fixture.count == 1)
     }
 
     @Test func recognizedPreviewKeepsItsSpecificMessageAndDoesNotLookUpOtherAudio() async {
         let fixture = NEFixture([.init(path: "/weapi/song/enhance/player/url/v1", json: #"{"code":200,"data":[{"id":9,"url":"https://m801.music.126.net/trial.m4a","freeTrialInfo":{"start":0,"end":30,"unknownFutureField":1}}]}"#)])
         let message = await failure { try await provider(fixture).resolve(playbackTrack, cookies: cookies) }
-        #expect(message.contains("仅返回试听片段"))
+        #expect(message == L10n.string("网易云仅返回试听片段，未提供完整播放（\(neteasePlaybackDiagnosticExpectation(code: nil))）；本应用不播放试听替代完整歌曲"))
         #expect(await fixture.count == 1)
     }
 
     @Test func http404AndBusiness404RemainDistinctWithoutInferringSongRights() async {
         let transport = NEFixture([.init(path: "/weapi/song/enhance/player/url/v1", json: #"{"code":401,"message":"secret"}"#, status: 404)])
         let transportMessage = await failure { try await provider(transport).resolve(playbackTrack, cookies: cookies) }
-        #expect(transportMessage.contains("HTTP 404") && transportMessage.contains("阶段：获取播放地址"))
-        #expect(!transportMessage.contains("重新登录") && !transportMessage.contains("会员") && !transportMessage.contains("secret"))
+        let reason = L10n.string("请求的接口或资源未找到，具体原因未确认")
+        let transportFailure = L10n.string("\(MusicSource.netease.title)：\(reason)（HTTP \(String(404))）")
+        #expect(transportMessage == L10n.string("\(transportFailure)（阶段：\(L10n.string("获取播放地址"))）"))
+        #expect(!transportMessage.contains("secret"))
         #expect(await transport.count == 1)
         let business = NEFixture([.init(path: "/weapi/song/enhance/player/url/v1", json: #"{"code":404}"#)])
         let businessMessage = await failure { try await provider(business).resolve(playbackTrack, cookies: cookies) }
-        #expect(businessMessage.contains("接口码：404") && !businessMessage.contains("HTTP 404"))
-        #expect(!businessMessage.contains("下架") && !businessMessage.contains("会员"))
+        let diagnostic = L10n.string("阶段：\(L10n.string("获取播放地址"))；接口码：\(String(404))")
+        #expect(businessMessage == L10n.string("网易云拒绝了请求（\(diagnostic)），平台未提供可确认的具体原因"))
+        #expect(!businessMessage.contains("HTTP 404"))
         #expect(await business.count == 1)
     }
 
     @Test(arguments: [
-        (#"{"id":9,"fee":1,"payed":0,"pl":0,"st":0}"#, "当前账户没有这首歌的付费播放权限"),
-        (#"{"id":9,"fee":1,"payed":1,"pl":320000,"st":0}"#, "权限资料显示可播放"),
-        (#"{"id":9,"fee":0,"payed":0,"pl":0,"st":-200}"#, "标记为当前不可用"),
-        (#"{"id":9,"fee":4,"payed":1,"pl":320000,"st":0,"flag":2048}"#, "需要下载后播放"),
-        (#"{"id":9,"fee":1}"#, "无法确定具体原因"),
-        (#"{"id":8,"fee":1,"payed":0,"pl":0,"st":0}"#, "未提供可核对的权限详情")
+        (#"{"id":9,"fee":1,"payed":0,"pl":0,"st":0}"#, L10n.string("平台权限资料显示当前账户没有这首歌的付费播放权限"), "st=0，pl=0，fee=1，payed=0"),
+        (#"{"id":9,"fee":1,"payed":1,"pl":320000,"st":0}"#, L10n.string("权限资料显示可播放，但地址接口未提供完整播放地址"), "st=0，pl=320000，fee=1，payed=1"),
+        (#"{"id":9,"fee":0,"payed":0,"pl":0,"st":-200}"#, L10n.string("平台将这首歌标记为当前不可用；此标记不能单独区分下架或地区限制"), "st=-200，pl=0，fee=0，payed=0"),
+        (#"{"id":9,"fee":4,"payed":1,"pl":320000,"st":0,"flag":2048}"#, L10n.string("平台标记这首歌需要下载后播放，请使用官方客户端；本应用未提供下载播放"), "st=0，pl=320000，fee=4，payed=1，flag=2048"),
+        (#"{"id":9,"fee":1}"#, L10n.string("平台未提供足够信息，无法确定具体原因"), "fee=1"),
+        (#"{"id":8,"fee":1,"payed":0,"pl":0,"st":0}"#, "", "")
     ])
-    func rejectedSongReportsConfirmedRightsWithoutGuessing(_ privilege: String, _ expected: String) async {
+    func rejectedSongReportsConfirmedRightsWithoutGuessing(_ privilege: String, _ expected: String, _ fields: String) async {
         let fixture = NEFixture([
             .init(path: "/weapi/song/enhance/player/url/v1", json: #"{"code":200,"data":[{"id":9,"code":404,"url":null,"fee":1}]}"#),
             .init(path: "/weapi/v3/song/detail", json: "{\"code\":200,\"songs\":[],\"privileges\":[\(privilege)]}")
         ])
         let message = await failure { try await provider(fixture).resolve(playbackTrack, cookies: cookies) }
-        #expect(message.contains("阶段：获取播放地址"))
-        #expect(message.contains("歌曲码：404"))
-        #expect(message.contains(expected))
+        let base = L10n.string("\(L10n.string("网易云拒绝提供这首歌的播放地址"))（\(neteasePlaybackDiagnosticExpectation(code: "404", fee: 1))）")
+        if fields.isEmpty {
+            #expect(message == L10n.string("\(base)。平台未提供可核对的权限详情，无法确定具体原因"))
+        } else {
+            let localizedFields = fields.components(separatedBy: "，").joined(separator: L10n.string("，"))
+            #expect(message == L10n.string("\(base)。\(expected)（\(localizedFields)）"))
+        }
         #expect(await fixture.count == 2)
         #expect(await fixture.requests.last?.timeoutInterval == 5)
     }
@@ -228,8 +290,7 @@ import Testing
         for response in [#"{"code":200,"data":[]}"#, #"{"code":200,"data":[{"id":8,"code":200,"url":null}]}"#] {
             let fixture = NEFixture([.init(path: "/weapi/song/enhance/player/url/v1", json: response)])
             let message = await failure { try await provider(fixture).resolve(playbackTrack, cookies: cookies) }
-            #expect(message.contains("未返回所选歌曲"))
-            #expect(!message.contains("订阅"))
+            #expect(message == L10n.string("网易云未返回所选歌曲的播放结果（阶段：获取播放地址；接口码：200）"))
             #expect(await fixture.count == 1)
         }
         let fixture = NEFixture([
@@ -237,9 +298,8 @@ import Testing
             .init(path: "/weapi/v3/song/detail", json: #"{"code":200,"songs":[],"privileges":[]}"#)
         ])
         let message = await failure { try await provider(fixture).resolve(playbackTrack, cookies: cookies) }
-        #expect(message.contains("播放地址为空"))
-        #expect(message.contains("歌曲码：200"))
-        #expect(message.contains("无法确定具体原因"))
+        let base = L10n.string("\(L10n.string("网易云返回的播放地址为空"))（\(neteasePlaybackDiagnosticExpectation(code: "200", fee: 0))）")
+        #expect(message == L10n.string("\(base)。平台未提供可核对的权限详情，无法确定具体原因"))
     }
 
     @Test func diagnosticFailurePreservesOriginalPlaybackCode() async {
@@ -248,8 +308,8 @@ import Testing
             .init(path: "/weapi/v3/song/detail", json: #"{"code":500,"message":"sensitive-response-must-not-escape"}"#)
         ])
         let message = await failure { try await provider(fixture).resolve(playbackTrack, cookies: cookies) }
-        #expect(message.contains("歌曲码：-110"))
-        #expect(message.contains("补充权限查询未完成"))
+        let base = L10n.string("\(L10n.string("网易云拒绝提供这首歌的播放地址"))（\(neteasePlaybackDiagnosticExpectation(code: "-110"))）")
+        #expect(message == L10n.string("\(base)。补充权限查询未完成，无法确定具体原因"))
         #expect(!message.contains("sensitive-response"))
     }
 
@@ -263,7 +323,18 @@ import Testing
         for response in responses {
             let fixture = NEFixture([.init(path: "/weapi/song/enhance/player/url/v1", json: response)])
             let message = await failure { try await provider(fixture).resolve(playbackTrack, cookies: cookies) }
-            #expect(message.contains("阶段：获取播放地址"))
+            let expected: String
+            if response.contains("503") {
+                let diagnostic = L10n.string("阶段：\(L10n.string("获取播放地址"))；接口码：\(String(503))")
+                expected = L10n.string("网易云拒绝了请求（\(diagnostic)），平台未提供可确认的具体原因")
+            } else if response.contains("untrusted.example") {
+                expected = L10n.string("网易云返回的播放地址格式无效或不属于已允许的官方音频域名，已停止播放（\(neteasePlaybackDiagnosticExpectation(code: "200"))）")
+            } else if response.contains("freeTrialInfo") {
+                expected = L10n.string("网易云仅返回试听片段，未提供完整播放（\(neteasePlaybackDiagnosticExpectation(code: "200"))）；本应用不播放试听替代完整歌曲")
+            } else {
+                expected = L10n.string("网易云响应格式已变化（阶段：\(L10n.string("获取播放地址"))；接口码：200），请稍后重试")
+            }
+            #expect(message == expected)
             #expect(!message.contains("secret"))
             #expect(!message.contains("MUSIC_U"))
             #expect(!message.contains("https://"))
@@ -274,8 +345,9 @@ import Testing
     @Test func playbackTimeoutRetainsItsPhaseAndCancellationStaysCancellation() async {
         let timeoutProvider = NeteaseDirectProvider(http: NativeMusicHTTP(transport: { _ in throw URLError(.timedOut) }))
         let message = await failure { try await timeoutProvider.resolve(playbackTrack, cookies: cookies) }
-        #expect(message.contains("超时"))
-        #expect(message.contains("阶段：获取播放地址"))
+        let reason = L10n.string("请求超时，请重试")
+        let failure = L10n.string("\(MusicSource.netease.title)：\(reason)（网络错误 \(String(URLError.timedOut.rawValue))）")
+        #expect(message == L10n.string("\(failure)（阶段：\(L10n.string("获取播放地址"))）"))
         let cancelledProvider = NeteaseDirectProvider(http: NativeMusicHTTP(transport: { _ in throw CancellationError() }))
         await #expect(throws: CancellationError.self) { try await cancelledProvider.resolve(playbackTrack, cookies: cookies) }
     }
@@ -312,4 +384,9 @@ private actor NEFixture {
         }
         return (Data(replies[index].json.utf8), HTTPURLResponse(url: url, statusCode: replies[index].status, httpVersion: nil, headerFields: nil)!)
     }
+}
+
+private func neteasePlaybackDiagnosticExpectation(code: String?, fee: Int? = nil) -> String {
+    L10n.string("阶段：获取播放地址；接口码：200；歌曲码：\(code ?? L10n.string("未提供"))")
+        + (fee.map { L10n.string("；fee=\(String($0))") } ?? "")
 }

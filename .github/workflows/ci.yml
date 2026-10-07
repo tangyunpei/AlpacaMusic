@@ -26,6 +26,8 @@ jobs:
           persist-credentials: false
       - name: Test version and publication logic
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Check localization resources
+        run: python3 scripts/check-localizations.py
 
   swift-tests:
     name: Swift tests and SDK audit
@@ -58,8 +60,10 @@ jobs:
       # concurrent rendering suites, so cold Metal compilation cannot starve
       # the analyzer worker on a shared runner. Both steps cover the full suite.
       - name: Test audio analysis with fresh PCM
-        run: swift test --filter 'AudioAnalyzerTests|AudioWaveformTests'
+        run: swift test --filter 'AudioAnalyzerTests|AudioWaveformTests' -Xswiftc -emit-localized-strings
       - name: Run remaining Swift tests without account credentials
-        run: swift test --skip 'AudioAnalyzerTests|AudioWaveformTests'
+        run: swift test --skip 'AudioAnalyzerTests|AudioWaveformTests' -Xswiftc -emit-localized-strings
+      - name: Check compiler-extracted translations
+        run: python3 scripts/check-localizations.py --extracted-dir .build
       - name: Audit APIs against the current SDK
         run: ./scripts/check-sdk-apis.sh

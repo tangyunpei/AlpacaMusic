@@ -105,7 +105,7 @@ private let configuredMusic = AppleMusicConfiguration(enabledInBuild: true, expe
         let adapter = StubAppleMusic(); adapter.authorization = .denied
         let service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
         await service.refresh(); #expect(adapter.subscriptionRequests == 0)
-        await service.connect(); #expect(!service.isEnabled); #expect(service.authorizationDescription == "授权被拒绝")
+        await service.connect(); #expect(!service.isEnabled); #expect(service.authorizationDescription == L10n.string("授权被拒绝"))
         #expect(adapter.subscriptionRequests == 0)
         adapter.authorization = .authorized; await service.connect()
         #expect(service.isEnabled); #expect(service.error == nil); #expect(adapter.authorizationRequests == 2)

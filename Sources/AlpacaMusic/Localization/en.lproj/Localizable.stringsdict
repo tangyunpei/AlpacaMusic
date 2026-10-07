@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%lld 个已启用音源</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@ enabled</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld source</string>
+			<key>other</key>
+			<string>%lld sources</string>
+		</dict>
+	</dict>
+	<key>%lld 个歌单</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld playlist</string>
+			<key>other</key>
+			<string>%lld playlists</string>
+		</dict>
+	</dict>
+	<key>%lld 首</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld track</string>
+			<key>other</key>
+			<string>%lld tracks</string>
+		</dict>
+	</dict>
+	<key>%lld 首已导入</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@ imported</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld song</string>
+			<key>other</key>
+			<string>%lld songs</string>
+		</dict>
+	</dict>
+	<key>%lld 首歌曲</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld track</string>
+			<key>other</key>
+			<string>%lld tracks</string>
+		</dict>
+	</dict>
+	<key>%lld 首歌曲 · 播放时检查可用片段</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@ · Available excerpts checked on playback</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld song</string>
+			<key>other</key>
+			<string>%lld songs</string>
+		</dict>
+	</dict>
+	<key>%lld 首音乐</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld song</string>
+			<key>other</key>
+			<string>%lld songs</string>
+		</dict>
+	</dict>
+	<key>LRCLIB 暂时繁忙或限制查询，请至少等待 %lld 秒后重试。</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>LRCLIB is busy or limiting requests. Wait at least %1$#@count@ and try again.</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld second</string>
+			<key>other</key>
+			<string>%lld seconds</string>
+		</dict>
+	</dict>
+	<key>Spotify 开发者账号的共享调用配额已用尽，请至少等待 %lld 秒后重试；切换同一开发者的 Client ID 不会重置配额。</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>The Spotify developer account's shared quota is exhausted. Wait at least %1$#@count@ and try again. Switching Client IDs for the same developer does not reset the quota.</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld second</string>
+			<key>other</key>
+			<string>%lld seconds</string>
+		</dict>
+	</dict>
+	<key>Spotify 请求过于频繁，请至少等待 %lld 秒后重试。</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Too many Spotify requests. Wait at least %1$#@count@ and try again.</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld second</string>
+			<key>other</key>
+			<string>%lld seconds</string>
+		</dict>
+	</dict>
+	<key>导入可读取的 %lld 首</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Import %lld readable track</string>
+			<key>other</key>
+			<string>Import %lld readable tracks</string>
+		</dict>
+	</dict>
+	<key>已导入 %lld 首。%@</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@. %2$@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Imported %lld track</string>
+			<key>other</key>
+			<string>Imported %lld tracks</string>
+		</dict>
+	</dict>
+	<key>已导入 %lld 首歌曲</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Imported %lld track</string>
+			<key>other</key>
+			<string>Imported %lld tracks</string>
+		</dict>
+	</dict>
+	<key>已导入 %lld 首音乐</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Imported %lld track</string>
+			<key>other</key>
+			<string>Imported %lld tracks</string>
+		</dict>
+	</dict>
+	<key>已导入「%@」：%lld 首歌曲</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Imported “%1$@”: %2$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld track</string>
+			<key>other</key>
+			<string>%lld tracks</string>
+		</dict>
+	</dict>
+	<key>正在保存 %lld 首歌曲…</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Saving %1$#@count@…</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld song</string>
+			<key>other</key>
+			<string>%lld songs</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -49,9 +49,9 @@ private struct NeteaseQRLoginView: View {
     var body: some View {
         VStack(spacing: 18) {
             HStack {
-                Text("网易云音乐登录").font(.title3.weight(.semibold))
+                Text(L10n.string("网易云音乐登录")).font(.title3.weight(.semibold))
                 Spacer()
-                Button("取消", action: cancel).keyboardShortcut(.cancelAction)
+                Button(L10n.string("取消"), action: cancel).keyboardShortcut(.cancelAction)
             }
             ZStack {
                 if let webView = authentication.visibleWebView {
@@ -71,15 +71,15 @@ private struct NeteaseQRLoginView: View {
             .clipShape(.rect(cornerRadius: 14))
             HStack(spacing: 8) {
                 if isConnecting { ProgressView().controlSize(.small) }
-                Text(isConnecting ? "正在连接曲库…" : error ?? authentication.message ?? "扫码确认后自动连接曲库")
+                Text(isConnecting ? L10n.string("正在连接曲库…") : error ?? authentication.message ?? L10n.string("扫码确认后自动连接曲库"))
                     .font(.callout).foregroundStyle(error == nil ? palette.secondary : Color.orange)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("neteaseLoginStatus")
             }
             HStack(spacing: 18) {
-                Button("刷新二维码", action: start)
+                Button(L10n.string("刷新二维码"), action: start)
                     .disabled(isConnecting).accessibilityIdentifier("neteaseLoginRefresh")
-                Button("使用网页登录") { stop(); onWebLogin() }
+                Button(L10n.string("使用网页登录")) { stop(); onWebLogin() }
                     .buttonStyle(.plain).font(.caption).foregroundStyle(palette.secondary)
                     .disabled(isConnecting).accessibilityIdentifier("neteaseLoginWebFallback")
             }
@@ -105,7 +105,7 @@ private struct NeteaseQRLoginView: View {
                 guard generation == token else { return }
                 didComplete = true; onComplete(); stop(); dismiss()
             } catch is CancellationError {
-                if generation == token && !Task.isCancelled { error = "连接已中断，请刷新二维码后重试。" }
+                if generation == token && !Task.isCancelled { error = L10n.string("连接已中断，请刷新二维码后重试。") }
             } catch {
                 guard generation == token, !Task.isCancelled else { return }
                 self.error = error.localizedDescription
@@ -144,13 +144,13 @@ private struct QQMusicQRLoginView: View {
     var body: some View {
         VStack(spacing: 18) {
             HStack {
-                Text("QQ 音乐登录").font(.title3.weight(.semibold))
+                Text(L10n.string("QQ 音乐登录")).font(.title3.weight(.semibold))
                 Spacer()
-                Button("取消", action: cancel).keyboardShortcut(.cancelAction)
+                Button(L10n.string("取消"), action: cancel).keyboardShortcut(.cancelAction)
             }
-            Picker("扫码方式", selection: $method) {
-                Text("QQ 扫码").tag(QQMusicQRSession.Method.qq)
-                Text("微信扫码").tag(QQMusicQRSession.Method.wechat)
+            Picker(L10n.string("扫码方式"), selection: $method) {
+                Text(L10n.string("QQ 扫码")).tag(QQMusicQRSession.Method.qq)
+                Text(L10n.string("微信扫码")).tag(QQMusicQRSession.Method.wechat)
             }.pickerStyle(.segmented).frame(width: 270).disabled(isConnecting)
                 .accessibilityIdentifier("qqLoginMethod")
             ZStack {
@@ -170,14 +170,14 @@ private struct QQMusicQRLoginView: View {
             VStack(spacing: 10) {
                 HStack(spacing: 8) {
                     if isConnecting { ProgressView().controlSize(.small) }
-                    Text(isConnecting ? "正在连接曲库…" : error ?? session.message ?? (method == .qq ? "使用手机 QQ 扫码并确认" : "使用微信扫一扫并确认"))
+                    Text(isConnecting ? L10n.string("正在连接曲库…") : error ?? session.message ?? (method == .qq ? L10n.string("使用手机 QQ 扫码并确认") : L10n.string("使用微信扫一扫并确认")))
                         .font(.callout).foregroundStyle(error == nil ? palette.secondary : Color.orange)
                         .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("qqLoginStatus")
                 }
-                Button("刷新二维码", action: start).disabled(isConnecting)
+                Button(L10n.string("刷新二维码"), action: start).disabled(isConnecting)
                     .accessibilityIdentifier("qqLoginRefresh")
-                Button("使用网页登录") { stop(); onWebLogin() }
+                Button(L10n.string("使用网页登录")) { stop(); onWebLogin() }
                     .buttonStyle(.plain).font(.caption).foregroundStyle(palette.secondary)
                     .disabled(isConnecting).accessibilityIdentifier("qqLoginWebFallback")
             }.frame(minHeight: 56)
@@ -204,7 +204,7 @@ private struct QQMusicQRLoginView: View {
                 guard generation == token else { return }
                 didComplete = true; onComplete(); stop(); dismiss()
             } catch is CancellationError {
-                if generation == token && !Task.isCancelled { error = "连接已中断，请刷新二维码后重试。" }
+                if generation == token && !Task.isCancelled { error = L10n.string("连接已中断，请刷新二维码后重试。") }
             }
             catch {
                 guard generation == token, !Task.isCancelled else { return }

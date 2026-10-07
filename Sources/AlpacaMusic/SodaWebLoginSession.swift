@@ -37,7 +37,7 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
         if let terminalFailure { throw terminalFailure }
         if phase == .ready { return }
         guard phase == .fresh, let view = webView else {
-            throw MusicError.message("汽水音乐登录会话已结束，请重新获取二维码。")
+            throw MusicError.message(L10n.string("汽水音乐登录会话已结束，请重新获取二维码。"))
         }
         let attempt = generation
         do {
@@ -46,7 +46,7 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
                 try await withCheckedThrowingContinuation { continuation in
                     let id = UUID()
                     navigationID = id; navigationContinuation = continuation
-                    register(id, seconds: 20, message: "汽水音乐登录网页加载超时，请重新获取二维码。") { [weak self] error in
+                    register(id, seconds: 20, message: L10n.string("汽水音乐登录网页加载超时，请重新获取二维码。")) { [weak self] error in
                         self?.navigationID = nil; self?.navigationContinuation = nil
                         continuation.resume(throwing: error)
                     }
@@ -58,7 +58,7 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
             try ensureActive(attempt)
             phase = .initializing
             let encoded = try await runScript(Self.prepareScript, arguments: [:], seconds: 25,
-                                              timeoutMessage: "汽水音乐登录安全组件初始化超时，请重新获取二维码。")
+                                              timeoutMessage: L10n.string("汽水音乐登录安全组件初始化超时，请重新获取二维码。"))
             let result = try Self.scriptResult(encoded)
             try ensureActive(attempt)
             guard result["ok"] as? Bool == true,
@@ -67,18 +67,18 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
                 throw scriptFailure(result, preparing: true)
             }
             let identityData = try await runScript(SodaWebIdentityBootstrap.script, arguments: [:], seconds: 11,
-                                                   timeoutMessage: "汽水音乐登录身份初始化超时，请重新获取二维码。")
+                                                   timeoutMessage: L10n.string("汽水音乐登录身份初始化超时，请重新获取二维码。"))
             let identity = try Self.scriptResult(identityData)
             try ensureActive(attempt)
             guard identity["ok"] as? Bool == true else {
                 throw Self.identityFailure(identity)
             }
             let contextData = try await runScript(SodaBrowserContext.script, arguments: [:], seconds: 6,
-                                                  timeoutMessage: "汽水音乐登录环境准备超时，请重新获取二维码。")
+                                                  timeoutMessage: L10n.string("汽水音乐登录环境准备超时，请重新获取二维码。"))
             let context = try Self.scriptResult(contextData)
             try ensureActive(attempt)
             guard context["ok"] as? Bool == true else {
-                throw MusicError.message("汽水音乐登录环境准备失败，请重新获取二维码。")
+                throw MusicError.message(L10n.string("汽水音乐登录环境准备失败，请重新获取二维码。"))
             }
             phase = .ready
         } catch {
@@ -94,33 +94,33 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
         if let terminalFailure { throw terminalFailure }
         guard phase != .cancelled else { throw CancellationError() }
         guard phase == .ready else {
-            throw MusicError.message("汽水音乐登录初始化尚未完成，请重新打开登录。")
+            throw MusicError.message(L10n.string("汽水音乐登录初始化尚未完成，请重新打开登录。"))
         }
         guard let url = request.url, url.absoluteString.utf8.count <= 32 * 1024, Self.isPassportURL(url) else {
-            throw MusicError.message("汽水音乐登录请求地址校验失败，已停止连接。")
+            throw MusicError.message(L10n.string("汽水音乐登录请求地址校验失败，已停止连接。"))
         }
         let method = (request.httpMethod ?? "GET").uppercased()
         guard ["GET", "POST"].contains(method), request.httpBodyStream == nil,
               (request.httpBody?.count ?? 0) <= 32 * 1024,
               method != "GET" || request.httpBody == nil else {
-            throw MusicError.message("汽水音乐登录请求格式无效。")
+            throw MusicError.message(L10n.string("汽水音乐登录请求格式无效。"))
         }
         var headers: [String: String] = [:]
         for name in Self.headerNames {
             guard let value = request.value(forHTTPHeaderField: name) else { continue }
             guard value.utf8.count <= 2048,
                   !value.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) else {
-                throw MusicError.message("汽水音乐登录请求格式无效。")
+                throw MusicError.message(L10n.string("汽水音乐登录请求格式无效。"))
             }
             headers[name] = value
         }
         if let contentType = headers["Content-Type"], contentType.lowercased() != "application/x-www-form-urlencoded" {
-            throw MusicError.message("汽水音乐登录请求格式无效。")
+            throw MusicError.message(L10n.string("汽水音乐登录请求格式无效。"))
         }
         headers["Accept"] = "application/json, text/javascript"
         let body: String
         if let data = request.httpBody {
-            guard let text = String(data: data, encoding: .utf8) else { throw MusicError.message("汽水音乐登录请求格式无效。") }
+            guard let text = String(data: data, encoding: .utf8) else { throw MusicError.message(L10n.string("汽水音乐登录请求格式无效。")) }
             body = text
         } else { body = "" }
         let attempt = generation
@@ -129,7 +129,7 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
                                                arguments: ["requestURL": url.absoluteString, "method": method,
                                                            "headers": headers, "body": body, "limit": Self.responseLimit,
                                                            "timeoutMS": timeout * 1000],
-                                               seconds: timeout + 1, timeoutMessage: "汽水音乐登录请求超时，请重新获取二维码。")
+                                               seconds: timeout + 1, timeoutMessage: L10n.string("汽水音乐登录请求超时，请重新获取二维码。"))
         let result = try Self.scriptResult(encodedResult)
         try ensureActive(attempt)
         guard result["ok"] as? Bool == true else { throw scriptFailure(result, preparing: false) }
@@ -138,7 +138,7 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
               let status = result["status"] as? Int, (100...599).contains(status),
               let encoded = result["bytes"] as? String, encoded.utf8.count <= ((Self.responseLimit + 2) / 3) * 4,
               let data = Data(base64Encoded: encoded), data.count <= Self.responseLimit else {
-            throw MusicError.message("汽水音乐登录网页返回了无效响应，已停止连接。")
+            throw MusicError.message(L10n.string("汽水音乐登录网页返回了无效响应，已停止连接。"))
         }
         var responseHeaders: [String: String] = [:]
         if let contentType = result["contentType"] as? String, contentType.utf8.count <= 256,
@@ -148,7 +148,7 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
         // Browser requests never expose Set-Cookie. Account state is obtained separately
         // from this view's actual WKHTTPCookieStore, never a fabricated header.
         guard let response = HTTPURLResponse(url: responseURL, statusCode: status, httpVersion: nil, headerFields: responseHeaders) else {
-            throw MusicError.message("汽水音乐登录网页返回了无效响应，已停止连接。")
+            throw MusicError.message(L10n.string("汽水音乐登录网页返回了无效响应，已停止连接。"))
         }
         return (data, response)
     }
@@ -161,7 +161,7 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
         let cookies: [MusicSessionCookie] = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let id = UUID()
-                register(id, seconds: 15, message: "汽水音乐登录会话读取超时，请重新获取二维码。") { error in continuation.resume(throwing: error) }
+                register(id, seconds: 15, message: L10n.string("汽水音乐登录会话读取超时，请重新获取二维码。")) { error in continuation.resume(throwing: error) }
                 store.getAllCookies { [weak self] values in
                     guard let self, self.finish(id) else { return }
                     guard self.generation == attempt, self.phase == .ready else { continuation.resume(throwing: CancellationError()); return }
@@ -208,7 +208,7 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
         guard phase == .navigating, navigationResponse.isForMainFrame,
               let response = navigationResponse.response as? HTTPURLResponse,
               let url = response.url, Self.isRootURL(url), response.mimeType == "text/html", navigationResponse.canShowMIMEType else {
-            failNavigation(MusicError.message("汽水音乐当前未提供可运行的官方登录网页，已停止连接。"))
+            failNavigation(MusicError.message(L10n.string("汽水音乐当前未提供可运行的官方登录网页，已停止连接。")))
             return .cancel
         }
         receivedHTML = true
@@ -223,14 +223,14 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        failNavigation(MusicError.message("汽水音乐官方登录网页无法加载，请检查网络后重新获取二维码。"))
+        failNavigation(MusicError.message(L10n.string("汽水音乐官方登录网页无法加载，请检查网络后重新获取二维码。")))
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        failNavigation(MusicError.message("汽水音乐官方登录网页无法加载，请检查网络后重新获取二维码。"))
+        failNavigation(MusicError.message(L10n.string("汽水音乐官方登录网页无法加载，请检查网络后重新获取二维码。")))
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard self.webView === webView, phase != .cancelled else { return }
-        let failure = MusicError.message("汽水音乐登录网页进程已中断，请重新打开登录。")
+        let failure = MusicError.message(L10n.string("汽水音乐登录网页进程已中断，请重新打开登录。"))
         terminalFailure = failure
         close(with: failure)
     }
@@ -278,12 +278,12 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
                         guard let dictionary = value as? [String: Any],
                               let encoded = try? JSONSerialization.data(withJSONObject: dictionary),
                               encoded.count <= 1024 * 1024 else {
-                            continuation.resume(throwing: MusicError.message("汽水音乐登录网页返回了无效或过大的结果。")); return
+                            continuation.resume(throwing: MusicError.message(L10n.string("汽水音乐登录网页返回了无效或过大的结果。"))); return
                         }
                         continuation.resume(returning: encoded)
                     case .failure:
                         // WK errors can contain URL parameters or script text.
-                        continuation.resume(throwing: MusicError.message("汽水音乐登录网页执行失败，请重新获取二维码。"))
+                        continuation.resume(throwing: MusicError.message(L10n.string("汽水音乐登录网页执行失败，请重新获取二维码。")))
                     }
                 }
             }
@@ -299,7 +299,7 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
     private static func scriptResult(_ data: Data) throws -> [String: Any] {
         guard data.count <= 1024 * 1024,
               let result = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            throw MusicError.message("汽水音乐登录网页返回了无效结果。")
+            throw MusicError.message(L10n.string("汽水音乐登录网页返回了无效结果。"))
         }
         return result
     }
@@ -316,29 +316,29 @@ final class SodaWebLoginSession: NSObject, SodaLoginSessionBackend, WKNavigation
 
     private func scriptFailure(_ result: [String: Any], preparing: Bool) -> MusicError {
         switch result["failure"] as? String {
-        case "notHTML", "origin": return .message("汽水音乐当前未提供可运行的官方登录网页，已停止连接。")
-        case "sdkLoad": return .message("汽水音乐官方登录安全组件无法加载，请检查网络后重新获取二维码。")
-        case "sdkInit", "hooks": return .message("汽水音乐官方登录安全组件未能就绪，已停止连接；请重新获取二维码。")
-        case "context": return .message("汽水音乐登录环境尚未就绪，请重新获取二维码。")
-        case "tooLarge": return .message("汽水音乐登录响应过大，已停止连接。")
-        case "timeout": return .message("汽水音乐登录请求超时，请重新获取二维码。")
-        case "cancelled": return .message("汽水音乐登录请求已结束，请重新获取二维码。")
-        default: return .message(preparing ? "汽水音乐登录安全组件初始化失败，请重新获取二维码。" : "汽水音乐登录请求未完成，请检查网络后重新获取二维码。")
+        case "notHTML", "origin": return .message(L10n.string("汽水音乐当前未提供可运行的官方登录网页，已停止连接。"))
+        case "sdkLoad": return .message(L10n.string("汽水音乐官方登录安全组件无法加载，请检查网络后重新获取二维码。"))
+        case "sdkInit", "hooks": return .message(L10n.string("汽水音乐官方登录安全组件未能就绪，已停止连接；请重新获取二维码。"))
+        case "context": return .message(L10n.string("汽水音乐登录环境尚未就绪，请重新获取二维码。"))
+        case "tooLarge": return .message(L10n.string("汽水音乐登录响应过大，已停止连接。"))
+        case "timeout": return .message(L10n.string("汽水音乐登录请求超时，请重新获取二维码。"))
+        case "cancelled": return .message(L10n.string("汽水音乐登录请求已结束，请重新获取二维码。"))
+        default: return .message(preparing ? L10n.string("汽水音乐登录安全组件初始化失败，请重新获取二维码。") : L10n.string("汽水音乐登录请求未完成，请检查网络后重新获取二维码。"))
         }
     }
 
     private static func identityFailure(_ result: [String: Any]) -> MusicError {
         let failure = result["failure"] as? String ?? ""
         if failure.hasSuffix("Timeout") {
-            return .message("汽水音乐登录身份初始化超时，请检查网络后重新获取二维码。")
+            return .message(L10n.string("汽水音乐登录身份初始化超时，请检查网络后重新获取二维码。"))
         }
         if failure.hasPrefix("webIdentityRecheck") {
-            return .message("汽水音乐未能确认本次登录身份，请重新获取二维码。")
+            return .message(L10n.string("汽水音乐未能确认本次登录身份，请重新获取二维码。"))
         }
         if failure.hasPrefix("webIdentityRegister") {
-            return .message("汽水音乐未能建立本次登录身份，请稍后重新获取二维码。")
+            return .message(L10n.string("汽水音乐未能建立本次登录身份，请稍后重新获取二维码。"))
         }
-        return .message("汽水音乐登录身份检查未完成，请检查网络后重新获取二维码。")
+        return .message(L10n.string("汽水音乐登录身份检查未完成，请检查网络后重新获取二维码。"))
     }
 
     private static let prepareScript = #"""

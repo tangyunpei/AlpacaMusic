@@ -155,8 +155,8 @@ private func sodaLibraryTrack(_ id: String, title: String = "Fixture song", adde
             _ = try await library.importSodaSongsAndSave([incoming])
             Issue.record("A failed disk write reported import success")
         } catch {
-            #expect(error.localizedDescription.contains("已加入当前会话"))
-            #expect(error.localizedDescription.contains("未能保存到磁盘"))
+            let persistenceError = try #require(library.persistenceError)
+            #expect(error.localizedDescription == L10n.string("歌曲已加入当前会话，但未能保存到磁盘。\(persistenceError)"))
         }
         var expected = incoming; expected.url = nil
         #expect(library.tracks == [expected])

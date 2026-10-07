@@ -366,9 +366,9 @@ import Testing
     let light = try #require(choices[2]?.window)
     let returns = try #require(choices[4]?.window)
     // The=1, light=1, returns=2 syllables: function words still occupy time.
-    #expect(abs(light.startOffset - 2) < 0.000_001)
-    #expect(abs(light.endOffset - 4) < 0.000_001)
-    #expect(abs(returns.startOffset - 4) < 0.000_001)
+    #expect(abs(light.startOffset - 0.55) < 0.000_001)
+    #expect(abs(light.endOffset - 1.1) < 0.000_001)
+    #expect(abs(returns.startOffset - 1.1) < 0.000_001)
     #expect(abs(returns.endOffset - 8) < 0.000_001)
     for (index, choice) in choices {
         let window = try #require(choice.window)
@@ -388,8 +388,9 @@ import Testing
     let source = LyricLine(id: 2, text: texts.joined(), start: 5, end: 11)
     let plain = LyricEmphasis.choices(texts: texts, line: source, suppliedWordTiming: false, seed: 2)
     #expect(Set(plain.keys) == Set([1, 3]))
-    #expect(plain[1]?.window == .init(startOffset: 1, endOffset: 3))
-    #expect(plain[3]?.window == .init(startOffset: 4, endOffset: 6))
+    let stars = try #require(plain[1]?.window)
+    #expect(abs(stars.startOffset - 0.55) < 0.000_001 && abs(stars.endOffset - 1.65) < 0.000_001)
+    #expect(plain[3]?.window == .init(startOffset: 2.2, endOffset: 6))
     let decoratedTexts = ["的", " \n👨‍👩‍👧‍👦 ", "星光", "了", "🌙\t", "回声"]
     let decorated = LyricLine(id: 3, text: decoratedTexts.joined(), start: 5, end: 11)
     let estimates = LyricEmphasis.choices(texts: decoratedTexts, line: decorated, suppliedWordTiming: false, seed: 2)
@@ -403,15 +404,15 @@ import Testing
     let plainTexts = ["love", " ", "beautiful"]
     let line = LyricLine(id: 0, text: plainTexts.joined(), start: 0, end: 4)
     let plain = LyricEmphasis.choices(texts: plainTexts, line: line, suppliedWordTiming: false, seed: 0)
-    #expect(plain[0]?.window == .init(startOffset: 0, endOffset: 1))
-    #expect(plain[2]?.window == .init(startOffset: 1, endOffset: 4))
+    #expect(plain[0]?.window == .init(startOffset: 0, endOffset: 0.55))
+    #expect(plain[2]?.window == .init(startOffset: 0.55, endOffset: 4))
     let punctuatedTexts = ["love", ",…!!!", " ", "beautiful"]
     let punctuated = LyricLine(id: 0, text: punctuatedTexts.joined(), start: 0, end: 4)
     let schedule = LyricEmphasis.choices(texts: punctuatedTexts, line: punctuated, suppliedWordTiming: false, seed: 0)
     let first = try #require(schedule[0]?.window), last = try #require(schedule[3]?.window)
     let gap = last.startOffset - first.endOffset
     #expect(gap > 0 && gap <= 4 * 0.14 + 0.000_001)
-    #expect(last.startOffset > 1)
+    #expect(last.startOffset > first.endOffset)
     #expect(last.endOffset <= 4)
     let longLine = LyricLine(id: 0, text: punctuated.text, start: 0, end: 60)
     let longSchedule = LyricEmphasis.choices(texts: punctuatedTexts, line: longLine, suppliedWordTiming: false, seed: 0)
@@ -423,8 +424,8 @@ import Testing
     let numericTexts = ["light", " ", "2026", " ", "rain"]
     let numeric = LyricLine(id: 0, text: numericTexts.joined(), start: 2, end: 8)
     let numberSchedule = LyricEmphasis.choices(texts: numericTexts, line: numeric, suppliedWordTiming: false, seed: 1)
-    #expect(numberSchedule[0]?.window == .init(startOffset: 0, endOffset: 1))
-    #expect(numberSchedule[4]?.window == .init(startOffset: 5, endOffset: 6))
+    #expect(numberSchedule[0]?.window == .init(startOffset: 0, endOffset: 0.55))
+    #expect(numberSchedule[4]?.window == .init(startOffset: 2.75, endOffset: 6))
     let texts = ["night", " ", "night"]
     let line = LyricLine(id: 0, text: texts.joined(), start: 12, end: 18)
     for seed in 0..<30 {
@@ -432,11 +433,11 @@ import Testing
         #expect(Set(choices.keys) == Set([0, 2]))
         let earlierWindow = try #require(choices[0]?.window)
         let laterWindow = try #require(choices[2]?.window)
-        #expect(abs(earlierWindow.startOffset) < 0.000_001 && abs(earlierWindow.endOffset - 3) < 0.000_001)
-        #expect(abs(laterWindow.startOffset - 3) < 0.000_001 && abs(laterWindow.endOffset - 6) < 0.000_001)
+        #expect(abs(earlierWindow.startOffset) < 0.000_001 && abs(earlierWindow.endOffset - 0.55) < 0.000_001)
+        #expect(abs(laterWindow.startOffset - 0.55) < 0.000_001 && abs(laterWindow.endOffset - 6) < 0.000_001)
         let later = try #require(choices[2])
         #expect(LyricEmphasis.state(choice: later, line: line, unitIndex: 2, position: 12.1) == nil)
-        #expect(LyricEmphasis.state(choice: later, line: line, unitIndex: 2, position: 15.06) != nil)
+        #expect(LyricEmphasis.state(choice: later, line: line, unitIndex: 2, position: 12.61) != nil)
         let earlier = try #require(choices[0])
         #expect(LyricEmphasis.state(choice: earlier, line: line, unitIndex: 0, position: 15) == nil)
     }

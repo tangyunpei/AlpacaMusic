@@ -120,7 +120,10 @@ import Testing
         #expect(try await provider(verified).profile(cookies: session) == MusicAccountProfile(id: songID, displayName: "真实测试账号"))
         let empty = SodaFixture([.init(path: "/luna/pc/me", data: Data())])
         do { _ = try await provider(empty).profile(cookies: session); Issue.record("Empty PC response accepted") }
-        catch { #expect(error.localizedDescription.contains("空响应") && error.localizedDescription.contains("签名") && !error.localizedDescription.contains("private-session")) }
+        catch {
+            #expect(error.localizedDescription == L10n.string("汽水音乐网页接口返回空响应（阶段：\(L10n.string("确认登录身份"))；HTTP 200）；当前接口可能要求平台应用签名或访问验证，无法完成此操作"))
+            #expect(!error.localizedDescription.contains("private-session"))
+        }
     }
 
     @Test func wordTimingIsShiftedClippedAndExplicitGapsAreRetained() throws {
@@ -134,7 +137,7 @@ import Testing
         #expect(document.activeIndex(at: 3) == nil)
         #expect(document.lines[1].end == 7 && document.lines[1].words.last?.end == 7)
         let payload = LyricsPayload(text: "", document: document)
-        #expect(try LyricsParser.parse(payload, sourceDescription: "汽水音乐") == document)
+        #expect(try LyricsParser.parse(payload, sourceDescription: L10n.string("汽水音乐")) == document)
     }
 
     @Test func balancedRouterParserHandlesQuotedBracesAndRejectsTruncation() throws {

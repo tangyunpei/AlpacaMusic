@@ -11,13 +11,14 @@ struct PlaybackErrorMessageTests {
         let wrapper = NSError(domain: AVFoundationErrorDomain, code: AVError.failedToLoadMediaData.rawValue,
                               userInfo: [NSUnderlyingErrorKey: network, NSLocalizedDescriptionKey: secret])
         let message = PlaybackErrorMessage.describe(wrapper, source: .netease, fallback: "播放失败")
-        #expect(message.contains("超时") && message.contains("-1001"))
+        let codes = "\(AVFoundationErrorDomain) \(AVError.failedToLoadMediaData.rawValue)\(L10n.string("；"))\(NSURLErrorDomain) \(URLError.timedOut.rawValue)"
+        #expect(message == L10n.string("\(L10n.string("音频服务器响应超时，请重试。"))（\(codes)）"))
         #expect(!message.contains("token") && !message.contains("cdn.example"))
     }
     @Test func explicitMediaStatusDoesNotInventARegionRestriction() {
         let message = PlaybackErrorMessage.describe(nil, source: .qq, fallback: "播放失败", logEvents: [.init(domain: "HTTP", code: 403)])
-        #expect(message.contains("HTTP 403") && message.contains("未说明"))
-        #expect(PlaybackErrorMessage.describe(nil, source: .qq, fallback: "播放失败", logEvents: [.init(domain: "HTTP", code: 429)]).contains("频率"))
+        #expect(message == L10n.string("\(L10n.string("音频服务器拒绝访问（HTTP 403）；服务器未说明是否为地址过期、权限或地区限制。"))（\("HTTP 403")）"))
+        #expect(PlaybackErrorMessage.describe(nil, source: .qq, fallback: "播放失败", logEvents: [.init(domain: "HTTP", code: 429)]) == L10n.string("\(L10n.string("音频服务器限制了请求频率，请稍后重试。"))（\("HTTP 429")）"))
     }
     @Test func trustedProviderMessagesSurviveAndUnknownErrorsAreRedacted() {
         #expect(PlaybackErrorMessage.describe(MusicError.message("网易云：平台拒绝（单曲码 -110）"), source: .netease, fallback: "错误").contains("-110"))

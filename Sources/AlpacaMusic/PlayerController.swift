@@ -77,6 +77,15 @@ enum PlaybackFailureStage: String, Sendable {
     case resolving = "获取播放地址"
     case opening = "打开音频"
     case playing = "播放过程中断"
+
+    var title: String {
+        switch self {
+        case .preparing: L10n.string("准备播放")
+        case .resolving: L10n.string("获取播放地址")
+        case .opening: L10n.string("打开音频")
+        case .playing: L10n.string("播放过程中断")
+        }
+    }
 }
 
 struct PlaybackFailure: Sendable {
@@ -101,6 +110,8 @@ final class PlayerController {
     private(set) var shuffle = false
     private(set) var repeatMode: RepeatMode = .off
     private(set) var failure: PlaybackFailure?
+    private(set) var lyricAudioSource: LyricAudioSource?
+    private(set) var lyricSeekRevision: UInt64 = 0
     var error: String? { failure?.message }
     var supportsVolumeControl: Bool { current?.source != .appleMusic && current?.source != .spotify }
     var sourceConfigurations = SourceConfiguration.defaults
@@ -160,6 +171,7 @@ final class PlayerController {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
     private func detachItem() {
+        lyricAudioSource = nil
         appleMusic.stopPlayback(); applePrepared = false; appleHasPlayed = false; appleEndPending = false
         observations.forEach { $0.invalidate() }; observations = []
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }; endObserver = nil
@@ -171,8 +183,8 @@ final class PlayerController {
     func play(_ track: Track, context: [Track]? = nil) async {
         guard !track.unavailable else {
             let message = track.source == .local || track.source == .demo
-                ? "这个文件暂时不可用，请重新导入。"
-                : "\(track.source.title)当前未提供这首歌曲的可播放资源，请在平台确认歌曲是否仍可播放。"
+                ? L10n.string("这个文件暂时不可用，请重新导入。")
+                : L10n.string("\(track.source.title)当前未提供这首歌曲的可播放资源，请在平台确认歌曲是否仍可播放。")
             recordFailure(MusicError.message(message), track: track, stage: .preparing, fallback: message)
             return
         }
@@ -198,7 +210,7 @@ final class PlayerController {
                 try Task.checkCancellation(); guard generation == token else { return }
                 spotifyStopTask = nil
                 if track.source == .spotify {
-                    guard let spotify, let trackID = track.sourceID else { throw MusicError.message("请先在音源页配置并连接 Spotify。") }
+                    guard let spotify, let trackID = track.sourceID else { throw MusicError.message(L10n.string("请先在音源页配置并连接 Spotify。")) }
                     spotifySession = token
                     spotifyPolicy = SpotifyPlaybackPolicy(expectedTrackID: trackID)
                     stage = .opening
@@ -242,6 +254,7 @@ final class PlayerController {
                 try Task.checkCancellation(); guard generation == token else { return }
                 observe(item, token: token)
                 media.replaceCurrentItem(with: item)
+                lyricAudioSource = LyricAudioSource(session: token, trackKey: LyricsIdentity.key(for: playbackTrack), url: url)
                 if playbackStart.isFinite && playbackStart > 0 { await media.seek(to: CMTime(seconds: playbackStart, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) }
                 guard generation == token, !Task.isCancelled else { return }
                 if wantsPlayback { media.play() } else { status = .paused }
@@ -252,15 +265,15 @@ final class PlayerController {
                 guard generation == token, !Task.isCancelled else { return }
                 wantsPlayback = false; spotifyStopTask = nil; relinquishSpotifyPlayback(); detachItem(); status = .failed
                 let message = stoppingSpotify != nil
-                    ? "Spotify 连接已变更，无法确认上一首已暂停。请在官方播放器确认后重试。"
-                    : "播放连接已变更，请重新连接音源后重试。"
+                    ? L10n.string("Spotify 连接已变更，无法确认上一首已暂停。请在官方播放器确认后重试。")
+                    : L10n.string("播放连接已变更，请重新连接音源后重试。")
                 recordFailure(MusicError.message(message), track: playbackTrack, stage: stage, fallback: message)
                 publishNowPlaying()
             }
             catch {
                 guard generation == token else { return }
                 wantsPlayback = false; spotifyStopTask = nil; relinquishSpotifyPlayback(); detachItem(); status = .failed
-                recordFailure(error, track: playbackTrack, stage: stage, fallback: "这首歌曲未能开始播放，请重试。")
+                recordFailure(error, track: playbackTrack, stage: stage, fallback: L10n.string("这首歌曲未能开始播放，请重试。"))
                 publishNowPlaying()
             }
         }
@@ -272,9 +285,10 @@ final class PlayerController {
                 guard let self, generation == token, media.currentItem === item else { return }
                 switch item.status {
                 case .failed:
+                    lyricAudioSource = nil
                     let stage: PlaybackFailureStage = status == .playing ? .playing : .opening
                     wantsPlayback = false; status = .failed
-                    if let current { recordFailure(item.error, track: current, stage: stage, fallback: "音频无法播放，请检查文件或音源配置。", item: item) }
+                    if let current { recordFailure(item.error, track: current, stage: stage, fallback: L10n.string("音频无法播放，请检查文件或音源配置。"), item: item) }
                 case .readyToPlay:
                     let seconds = item.duration.seconds
                     if seconds.isFinite && seconds >= 0 { duration = seconds }
@@ -308,7 +322,7 @@ final class PlayerController {
             Task { @MainActor [weak self] in
                 guard let self, generation == token else { return }
                 wantsPlayback = false; status = .failed
-                if let current { recordFailure(underlyingError, track: current, stage: .playing, fallback: "音频连接中断，请重试。", item: item) }
+                if let current { recordFailure(underlyingError, track: current, stage: .playing, fallback: L10n.string("音频连接中断，请重试。"), item: item) }
                 publishNowPlaying()
             }
         }
@@ -327,7 +341,7 @@ final class PlayerController {
             if item.status == .failed, status != .failed {
                 let stage: PlaybackFailureStage = status == .playing ? .playing : .opening
                 wantsPlayback = false; status = .failed
-                if let current { recordFailure(item.error, track: current, stage: stage, fallback: "音频播放失败。", item: item) }
+                if let current { recordFailure(item.error, track: current, stage: stage, fallback: L10n.string("音频播放失败。"), item: item) }
             }
         }
         let second = Int(position)
@@ -369,7 +383,7 @@ final class PlayerController {
         } catch {
             wantsPlayback = false; appleMusic.stopPlayback(); applePrepared = false
             status = .failed
-            if let current { recordFailure(error, track: current, stage: .playing, fallback: "Apple Music 播放中断，请重试。") }
+            if let current { recordFailure(error, track: current, stage: .playing, fallback: L10n.string("Apple Music 播放中断，请重试。")) }
             publishNowPlaying()
         }
     }
@@ -437,24 +451,24 @@ final class PlayerController {
                         }
                         return
                     case .changedTrack:
-                        failSpotifyPlayback(MusicError.message("Spotify 官方播放器已切换歌曲，AlpacaMusic 已停止控制。请在这里重新选歌以继续。"), fallback: "Spotify 已切换歌曲。")
+                        failSpotifyPlayback(MusicError.message(L10n.string("Spotify 官方播放器已切换歌曲，AlpacaMusic 已停止控制。请在这里重新选歌以继续。")), fallback: L10n.string("Spotify 已切换歌曲。"))
                         return
                     case .changedDevice:
-                        failSpotifyPlayback(MusicError.message("Spotify 已切换播放设备，AlpacaMusic 已停止控制。请确认音源页中的设备后重新播放。"), fallback: "Spotify 已切换设备。")
+                        failSpotifyPlayback(MusicError.message(L10n.string("Spotify 已切换播放设备，AlpacaMusic 已停止控制。请确认音源页中的设备后重新播放。")), fallback: L10n.string("Spotify 已切换设备。"))
                         return
                     case .unavailable:
-                        failSpotifyPlayback(MusicError.message("未能确认 Spotify 的播放状态，请检查官方播放器和所选设备后重试。"), fallback: "Spotify 播放状态不可用。")
+                        failSpotifyPlayback(MusicError.message(L10n.string("未能确认 Spotify 的播放状态，请检查官方播放器和所选设备后重试。")), fallback: L10n.string("Spotify 播放状态不可用。"))
                         return
                     }
                 } catch is CancellationError {
                     if generation == session, spotifySession == session, !Task.isCancelled {
-                        failSpotifyPlayback(MusicError.message("Spotify 连接已变更，请重新连接后播放。"), fallback: "Spotify 连接已变更。")
+                        failSpotifyPlayback(MusicError.message(L10n.string("Spotify 连接已变更，请重新连接后播放。")), fallback: L10n.string("Spotify 连接已变更。"))
                     }
                     return
                 }
                 catch {
                     guard generation == session, spotifySession == session, !Task.isCancelled else { return }
-                    failSpotifyPlayback(error, fallback: "Spotify 播放连接中断，请重试。")
+                    failSpotifyPlayback(error, fallback: L10n.string("Spotify 播放连接中断，请重试。"))
                     return
                 }
                 do { try await Task.sleep(for: .seconds(2)) } catch { return }
@@ -481,7 +495,7 @@ final class PlayerController {
             } catch is CancellationError { }
             catch {
                 guard generation == token else { return }; wantsPlayback = false; status = .failed
-                recordFailure(error, track: current, stage: .opening, fallback: "Apple Music 未能恢复播放，请重试。")
+                recordFailure(error, track: current, stage: .opening, fallback: L10n.string("Apple Music 未能恢复播放，请重试。"))
             }
             publishNowPlaying(); return
         }
@@ -511,7 +525,7 @@ final class PlayerController {
             // A transition owns its dependency error; do not overwrite the
             // newer source's status or failure while waiting for disconnect.
             if isSpotifyCurrent {
-                failSpotifyPlayback(error, fallback: "Spotify 暂停失败，请在官方播放器确认播放状态。")
+                failSpotifyPlayback(error, fallback: L10n.string("Spotify 暂停失败，请在官方播放器确认播放状态。"))
             }
         }
     }
@@ -531,12 +545,12 @@ final class PlayerController {
                     startSpotifyPolling(session: session)
                 } catch is CancellationError {
                     if generation == session, spotifySession == session, spotifyCommand == command, !Task.isCancelled {
-                        failSpotifyPlayback(MusicError.message("Spotify 连接已变更，请重新连接后播放。"), fallback: "Spotify 连接已变更。")
+                        failSpotifyPlayback(MusicError.message(L10n.string("Spotify 连接已变更，请重新连接后播放。")), fallback: L10n.string("Spotify 连接已变更。"))
                     }
                 }
                 catch {
                     guard generation == session, spotifySession == session, spotifyCommand == command else { return }
-                    failSpotifyPlayback(error, fallback: "Spotify 暂停失败，请在官方播放器确认播放状态。")
+                    failSpotifyPlayback(error, fallback: L10n.string("Spotify 暂停失败，请在官方播放器确认播放状态。"))
                 }
             }
             publishNowPlaying(); return
@@ -554,6 +568,7 @@ final class PlayerController {
     }
     func seek(to seconds: Double) {
         guard seconds.isFinite, duration.isFinite, duration > 0 else { return }
+        lyricSeekRevision &+= 1
         if current?.source == .spotify {
             guard let spotify, let session = spotifySession else { return }
             let target = min(duration, max(0, seconds)), command = UUID()
@@ -567,12 +582,12 @@ final class PlayerController {
                     startSpotifyPolling(session: session)
                 } catch is CancellationError {
                     if generation == session, spotifySession == session, spotifyCommand == command, !Task.isCancelled {
-                        failSpotifyPlayback(MusicError.message("Spotify 连接已变更，请重新连接后播放。"), fallback: "Spotify 连接已变更。")
+                        failSpotifyPlayback(MusicError.message(L10n.string("Spotify 连接已变更，请重新连接后播放。")), fallback: L10n.string("Spotify 连接已变更。"))
                     }
                 }
                 catch {
                     guard generation == session, spotifySession == session, spotifyCommand == command else { return }
-                    failSpotifyPlayback(error, fallback: "Spotify 未能跳转，请重试。")
+                    failSpotifyPlayback(error, fallback: L10n.string("Spotify 未能跳转，请重试。"))
                 }
             }
             return

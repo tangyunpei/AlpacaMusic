@@ -28,7 +28,7 @@ import Testing
         // This deliberate missing bookmark proves local preparation was reached
         // without opening a file, contacting a server, or producing audio.
         #expect(fixture.player.status == .failed)
-        #expect(fixture.player.failure?.message.contains("本地文件尚未授权") == true)
+        #expect(fixture.player.failure?.message == L10n.string("本地文件尚未授权，请重新导入"))
     }
 
     @Test func canceledRemoteStopFailsTheLiveLocalActivationAndAllowsRetry() async throws {
@@ -40,10 +40,10 @@ import Testing
         await fixture.player.play(spotifyPlayerLocalSong)
         #expect(fixture.player.current?.source == .local)
         #expect(fixture.player.status == .failed)
-        #expect(fixture.player.failure?.message.contains("无法确认上一首已暂停") == true)
+        #expect(fixture.player.failure?.message == L10n.string("Spotify 连接已变更，无法确认上一首已暂停。请在官方播放器确认后重试。"))
         await fixture.player.retry()
         #expect(fixture.player.status == .failed)
-        #expect(fixture.player.failure?.message.contains("本地文件尚未授权") == true)
+        #expect(fixture.player.failure?.message == L10n.string("本地文件尚未授权，请重新导入"))
         #expect(await fixture.http.pauseCount == 1)
     }
 }
