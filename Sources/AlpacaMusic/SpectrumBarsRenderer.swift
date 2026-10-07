@@ -41,7 +41,7 @@ enum SpectrumBarsRenderer {
         let state = hasPresentation ? presentation!.state : measuredState
         let frequencyRatio = maximumFrequency / 20
         let stride = plot.width / CGFloat(count)
-        let barWidth = stride * 0.63
+        let barWidth = stride * 0.52
         func unit(_ value: Double) -> Double { value.isFinite ? min(1, max(0, value)) : 0 }
         let bars = (0..<count).map { index in
             let lower = 20 * pow(frequencyRatio, Double(index) / Double(count))
@@ -63,70 +63,73 @@ enum SpectrumBarsRenderer {
         return .init(bars: bars, plotRect: plot, state: state)
     }
 
-    /// The dark cell lattice is a resting instrument face, not simulated data.
-    /// Only measured, time-integrated levels light its cells and peak markers.
+    /// Continuous columns keep the frequency silhouette legible at both card
+    /// and room scale. The only visible motion is the measured envelope and
+    /// its held peaks; the backdrop never substitutes a decorative signal.
     static func draw(in context: inout GraphicsContext, size: CGSize,
                      audio: VisualizationAudio, time _: Double, glow: Bool,
                      presentation: SpectrumBarsPresentation? = nil) {
         let geometry = geometry(audio: audio, size: size, presentation: presentation)
         guard !geometry.bars.isEmpty else { return }
         context.fill(Path(CGRect(origin: .zero, size: size)),
-                     with: .color(Color(red: 0.013, green: 0.019, blue: 0.018)))
+                     with: .color(Color(red: 0.022, green: 0.031, blue: 0.049)))
         let plot = geometry.plotRect
-        // One visual cell scale for the instrument; compact cards use fewer
-        // rows while retaining the same real frequency columns.
-        let rows = Int(min(48, max(20, plot.height / 5.2)))
-        let pitch = plot.height / CGFloat(rows)
-        let cellHeight = pitch * 0.67
-        let corner = min(0.7, cellHeight * 0.18, geometry.bars[0].rect.width * 0.12)
-        var unlit = Path()
-        var litRows = Array(repeating: Path(), count: rows)
-        var topCells = Path()
-        var peakCaps = Path()
-        var heads: [(path: Path, color: Color, coverage: Double)] = []
+        guard plot.width > 0, plot.height > 0 else { return }
+        let baseline = Path(CGRect(x: plot.minX, y: plot.maxY + 2,
+                                   width: plot.width, height: min(0.65, size.height * 0.002)))
+        context.fill(baseline, with: .linearGradient(
+            Gradient(stops: [.init(color: .clear, location: 0),
+                             .init(color: Color(red: 0.49, green: 0.63, blue: 0.77).opacity(0.15), location: 0.2),
+                             .init(color: Color(red: 0.49, green: 0.63, blue: 0.77).opacity(0.15), location: 0.8),
+                             .init(color: .clear, location: 1)]),
+            startPoint: .init(x: plot.minX, y: plot.maxY),
+            endPoint: .init(x: plot.maxX, y: plot.maxY)))
+        var activeColumns = Path()
         for bar in geometry.bars {
-            let filledRows = max(0, min(Double(rows), Double(bar.rect.height / pitch)))
-            for row in 0..<rows {
-                let rect = CGRect(x: bar.rect.minX, y: plot.maxY - CGFloat(row + 1) * pitch,
-                                  width: bar.rect.width, height: cellHeight)
-                let cell = Path(roundedRect: rect, cornerRadius: corner)
-                unlit.addPath(cell)
-                let coverage = min(1, max(0, filledRows - Double(row)))
-                if coverage >= 0.999 { litRows[row].addPath(cell) }
-                else if coverage > 0.003 {
-                    heads.append((cell, color(at: Double(row + 1) / Double(rows)), coverage))
-                }
-                if coverage > 0.08, filledRows <= Double(row + 1) { topCells.addPath(cell) }
-            }
-            if !bar.peakRect.isEmpty {
-                peakCaps.addPath(Path(roundedRect: bar.peakRect, cornerRadius: min(0.7, bar.peakRect.height / 2)))
-            }
+            guard bar.rect.height > 0 else { continue }
+            activeColumns.addPath(Path(roundedRect: bar.rect,
+                cornerRadius: min(bar.rect.width / 2, bar.rect.height / 2)))
         }
-        context.fill(unlit, with: .color(Color(red: 0.36, green: 0.43, blue: 0.35).opacity(0.07)))
-        for row in 0..<rows {
-            guard !litRows[row].isEmpty else { continue }
-            let color = color(at: Double(row + 1) / Double(rows))
-            let top = plot.maxY - CGFloat(row + 1) * pitch
-            context.fill(litRows[row], with: .linearGradient(Gradient(colors: [color.opacity(0.98), color.opacity(0.62)]),
-                startPoint: .init(x: 0, y: top), endPoint: .init(x: 0, y: top + cellHeight)))
-        }
-        // Fade only the final partially lit cell; measured levels stay smooth
-        // while the visible segmented structure gives clear, deliberate steps.
-        for head in heads { context.fill(head.path, with: .color(head.color.opacity(pow(head.coverage, 0.75) * 0.88))) }
-        if glow, !topCells.isEmpty {
+        if glow, !activeColumns.isEmpty {
             var light = context
-            light.addFilter(.blur(radius: min(3, pitch * 0.44)))
-            light.stroke(topCells, with: .color(Color(red: 0.85, green: 0.91, blue: 0.61).opacity(0.14)), lineWidth: min(3, pitch * 0.56))
+            light.addFilter(.blur(radius: min(4, max(0.4, plot.width / 210))))
+            light.fill(activeColumns, with: .color(Color(red: 0.31, green: 0.70, blue: 0.91).opacity(0.10)))
         }
-        context.fill(peakCaps, with: .color(Color(red: 0.96, green: 0.88, blue: 0.62).opacity(0.92)))
-        // No numeric axes or frequency labels: the lit modules and their held
-        // peaks provide the entire reading, with quiet margins around the bank.
+        for bar in geometry.bars {
+            let level = Double(bar.rect.height / plot.height)
+            if bar.rect.height > 0 {
+                let frequency = Double((bar.rect.midX - plot.minX) / plot.width)
+                let corner = min(bar.rect.width / 2, bar.rect.height / 2)
+                let column = Path(roundedRect: bar.rect, cornerRadius: corner)
+                // A single solid column replaces hundreds of idle cells. The
+                // gradient follows its real top, so quiet audio stays small.
+                let top = Color(red: 0.68 + frequency * 0.06,
+                                green: 0.83 + frequency * 0.10, blue: 0.96)
+                let body = Color(red: 0.24 + frequency * 0.06,
+                                 green: 0.51 + frequency * 0.20, blue: 0.80 + frequency * 0.09)
+                context.fill(column, with: .linearGradient(
+                    Gradient(stops: [.init(color: top.opacity(0.85 + level * 0.15), location: 0),
+                                     .init(color: body.opacity(0.88), location: 0.35),
+                                     .init(color: body.opacity(0.28), location: 1)]),
+                    startPoint: .init(x: bar.rect.midX, y: bar.rect.minY),
+                    endPoint: .init(x: bar.rect.midX, y: bar.rect.maxY)))
+            }
+            guard !bar.peakRect.isEmpty else { continue }
+            let peak = min(1, max(0, Double((plot.maxY - bar.peakRect.minY) / plot.height)))
+            // Warm color is reserved for genuinely tall measured peaks, not
+            // every attack. Held caps can remain after a column has decayed.
+            let warmth = smoothstep(0.70, 0.93, peak)
+            let peakColor = Color(red: 0.76 + warmth * 0.22,
+                                  green: 0.90 - warmth * 0.17,
+                                  blue: 0.99 - warmth * 0.53)
+            let cap = Path(roundedRect: bar.peakRect, cornerRadius: bar.peakRect.height / 2)
+            context.fill(cap, with: .color(peakColor.opacity(0.32 + sqrt(peak) * 0.62)))
+        }
     }
 
-    private static func color(at level: Double) -> Color {
-        if level < 0.70 { return Color(red: 0.39, green: 0.85, blue: 0.58) }
-        if level < 0.89 { return Color(red: 0.98, green: 0.74, blue: 0.34) }
-        return Color(red: 1.0, green: 0.43, blue: 0.30)
+    private static func smoothstep(_ lower: Double, _ upper: Double, _ value: Double) -> Double {
+        let fraction = min(1, max(0, (value - lower) / (upper - lower)))
+        return fraction * fraction * (3 - 2 * fraction)
     }
 
     private static func bandMagnitude(spectrum: [Double], binWidth: Double, lower: Double, upper: Double) -> Double {

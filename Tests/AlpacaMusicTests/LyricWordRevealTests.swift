@@ -128,15 +128,16 @@ import Testing
         #expect(line == snapshot)
     }
 
-    @Test func wordOnsetsScaleWithLineDurationAndSeekWithoutHistory() throws {
+    @Test func longWordCueLeavesATailWithoutDelayingEveryWordAndSeeksWithoutHistory() throws {
         let fast = LyricLine(id: 107, text: "quiet ocean returns", start: 10, end: 13)
         let slow = LyricLine(id: 108, text: fast.text, start: 10, end: 22)
         for text in ["quiet", "ocean", "returns"] {
             let a = try #require(Self.word(text, in: fast).first)
             let b = try #require(Self.word(text, in: slow).first)
-            #expect(abs((b.revealStart - 10) - (a.revealStart - 10) * 4) < 0.000_001)
-            #expect(abs((b.revealEnd - 10) - (a.revealEnd - 10) * 4) < 0.000_001)
+            #expect(b.revealStart <= a.revealStart + 0.5)
+            #expect(b.revealStart < 13)
         }
+        #expect(try Self.word("returns", in: slow).last?.revealEnd == 22)
         let timeline = LyricReveal.timeline(for: slow)
         for position in [20.0, 11, 20, 9, 24, 11] {
             let again = LyricReveal.timeline(for: slow)

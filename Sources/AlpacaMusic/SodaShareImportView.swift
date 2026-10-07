@@ -13,26 +13,26 @@ struct SodaShareImportView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            SheetHeading(title: "导入汽水音乐") { close() }
-            TextField("粘贴歌曲或歌单的分享链接", text: $address)
+            SheetHeading(title: L10n.string("导入汽水音乐")) { close() }
+            TextField(L10n.string("粘贴歌曲或歌单的分享链接"), text: $address)
                 .textFieldStyle(.roundedBorder).font(.system(size: 12))
-                .accessibilityLabel("汽水音乐分享链接").accessibilityIdentifier("soda-share-address")
+                .accessibilityLabel(L10n.string("汽水音乐分享链接")).accessibilityIdentifier("soda-share-address")
                 .disabled(busy).onSubmit { readShare() }
                 .onChange(of: address) { _, _ in candidate = nil; error = nil }
             HStack {
-                Text("支持汽水音乐复制的分享文字或官方链接。")
+                Text(L10n.string("支持汽水音乐复制的分享文字或官方链接。"))
                     .font(.system(size: 10)).foregroundStyle(palette.secondary)
                 Spacer()
                 if busy { ProgressView().controlSize(.small) }
-                Button("解析链接") { readShare() }
+                Button(L10n.string("解析链接")) { readShare() }
                     .buttonStyle(QuietButtonStyle()).disabled(busy || address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("soda-share-read")
             }
             if let candidate {
-                Text(candidate.playlistName ?? candidate.tracks.first?.title ?? "歌曲")
+                Text(candidate.playlistName ?? candidate.tracks.first?.title ?? L10n.string("歌曲"))
                     .font(.system(size: 18, weight: .medium))
                 if candidate.playlistName != nil {
-                    Text("\(candidate.tracks.count) 首歌曲 · 播放时检查可用片段")
+                    Text(L10n.string("\(candidate.tracks.count) 首歌曲 · 播放时检查可用片段"))
                         .font(.system(size: 11)).foregroundStyle(palette.secondary)
                 }
                 ScrollView {
@@ -44,7 +44,7 @@ struct SodaShareImportView: View {
                                     Text(track.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
                                     Text(track.artist).font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1)
                                     if let range = track.sodaPlayback, range.isPreview {
-                                        Text("试听 \(formattedTime(range.duration)) · 原曲 \(formattedTime(range.start))–\(formattedTime(range.start + range.duration))")
+                                        Text(L10n.string("试听 \(formattedTime(range.duration)) · 原曲 \(formattedTime(range.start))–\(formattedTime(range.start + range.duration))"))
                                             .font(.system(size: 10)).foregroundStyle(palette.accent)
                                     }
                                 }
@@ -53,7 +53,7 @@ struct SodaShareImportView: View {
                         }
                     }
                 }.frame(maxHeight: 240)
-                Text("导入保存歌曲资料，播放地址会在播放时重新获取。")
+                Text(L10n.string("导入保存歌曲资料，播放地址会在播放时重新获取。"))
                     .font(.system(size: 10)).foregroundStyle(palette.secondary)
             }
             if let error {
@@ -63,8 +63,8 @@ struct SodaShareImportView: View {
             }
             HStack {
                 Spacer()
-                Button("取消") { close() }.buttonStyle(QuietButtonStyle())
-                Button("导入音乐库") { save() }
+                Button(L10n.string("取消")) { close() }.buttonStyle(QuietButtonStyle())
+                Button(L10n.string("导入音乐库")) { save() }
                     .buttonStyle(PrimaryButtonStyle()).disabled(busy || candidate == nil)
                     .accessibilityIdentifier("soda-share-save")
             }
@@ -109,7 +109,7 @@ struct SodaShareImportView: View {
                     guard generation == token else { return }
                     model.navigate(.library); model.sourceFilter = .soda
                 }
-                model.notify("已导入 \(candidate.tracks.count) 首汽水音乐")
+                model.notify(L10n.string("已导入 \(candidate.tracks.count) 首汽水音乐"))
                 dismiss()
             } catch is CancellationError { }
             catch { if generation == token { self.error = error.localizedDescription } }
@@ -119,6 +119,6 @@ struct SodaShareImportView: View {
 
 extension Track {
     var sourcePlaybackTitle: String {
-        source.title + (source == .soda && sodaPlayback?.isPreview == true ? " · 试听" : "")
+        source.title + (source == .soda && sodaPlayback?.isPreview == true ? L10n.string(" · 试听") : "")
     }
 }

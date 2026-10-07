@@ -81,7 +81,7 @@ struct AppBrandLogo: View {
             } else {
                 Image(systemName: "headphones").resizable().scaledToFit()
             }
-        }.accessibilityLabel("AlpacaMusic 羊驼标志")
+        }.accessibilityLabel(L10n.string("AlpacaMusic 羊驼标志"))
             .accessibilityIdentifier("app-brand-logo")
     }
 }
@@ -143,7 +143,7 @@ struct ArtworkView: View {
             }
         }
         .clipped().clipShape(.rect(cornerRadius: radius))
-        .accessibilityLabel(track.map { "\($0.title) 封面" } ?? "专辑封面")
+        .accessibilityLabel(track.map { L10n.string("\($0.title) 封面") } ?? L10n.string("专辑封面"))
         .task(id: key) {
             let identity = key
             let image = highResolution ? await Artwork.loadImage(for: track) : await Artwork.loadThumbnail(for: track)
@@ -157,7 +157,7 @@ struct SourceBadge: View {
     var source: MusicSource
     var isPreview = false
     var body: some View {
-        Text(source.title + (isPreview ? " · 试听" : "")).font(.system(size: 9)).lineLimit(1).minimumScaleFactor(0.9).foregroundStyle(palette.secondary)
+        Text(source.title + (isPreview ? L10n.string(" · 试听") : "")).font(.system(size: 9)).lineLimit(1).minimumScaleFactor(0.9).foregroundStyle(palette.secondary)
             .padding(.horizontal, 6).padding(.vertical, 4)
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(palette.accent.opacity(0.12)))
     }
@@ -167,7 +167,7 @@ struct EmptyState: View {
     var symbol: String
     var title: String
     var message: String = ""
-    var actionTitle: String = "导入音乐"
+    var actionTitle: String = L10n.string("导入音乐")
     var action: () -> Void
     var body: some View {
         VStack(spacing: 17) {

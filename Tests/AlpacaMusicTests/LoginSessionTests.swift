@@ -79,9 +79,9 @@ private actor RecordingMusicCredentialAccess: MusicCredentialAccess {
     @Test func navigationDiagnosticsNeverRevealCallbackSecrets() {
         let address = URL(string: "https://private-user:private-pass@callback.example:8443/private-path?code=private-code#private-fragment")
         #expect(DirectLoginPolicy.safeOrigin(of: address) == "https://callback.example")
-        #expect(DirectLoginPolicy.safeOrigin(of: URL(string: "file:///private/path?secret=value")) == "file（无可显示主机）")
-        #expect(DirectLoginPolicy.safeOrigin(of: URL(string: "javascript:privateCode()")) == "javascript（无可显示主机）")
-        #expect(DirectLoginPolicy.safeOrigin(of: nil) == "未知协议 / 主机")
+        #expect(DirectLoginPolicy.safeOrigin(of: URL(string: "file:///private/path?secret=value")) == L10n.string("\("file")（无可显示主机）"))
+        #expect(DirectLoginPolicy.safeOrigin(of: URL(string: "javascript:privateCode()")) == L10n.string("\("javascript")（无可显示主机）"))
+        #expect(DirectLoginPolicy.safeOrigin(of: nil) == L10n.string("未知协议 / 主机"))
     }
 
     @Test @MainActor func deniedSubframeNavigationPublishesAnObservableSafeDiagnostic() async {
@@ -91,7 +91,7 @@ private actor RecordingMusicCredentialAccess: MusicCredentialAccess {
         withObservationTracking { _ = browser.message } onChange: { changed.withLock { $0 = true } }
         let callback = URL(string: "https://blocked.example/private-callback?code=secret&uin=fixture#sensitive")
         #expect(!browser.permitsNavigation(to: callback, isMainFrame: false))
-        #expect(browser.message?.contains("子页面") == true)
+        #expect(browser.message == L10n.string("已阻止登录\(L10n.string("子页面"))跳转（\(DirectLoginPolicy.safeOrigin(of: callback))）。此地址尚未获准用于当前平台登录。"))
         #expect(browser.message?.contains("https://blocked.example") == true)
         #expect(browser.message?.contains("secret") == false)
         #expect(browser.message?.contains("fixture") == false)

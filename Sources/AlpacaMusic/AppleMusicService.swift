@@ -68,8 +68,10 @@ final class AppleMusicService {
     let isConfigured: Bool
     private(set) var isBusy = false
     private(set) var error: String?
-    private(set) var authorizationDescription = "未连接"
-    private(set) var subscriptionDescription = "连接后检查订阅"
+    private var authorizationCaption: String.LocalizationValue = "未连接"
+    private var subscriptionCaption: String.LocalizationValue = "连接后检查订阅"
+    var authorizationDescription: String { L10n.string(authorizationCaption) }
+    var subscriptionDescription: String { L10n.string(subscriptionCaption) }
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let adapter: any AppleMusicAdapter
     @ObservationIgnored private var capabilities: AppleMusicCapabilities?
@@ -81,12 +83,12 @@ final class AppleMusicService {
     init(defaults: UserDefaults = .standard, configuration: AppleMusicConfiguration = .current, adapter: (any AppleMusicAdapter)? = nil) {
         self.defaults = defaults; self.adapter = adapter ?? SystemAppleMusicAdapter()
         isConfigured = configuration.isConfigured; isEnabled = configuration.isConfigured && defaults.bool(forKey: Self.enabledKey)
-        if !isConfigured { authorizationDescription = "需要开发者签名配置" }
-        else if isEnabled { authorizationDescription = "等待检查授权" }
+        if !isConfigured { authorizationCaption = "需要开发者签名配置" }
+        else if isEnabled { authorizationCaption = "等待检查授权" }
     }
     func connect() async {
         guard !isBusy else { return }
-        guard isConfigured else { error = "此构建尚未配置 Apple Music。请先启用 App ID 的 MusicKit 服务并使用匹配的开发者团队签名。"; return }
+        guard isConfigured else { error = L10n.string("此构建尚未配置 Apple Music。请先启用 App ID 的 MusicKit 服务并使用匹配的开发者团队签名。"); return }
         generation = UUID(); let token = generation
         isEnabled = true; defaults.set(true, forKey: Self.enabledKey); isBusy = true; error = nil
         let authorization = await adapter.requestAuthorization()
@@ -94,7 +96,7 @@ final class AppleMusicService {
         updateAuthorization(authorization)
         guard authorization == .authorized else {
             isBusy = false; isEnabled = false; defaults.set(false, forKey: Self.enabledKey)
-            error = "尚未获得 Apple Music 访问权限。可在系统设置中管理授权。"; return
+            error = L10n.string("尚未获得 Apple Music 访问权限。可在系统设置中管理授权。"); return
         }
         await refreshSubscription(token: token)
         if generation == token { isBusy = false }
@@ -105,21 +107,21 @@ final class AppleMusicService {
         let token = generation; isBusy = true; error = nil
         let authorization = adapter.authorization; updateAuthorization(authorization)
         if authorization == .authorized { await refreshSubscription(token: token) }
-        else { capabilities = nil; subscriptionDescription = "需要授权" }
+        else { capabilities = nil; subscriptionCaption = "需要授权" }
         if generation == token { isBusy = false }
     }
     func disconnect() {
         generation = UUID(); stopPlayback(); isEnabled = false; defaults.set(false, forKey: Self.enabledKey)
         capabilities = nil; isBusy = false; error = nil
-        authorizationDescription = "已在本应用停用"; subscriptionDescription = "连接后检查订阅"
+        authorizationCaption = "已在本应用停用"; subscriptionCaption = "连接后检查订阅"
     }
     private func updateAuthorization(_ status: MusicAuthorization.Status) {
         switch status {
-        case .authorized: authorizationDescription = "已授权"
-        case .notDetermined: authorizationDescription = "尚未授权"
-        case .denied: authorizationDescription = "授权被拒绝"
-        case .restricted: authorizationDescription = "访问受系统限制"
-        @unknown default: authorizationDescription = "授权状态未知"
+        case .authorized: authorizationCaption = "已授权"
+        case .notDetermined: authorizationCaption = "尚未授权"
+        case .denied: authorizationCaption = "授权被拒绝"
+        case .restricted: authorizationCaption = "访问受系统限制"
+        @unknown default: authorizationCaption = "授权状态未知"
         }
     }
     private func refreshSubscription(token: UUID) async {
@@ -127,16 +129,16 @@ final class AppleMusicService {
             let value = try await adapter.subscription()
             guard generation == token, isEnabled else { return }
             capabilities = value
-            subscriptionDescription = value.canPlayCatalog ? "可播放 Apple Music 曲库" : "当前账户无法播放订阅曲库"
+            subscriptionCaption = value.canPlayCatalog ? "可播放 Apple Music 曲库" : "当前账户无法播放订阅曲库"
         } catch {
             guard generation == token, isEnabled else { return }
-            capabilities = nil; subscriptionDescription = "订阅检查失败"; self.error = error.localizedDescription
+            capabilities = nil; subscriptionCaption = "订阅检查失败"; self.error = error.localizedDescription
         }
     }
     private func requireAccess() throws {
-        guard isConfigured else { throw MusicError.message("请先完成 Apple Music 开发者签名配置。") }
-        guard isEnabled else { throw MusicError.message("请先在设置中连接 Apple Music。") }
-        guard adapter.authorization == .authorized else { throw MusicError.message("Apple Music 尚未授权。请在设置中连接。") }
+        guard isConfigured else { throw MusicError.message(L10n.string("请先完成 Apple Music 开发者签名配置。")) }
+        guard isEnabled else { throw MusicError.message(L10n.string("请先在设置中连接 Apple Music。")) }
+        guard adapter.authorization == .authorized else { throw MusicError.message(L10n.string("Apple Music 尚未授权。请在设置中连接。")) }
     }
     func search(_ query: String) async throws -> [Track] {
         try requireAccess()
@@ -178,8 +180,8 @@ final class AppleMusicService {
         try Task.checkCancellation(); try requireAccess()
         guard generation == token else { throw CancellationError() }
         capabilities = latest
-        subscriptionDescription = latest.canPlayCatalog ? "可播放 Apple Music 曲库" : "当前账户无法播放订阅曲库"
-        guard latest.canPlayCatalog else { throw MusicError.message("当前 Apple Music 账户不能播放订阅曲库，请检查订阅。") }
+        subscriptionCaption = latest.canPlayCatalog ? "可播放 Apple Music 曲库" : "当前账户无法播放订阅曲库"
+        guard latest.canPlayCatalog else { throw MusicError.message(L10n.string("当前 Apple Music 账户不能播放订阅曲库，请检查订阅。")) }
         playbackSession = session; adapter.setSession(session)
         let duration = try await adapter.prepare(track, session: session)
         try Task.checkCancellation(); try requireAccess()
@@ -198,7 +200,7 @@ final class AppleMusicService {
     func stopPlayback() { if playbackSession != nil { playbackSession = nil; adapter.setSession(nil) } }
     func seekPlayback(to seconds: Double) { if playbackSession != nil, seconds.isFinite { adapter.seek(to: seconds) } }
     func playbackSnapshot(session: UUID) throws -> AppleMusicPlaybackSnapshot {
-        try requireAccess(); guard playbackSession == session else { throw MusicError.message("Apple Music 播放已停止。") }
+        try requireAccess(); guard playbackSession == session else { throw MusicError.message(L10n.string("Apple Music 播放已停止。")) }
         return adapter.snapshot()
     }
 }
@@ -231,7 +233,7 @@ final class AppleMusicService {
     }
     func setSession(_ id: UUID?) { session = id; wantsPlayback = false; player?.stop(); if id == nil { player?.queue = [] } }
     func prepare(_ track: Track, session request: UUID) async throws -> Double {
-        guard let id = track.sourceID, !id.isEmpty else { throw MusicError.message("这首歌曲缺少 Apple Music 标识，请重新搜索。") }
+        guard let id = track.sourceID, !id.isEmpty else { throw MusicError.message(L10n.string("这首歌曲缺少 Apple Music 标识，请重新搜索。")) }
         let song: Song
         switch try AppleMusicLibraryClient.playbackResource(for: track) {
         case .librarySong:
@@ -239,11 +241,11 @@ final class AppleMusicService {
         case .catalogSong:
             let requestValue = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: MusicItemID(id))
             let response = try await requestValue.response()
-            guard let value = response.items.first, value.id.rawValue == id else { throw MusicError.message("Apple Music 未找到这首歌曲。") }
+            guard let value = response.items.first, value.id.rawValue == id else { throw MusicError.message(L10n.string("Apple Music 未找到这首歌曲。")) }
             song = value
         }
         try Task.checkCancellation(); guard session == request else { throw CancellationError() }
-        guard song.playParameters != nil else { throw MusicError.message("这首歌曲当前无法在 Apple Music 播放。") }
+        guard song.playParameters != nil else { throw MusicError.message(L10n.string("这首歌曲当前无法在 Apple Music 播放。")) }
         let instance = ApplicationMusicPlayer.shared; player = instance
         instance.state.repeatMode = MusicPlayer.RepeatMode.none; instance.state.shuffleMode = .off
         instance.queue = ApplicationMusicPlayer.Queue(for: [song])

@@ -63,7 +63,7 @@ private actor SodaHTTPFixtureRecorder {
         #expect(old.source == .qq)
         let track = sodaIntegrationTrack()
         #expect(try JSONDecoder().decode(Track.self, from: JSONEncoder().encode(track)) == track)
-        #expect(MusicSource.soda.title == "汽水音乐")
+        #expect(MusicSource.soda.title == L10n.string("汽水音乐"))
         #expect(MusicSource.soda.symbol == "drop")
         #expect(DirectMusicAccess.sources.contains(.soda))
         #expect(SourceConfiguration.defaults.map(\.kind) == [.netease, .qq])
@@ -89,7 +89,7 @@ private actor SodaHTTPFixtureRecorder {
 
     @Test func thirdCredentialEntryKeepsTheExistingKeychainServiceAndAccountIsolation() async throws {
         #expect(try MusicCredentialAccount(source: .soda) == .soda)
-        #expect(MusicCredentialAccount.soda.title == "汽水音乐")
+        #expect(MusicCredentialAccount.soda.title == L10n.string("汽水音乐"))
         let query = KeychainMusicCredentialAccess.query(for: .soda)
         #expect(query[kSecAttrService as String] as? String == "dev.byalpaca.music.direct-session.v1")
         #expect(query[kSecAttrAccount as String] as? String == "soda")

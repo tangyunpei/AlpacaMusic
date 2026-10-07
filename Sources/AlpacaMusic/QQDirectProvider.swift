@@ -61,7 +61,7 @@ struct QQDirectProvider: DirectMusicProvider {
         let selectedRaw = playbackKeyName.flatMap { name in valid.first { $0.name == name && !$0.value.isEmpty }?.value }
         let playbackDiagnostic = PlaybackTicketDiagnostic(selectedCookieName: playbackKeyName, primaryCandidatesBothPresent: bothPrimaryKeys, primaryCandidatesDiffer: bothPrimaryKeys && webKey != legacyKey, selectedValueWasDecoded: selectedRaw != playbackKey)
         guard let id = normalizedUin(raw), (playbackKey ?? value("p_lskey")) != nil else {
-            throw MusicError.message("请先在应用内登录 QQ 音乐，或重新登录已过期的账户。")
+            throw MusicError.message(L10n.string("请先在应用内登录 QQ 音乐，或重新登录已过期的账户。"))
         }
         let digits = raw.hasPrefix("o") ? String(raw.dropFirst()) : raw
         let webUin = digits.count < 14 ? id : digits
@@ -79,19 +79,19 @@ struct QQDirectProvider: DirectMusicProvider {
             if next == value { return value }
             value = next
         }
-        throw MusicError.message("QQ 音乐登录信息的编码无法识别，请重新完成官网登录。")
+        throw MusicError.message(L10n.string("QQ 音乐登录信息的编码无法识别，请重新完成官网登录。"))
     }
     func profile(cookies: [MusicSessionCookie]) async throws -> MusicAccountProfile {
         let account = try session(cookies)
         // userid=0 requests the authenticated account, never somebody's public page.
         let root = try await get(path: "/rsc/fcgi-bin/fcg_get_profile_homepage.fcg", query: ["cid": "205360838", "ct": "24", "userid": "0", "reqfrom": "1", "reqtype": "0", "needNewCode": "0"], account: account, cookies: cookies)
         guard let creator = (root["data"] as? [String: Any])?["creator"] as? [String: Any] else {
-            throw MusicError.message("QQ 音乐没有返回当前账户资料，请重新完成官网登录。")
+            throw MusicError.message(L10n.string("QQ 音乐没有返回当前账户资料，请重新完成官网登录。"))
         }
         if let rawID = string(creator["uin"]), let id = normalizedUin(rawID) {
             // An opaque identity never overrides a conflicting numeric account.
             guard id == account.uin else {
-                throw MusicError.message("QQ 音乐返回的账户与本次登录不一致，请重新完成官网登录。")
+                throw MusicError.message(L10n.string("QQ 音乐返回的账户与本次登录不一致，请重新完成官网登录。"))
             }
         } else {
             // The official profile treats creator.uin as optional and uses the
@@ -99,18 +99,18 @@ struct QQDirectProvider: DirectMusicProvider {
             // This shared website contract applies to both QQ and WeChat login.
             // Malformed nonempty numeric fields must not silently fall back.
             guard hiddenUin(creator["uin"]) else {
-                throw MusicError.message("QQ 音乐返回的账户资料缺少有效账号标识（本人资料：数字标识字段格式不支持），请稍后重试。")
+                throw MusicError.message(L10n.string("QQ 音乐返回的账户资料缺少有效账号标识（本人资料：数字标识字段格式不支持），请稍后重试。"))
             }
             guard validEncryptedUin(creator["encrypt_uin"]) else {
                 let value = creator["encrypt_uin"]
                 let missing = value == nil || value is NSNull || (value as? String)?.isEmpty == true
-                let category = missing ? "缺少加密标识" : "加密标识字段格式不支持"
-                throw MusicError.message("QQ 音乐返回的账户资料缺少有效账号标识（本人资料：数字标识隐藏；\(category)），请稍后重试。")
+                let category = missing ? L10n.string("缺少加密标识") : L10n.string("加密标识字段格式不支持")
+                throw MusicError.message(L10n.string("QQ 音乐返回的账户资料缺少有效账号标识（本人资料：数字标识隐藏；\(category)），请稍后重试。"))
             }
         }
         guard let rawName = string(creator["nick"]) ?? string(creator["nickname"]),
               !plain(rawName).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw MusicError.message("QQ 音乐未返回当前账户昵称，请稍后重试。")
+            throw MusicError.message(L10n.string("QQ 音乐未返回当前账户昵称，请稍后重试。"))
         }
         return MusicAccountProfile(id: account.uin, displayName: plain(rawName))
     }
@@ -118,10 +118,10 @@ struct QQDirectProvider: DirectMusicProvider {
         let account = try session(cookies)
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
-        guard query.count <= 200 else { throw MusicError.message("搜索内容过长，请缩短关键词。") }
+        guard query.count <= 200 else { throw MusicError.message(L10n.string("搜索内容过长，请缩短关键词。")) }
         let data = try await rpc(module: "music.search.SearchCgiService", method: "DoSearchForQQMusicDesktop", parameters: ["remoteplace": "txt.yqq.song", "searchid": String(UInt64.random(in: 1...UInt64.max)), "search_type": 0, "query": query, "page_num": 1, "num_per_page": 40], account: account, cookies: cookies)
         if let meta = data["meta"] as? [String: Any], (integer(meta["is_filter"]) ?? 0) < 0 {
-            throw MusicError.message("QQ 音乐限制了本次搜索，请重新登录或稍后重试。")
+            throw MusicError.message(L10n.string("QQ 音乐限制了本次搜索，请重新登录或稍后重试。"))
         }
         guard let body = data["body"] as? [String: Any], let song = body["song"] as? [String: Any], let list = song["list"] as? [[String: Any]] else { throw malformed() }
         let tracks = list.compactMap(track)
@@ -129,24 +129,44 @@ struct QQDirectProvider: DirectMusicProvider {
         return uniqueTracks(tracks)
     }
     func lyrics(_ track: Track, cookies: [MusicSessionCookie]) async throws -> LyricsPayload? {
-        guard track.source == .qq, let mid = track.sourceID, validID(mid) else { throw MusicError.message("歌曲缺少有效的 QQ 音乐标识，无法读取歌词。") }
+        guard track.source == .qq, let mid = track.sourceID, validID(mid) else { throw MusicError.message(L10n.string("歌曲缺少有效的 QQ 音乐标识，无法读取歌词。")) }
+        let account = try session(cookies)
+        do {
+            let response = try await rpc(module: "music.musichallSong.PlayLyricInfo", method: "GetPlayLyricInfo", parameters: ["songMid": mid, "crypt": 1, "qrc": 1, "qrc_t": 0, "lrc_t": 0, "trans": 1, "trans_t": 0, "roma": 0, "roma_t": 0, "type": 1], account: account, cookies: cookies, timeout: 8)
+            try Task.checkCancellation()
+            if let raw = response["lyric"] as? String, let decoded = QQWordLyricCodec.decode(raw) {
+                let translation = (response["trans"] as? String).flatMap(QQWordLyricCodec.decode)
+                if let document = PlatformWordLyrics.parse(decoded, format: .qrc, translation: translation) {
+                    return .init(text: "", document: document)
+                }
+                // Tracks without QRC may still return valid LRC from this RPC.
+                // Avoid an unnecessary second request when that timing is usable.
+                if let document = try? LyricsParser.parse(decoded), document.timing != .plain {
+                    return .init(text: decoded, translation: translation)
+                }
+            }
+            try Task.checkCancellation()
+        } catch is CancellationError { throw CancellationError() }
+        catch { try Task.checkCancellation() }
+        // Retain the existing website LRC route as an independent fallback.
         let endpoint = URL(string: "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg")!
-        let account = try session(cookies, endpoint: endpoint)
-        let response = try await get(path: endpoint.path, query: ["songmid": mid, "nobase64": "0", "notice": "0", "needNewCode": "0"], account: account, cookies: cookies)
+        let legacyAccount = try session(cookies, endpoint: endpoint)
+        let response = try await get(path: endpoint.path, query: ["songmid": mid, "nobase64": "0", "notice": "0", "needNewCode": "0"], account: legacyAccount, cookies: cookies)
         func text(_ value: Any?) throws -> String? {
             guard let value else { return nil }
-            guard let value = value as? String, value.utf8.count <= LyricsParser.maximumBytes * 2 else { throw MusicError.message("QQ 音乐歌词格式无法读取。") }
+            guard let value = value as? String, value.utf8.count <= LyricsParser.maximumBytes * 2 else { throw MusicError.message(L10n.string("QQ 音乐歌词格式无法读取。")) }
             if value.isEmpty { return nil }
             guard let bytes = Data(base64Encoded: value), bytes.count <= LyricsParser.maximumBytes,
-                  let decoded = String(data: bytes, encoding: .utf8) else { throw MusicError.message("QQ 音乐歌词编码无法读取。") }
+                  let decoded = String(data: bytes, encoding: .utf8) else { throw MusicError.message(L10n.string("QQ 音乐歌词编码无法读取。")) }
             return decoded
         }
         guard let original = try text(response["lyric"]), !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return .init(text: original, translation: try text(response["trans"]))
     }
+
     func playlists(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicPlaylist] {
         let account = try session(cookies)
-        guard normalizedUin(profile.id) == account.uin else { throw MusicError.message("QQ 音乐账户已改变，请重新登录。") }
+        guard normalizedUin(profile.id) == account.uin else { throw MusicError.message(L10n.string("QQ 音乐账户已改变，请重新登录。")) }
         var output: [RemoteMusicPlaylist] = []
         for kind in ["created", "favorite"] {
             var offset = 0
@@ -165,13 +185,13 @@ struct QQDirectProvider: DirectMusicProvider {
                 }
                 guard converted.count == ordinary.count else { throw malformed() }
                 let pageIDs = items.compactMap { string($0["tid"]) ?? string($0["dissid"]) }.joined(separator: ",")
-                if !items.isEmpty && !previousPages.insert(pageIDs).inserted { throw MusicError.message("QQ 音乐返回了重复的歌单分页，请稍后重试。") }
+                if !items.isEmpty && !previousPages.insert(pageIDs).inserted { throw MusicError.message(L10n.string("QQ 音乐返回了重复的歌单分页，请稍后重试。")) }
                 for playlist in converted where !output.contains(where: { $0.id == playlist.id }) { output.append(playlist) }
                 offset += items.count
                 let total = integer(data["totaldiss"]) ?? integer(data["totoal"]) ?? integer(data["total"])
                 if items.isEmpty, let total, offset < total { throw malformed() }
                 if items.isEmpty || (total.map { offset >= $0 } ?? (items.count < size)) { break }
-                if page == 49 { throw MusicError.message("QQ 音乐歌单数量超过本次读取范围，请稍后缩小范围。") }
+                if page == 49 { throw MusicError.message(L10n.string("QQ 音乐歌单数量超过本次读取范围，请稍后缩小范围。")) }
             }
         }
         return output
@@ -179,7 +199,7 @@ struct QQDirectProvider: DirectMusicProvider {
     func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie]) async throws -> [Track] {
         let account = try session(cookies)
         guard playlist.source == .qq, !playlist.id.isEmpty, playlist.id.utf8.allSatisfy({ (48...57).contains($0) }),
-              let identifier = Int64(playlist.id), identifier > 0 else { throw MusicError.message("QQ 音乐歌单标识无效，请刷新歌单列表。") }
+              let identifier = Int64(playlist.id), identifier > 0 else { throw MusicError.message(L10n.string("QQ 音乐歌单标识无效，请刷新歌单列表。")) }
         var output: [Track] = [], offset = 0
         var hydrated: [Int64: Track] = [:]
         var hydrationFailures: [Int64: String] = [:]
@@ -192,18 +212,18 @@ struct QQDirectProvider: DirectMusicProvider {
             // by this RPC with code 10006, even when the decimal contents match.
             let data = try await rpc(module: "music.srfDissInfo.aiDissInfo", method: "uniform_get_Dissinfo", parameters: ["disstid": identifier, "userinfo": 1, "tag": 1, "orderlist": 1, "song_begin": offset, "song_num": 100, "onlysonglist": 1, "enc_host_uin": ""], account: account, cookies: cookies)
             guard let list = data["songlist"] as? [Any] else {
-                throw MusicError.message("QQ 音乐歌单响应格式异常（读取歌单曲目：第 \(page + 1) 页 songlist 为\(playlistFieldType(data["songlist"]))，预期列表），本次未导入。")
+                throw MusicError.message(L10n.string("QQ 音乐歌单响应格式异常（读取歌单曲目：第 \(page + 1) 页 songlist 为\(playlistFieldType(data["songlist"]))，预期列表），本次未导入。"))
             }
             if let total = integer(data["total_song_num"]) {
                 guard total >= 0, reportedTotal == nil || reportedTotal == total else {
-                    throw MusicError.message("QQ 音乐歌单分页总数不一致，本次未导入，请刷新后重试。")
+                    throw MusicError.message(L10n.string("QQ 音乐歌单分页总数不一致，本次未导入，请刷新后重试。"))
                 }
                 reportedTotal = total
             }
             if !list.isEmpty {
                 let pageData = try JSONSerialization.data(withJSONObject: list, options: [.sortedKeys])
                 guard pageSignatures.insert(Data(SHA256.hash(data: pageData))).inserted else {
-                    throw MusicError.message("QQ 音乐返回了重复的歌单分页，本次未导入，请稍后重试。")
+                    throw MusicError.message(L10n.string("QQ 音乐返回了重复的歌单分页，本次未导入，请稍后重试。"))
                 }
             }
             var parsed: [Track] = []
@@ -211,6 +231,7 @@ struct QQDirectProvider: DirectMusicProvider {
                 try Task.checkCancellation()
                 let position = offset + index + 1
                 var failure: String?
+                var metadataIssue = false
                 if let row = value as? [String: Any], let item = track(row) {
                     parsed.append(item)
                 } else if let original = value as? [String: Any], let row = trackFields(original),
@@ -218,7 +239,7 @@ struct QQDirectProvider: DirectMusicProvider {
                     if let cached = hydrated[songID] { parsed.append(cached); continue }
                     if let cached = hydrationFailures[songID] { failure = cached }
                     else if detailRequests >= 20 {
-                        failure = "补资料失败：已达到每次导入最多 20 次的补充请求上限。"
+                        failure = L10n.string("补资料失败：已达到每次导入最多 20 次的补充请求上限。")
                     }
                     if failure == nil {
                         detailRequests += 1
@@ -227,39 +248,39 @@ struct QQDirectProvider: DirectMusicProvider {
                             try Task.checkCancellation()
                             hydrated[songID] = item; parsed.append(item)
                         } catch is CancellationError { throw CancellationError() }
-                        catch let error as MusicError { failure = "补资料失败：\(error.localizedDescription)" }
-                        catch { failure = "补资料失败：无法完成详情请求。" }
+                        catch let error as MusicError { failure = L10n.string("补资料失败：\(error.localizedDescription)") }
+                        catch { failure = L10n.string("补资料失败：无法完成详情请求。") }
                     }
                     if let failure { hydrationFailures[songID] = failure }
-                } else { failure = "：\(playlistTrackIssue(value))" }
+                } else { metadataIssue = true; failure = L10n.string("：\(playlistTrackIssue(value))") }
                 if let failure {
                     failedCount += 1
-                    if issues.count < 20 { issues.append("第 \(page + 1) 页，第 \(position) 首\(failure)") }
+                    if issues.count < 20 { issues.append(L10n.string("第 \(page + 1) 页，第 \(position) 首\(failure)")) }
                     if firstFailureSummary == nil {
-                        let reason = failure.hasPrefix("：") ? "：歌曲资料缺少有效标识或标题。" : failure.replacingOccurrences(of: " MID", with: "标识")
-                        firstFailureSummary = "第 \(position) 首\(reason)"
+                        let reason = metadataIssue ? L10n.string("：歌曲资料缺少有效标识或标题。") : failure
+                        firstFailureSummary = L10n.string("第 \(position) 首\(reason)")
                     }
                 }
             }
             output = uniqueTracks(output + parsed); offset += list.count
             let total = reportedTotal ?? (playlist.trackCount > 0 ? playlist.trackCount : nil)
             if list.isEmpty, let total, offset < total {
-                throw MusicError.message("QQ 音乐歌单分页格式不完整（第 \(page + 1) 页为空，已读取 \(offset)/\(total) 首），本次未导入。")
+                throw MusicError.message(L10n.string("QQ 音乐歌单分页格式不完整（第 \(page + 1) 页为空，已读取 \(offset)/\(total) 首），本次未导入。"))
             }
             if list.isEmpty || (total.map { offset >= $0 } ?? (list.count < 100)) {
                 try Task.checkCancellation()
                 if let total, offset != total {
-                    throw MusicError.message("QQ 音乐歌单总数与读取数量不一致（已读取 \(offset)/\(total) 首），本次未导入。")
+                    throw MusicError.message(L10n.string("QQ 音乐歌单总数与读取数量不一致（已读取 \(offset)/\(total) 首），本次未导入。"))
                 }
                 guard failedCount > 0 else { return output }
                 let omitted = failedCount - issues.count
-                let remainder = omitted > 0 ? "；另有 \(omitted) 条失败原因未展开" : ""
-                let message = "QQ 音乐歌单曲目格式不完整（成功解析 \(offset - failedCount)/\(offset) 首；\(issues.joined(separator: "；"))\(remainder)），本次未导入。"
+                let remainder = omitted > 0 ? L10n.string("；另有 \(omitted) 条失败原因未展开") : ""
+                let message = L10n.string("QQ 音乐歌单曲目格式不完整（成功解析 \(offset - failedCount)/\(offset) 首；\(issues.joined(separator: L10n.string("；")))\(remainder)），本次未导入。")
                 guard !output.isEmpty else { throw MusicError.message(message) }
-                let summary = "已读完整份 \(offset) 首歌单，成功解析 \(offset - failedCount)/\(offset) 首，\(failedCount) 首未能读取。\(firstFailureSummary ?? "")\(remainder)"
+                let summary = L10n.string("已读完整份 \(offset) 首歌单，成功解析 \(offset - failedCount)/\(offset) 首，\(failedCount) 首未能读取。\(firstFailureSummary ?? "")\(remainder)")
                 throw MusicError.incompletePlaylist(.init(tracks: output, totalCount: offset, failedCount: failedCount, issues: issues, message: summary))
             }
-            if page == 99 { throw MusicError.message("QQ 音乐歌单过大，无法一次读取全部曲目。") }
+            if page == 99 { throw MusicError.message(L10n.string("QQ 音乐歌单过大，无法一次读取全部曲目。")) }
         }
         return output
     }
@@ -268,40 +289,40 @@ struct QQDirectProvider: DirectMusicProvider {
         // after the server confirms this exact numeric ID; never treat it as MID.
         let data = try await rpc(module: "music.pf_song_detail_svr", method: "get_song_detail_yqq", parameters: ["song_id": id], account: account, cookies: cookies)
         guard let info = data["track_info"] as? [String: Any] else {
-            throw MusicError.message("平台详情缺少曲目对象，无法确认该歌曲是否仍存在。")
+            throw MusicError.message(L10n.string("平台详情缺少曲目对象，无法确认该歌曲是否仍存在。"))
         }
         guard let returnedID = positiveSongID(info["id"]) else {
-            throw MusicError.message("平台详情缺少有效数字歌曲编号。")
+            throw MusicError.message(L10n.string("平台详情缺少有效数字歌曲编号。"))
         }
-        guard returnedID == id else { throw MusicError.message("平台返回的歌曲与请求编号不一致。") }
-        guard trackMID(info) != nil else { throw MusicError.message("平台详情仍没有合法歌曲 MID。") }
-        guard let item = track(info) else { throw MusicError.message("平台详情缺少可用标题或曲目结构不受支持。") }
+        guard returnedID == id else { throw MusicError.message(L10n.string("平台返回的歌曲与请求编号不一致。")) }
+        guard trackMID(info) != nil else { throw MusicError.message(L10n.string("平台详情仍没有合法歌曲 MID。")) }
+        guard let item = track(info) else { throw MusicError.message(L10n.string("平台详情缺少可用标题或曲目结构不受支持。")) }
         return item
     }
     /// Static field categories and row counts only: never echo track/account data.
     private func playlistFieldType(_ value: Any?) -> String {
-        guard let value else { return "缺失" }
-        if value is NSNull { return "空值" }
-        if value is String { return "文本" }
-        if value is NSNumber { return "数字或布尔值" }
-        if value is [String: Any] { return "对象" }
-        if value is [Any] { return "列表" }
-        return "不支持的类型"
+        guard let value else { return L10n.string("缺失") }
+        if value is NSNull { return L10n.string("空值") }
+        if value is String { return L10n.string("文本") }
+        if value is NSNumber { return L10n.string("数字或布尔值") }
+        if value is [String: Any] { return L10n.string("对象") }
+        if value is [Any] { return L10n.string("列表") }
+        return L10n.string("不支持的类型")
     }
     private func playlistTrackIssue(_ value: Any) -> String {
-        guard let original = value as? [String: Any] else { return "曲目为\(playlistFieldType(value))，预期对象" }
+        guard let original = value as? [String: Any] else { return L10n.string("曲目为\(playlistFieldType(value))，预期对象") }
         guard let row = trackFields(original) else {
             let present = ["track_info", "songInfo", "songinfo", "song"].filter { original[$0] != nil }
-            if present.count > 1 { return "曲目含多个包裹字段，格式不明确" }
-            return "曲目包裹字段 \(present.first ?? "songInfo")=\(playlistFieldType(original[present.first ?? "songInfo"]))，预期对象"
+            if present.count > 1 { return L10n.string("曲目含多个包裹字段，格式不明确") }
+            return L10n.string("曲目包裹字段 \(present.first ?? "songInfo")=\(playlistFieldType(original[present.first ?? "songInfo"]))，预期对象")
         }
         if trackMID(row) == nil {
-            let mid = "mid=\(midDiagnostic(row["mid"]))、songmid=\(midDiagnostic(row["songmid"]))"
-            let numeric = "id=\(numericIDDiagnostic(row["id"]))、songid=\(numericIDDiagnostic(row["songid"]))"
+            let mid = L10n.string("mid=\(midDiagnostic(row["mid"]))、songmid=\(midDiagnostic(row["songmid"]))")
+            let numeric = L10n.string("id=\(numericIDDiagnostic(row["id"]))、songid=\(numericIDDiagnostic(row["songid"]))")
             let conflict = positiveSongID(row["id"]).flatMap { id in positiveSongID(row["songid"]).map { id != $0 } } == true
-            return "歌曲标识格式不支持（\(mid)；\(numeric)\(conflict ? "；两个数字编号冲突" : "")）"
+            return L10n.string("歌曲标识格式不支持（\(mid)；\(numeric)\(conflict ? L10n.string("；两个数字编号冲突") : "")）")
         }
-        return "标题字段 title=\(playlistFieldType(row["title"]))、name=\(playlistFieldType(row["name"]))、songname=\(playlistFieldType(row["songname"]))"
+        return L10n.string("标题字段 title=\(playlistFieldType(row["title"]))、name=\(playlistFieldType(row["name"]))、songname=\(playlistFieldType(row["songname"]))")
     }
     func resolve(_ track: Track, cookies: [MusicSessionCookie]) async throws -> URL {
         let account = try session(cookies, endpoint: URL(string: "https://u.y.qq.com/cgi-bin/musicu.fcg")!)
@@ -313,20 +334,20 @@ struct QQDirectProvider: DirectMusicProvider {
         }
     }
     private func resolve(_ track: Track, account: Session, cookies: [MusicSessionCookie]) async throws -> URL {
-        guard track.source == .qq, let mid = track.sourceID, validID(mid) else { throw MusicError.message("QQ 音乐歌曲标识无效，请重新搜索。") }
+        guard track.source == .qq, let mid = track.sourceID, validID(mid) else { throw MusicError.message(L10n.string("QQ 音乐歌曲标识无效，请重新搜索。")) }
         guard let playbackKey = account.playbackKey else {
-            throw MusicError.message("QQ 音乐网页登录有效，但本次会话缺少播放票据，请重新打开应用内官网窗口完成登录。")
+            throw MusicError.message(L10n.string("QQ 音乐网页登录有效，但本次会话缺少播放票据，请重新打开应用内官网窗口完成登录。"))
         }
         let metadataAccount = try session(cookies)
         guard metadataAccount.uin == account.uin else {
-            throw MusicError.message("QQ 音乐资料与播放会话的账户不一致，请重新打开应用内官网窗口完成登录。")
+            throw MusicError.message(L10n.string("QQ 音乐资料与播放会话的账户不一致，请重新打开应用内官网窗口完成登录。"))
         }
         let detail = try await rpc(module: "music.pf_song_detail_svr", method: "get_song_detail_yqq", parameters: ["song_mid": mid], account: metadataAccount, cookies: cookies)
         guard let info = detail["track_info"] as? [String: Any], string(info["mid"]) == mid else {
-            throw MusicError.message("QQ 音乐未返回所选歌曲的资料，请重新搜索后重试。")
+            throw MusicError.message(L10n.string("QQ 音乐未返回所选歌曲的资料，请重新搜索后重试。"))
         }
         guard let file = info["file"] as? [String: Any], let mediaID = file["media_mid"] as? String, validID(mediaID) else {
-            throw MusicError.message("QQ 音乐未返回这首歌的有效媒体编号，暂时无法请求播放地址。")
+            throw MusicError.message(L10n.string("QQ 音乐未返回这首歌的有效媒体编号，暂时无法请求播放地址。"))
         }
         // One ordinary file, using the actual media identifier and the user's
         // existing scoped ticket. No quality sweep, alternate account, or retry
@@ -334,28 +355,28 @@ struct QQDirectProvider: DirectMusicProvider {
         let requestedFilename = "M500\(mediaID).mp3"
         let data = try await playbackData(mid: mid, songType: integer(info["type"]) ?? 0, filename: requestedFilename, account: account, playbackKey: playbackKey, cookies: cookies)
         guard let entries = data["midurlinfo"] as? [[String: Any]] else {
-            throw MusicError.message("QQ 音乐播放授权响应缺少歌曲列表，请稍后重试或更新应用。")
+            throw MusicError.message(L10n.string("QQ 音乐播放授权响应缺少歌曲列表，请稍后重试或更新应用。"))
         }
         guard let entry = entries.first(where: { string($0["songmid"]) == mid }) else {
-            throw MusicError.message("QQ 音乐未返回所选歌曲的播放授权，请在官网查看其可播放状态。")
+            throw MusicError.message(L10n.string("QQ 音乐未返回所选歌曲的播放授权，请在官网查看其可播放状态。"))
         }
         if let result = integer(entry["result"]), result != 0 {
-            throw MusicError.message("QQ 音乐未能返回这首歌的播放地址（平台返回码 \(result)），平台未说明具体原因。")
+            throw MusicError.message(L10n.string("QQ 音乐未能返回这首歌的播放地址（平台返回码 \(String(result))），平台未说明具体原因。"))
         }
         if let filename = entry["filename"] as? String, !filename.isEmpty, filename != requestedFilename {
-            throw MusicError.message("QQ 音乐返回的音频文件与本次请求不一致，暂未播放。")
+            throw MusicError.message(L10n.string("QQ 音乐返回的音频文件与本次请求不一致，暂未播放。"))
         }
         guard let purl = string(entry["purl"]), !purl.isEmpty else {
-            throw MusicError.message("QQ 音乐未提供当前账户可播放的完整音频链接，请在官网查看这首歌的可播放状态。")
+            throw MusicError.message(L10n.string("QQ 音乐未提供当前账户可播放的完整音频链接，请在官网查看这首歌的可播放状态。"))
         }
-        guard let path = URL(string: purl)?.path else { throw MusicError.message("QQ 音乐返回的音频地址无法解析，请稍后重试。") }
+        guard let path = URL(string: purl)?.path else { throw MusicError.message(L10n.string("QQ 音乐返回的音频地址无法解析，请稍后重试。")) }
         let filename = URL(fileURLWithPath: path).lastPathComponent
         guard !filename.uppercased().hasPrefix("RS"), !path.lowercased().contains("/trial"), !path.contains("试听") else {
-            throw MusicError.message("QQ 音乐仅返回了试听音频，暂不播放；请在官网查看完整歌曲的可播放状态。")
+            throw MusicError.message(L10n.string("QQ 音乐仅返回了试听音频，暂不播放；请在官网查看完整歌曲的可播放状态。"))
         }
         let fileExtension = URL(fileURLWithPath: path).pathExtension.lowercased()
         guard ["mp3", "m4a", "aac", "flac", "wav", "aiff", "aif", "mp4"].contains(fileExtension) else {
-            throw MusicError.message("QQ 音乐返回的音频格式暂不支持；加密文件不会被解密或播放。")
+            throw MusicError.message(L10n.string("QQ 音乐返回的音频格式暂不支持；加密文件不会被解密或播放。"))
         }
         // Inspect every server-supplied candidate before giving up. A nonempty
         // but unusable thirdip must not hide a valid sip from the same response.
@@ -372,16 +393,16 @@ struct QQDirectProvider: DirectMusicProvider {
         for server in servers {
             guard let base = URL(string: server), let resolved = URL(string: purl, relativeTo: base)?.absoluteURL,
                   var components = URLComponents(url: resolved, resolvingAgainstBaseURL: false) else {
-                recordAddressIssue("候选地址无法解析"); continue
+                recordAddressIssue(L10n.string("候选地址无法解析")); continue
             }
-            guard let scheme = components.scheme else { recordAddressIssue("候选地址缺少协议"); continue }
-            guard scheme == "https" || scheme == "http" else { recordAddressIssue("地址协议不受支持"); continue }
+            guard let scheme = components.scheme else { recordAddressIssue(L10n.string("候选地址缺少协议")); continue }
+            guard scheme == "https" || scheme == "http" else { recordAddressIssue(L10n.string("地址协议不受支持")); continue }
             if components.scheme == "http", components.port == 80 { components.port = nil }
             components.scheme = "https"
-            guard let url = components.url else { recordAddressIssue("候选地址无法解析"); continue }
-            guard let rawHost = url.host, !rawHost.isEmpty else { recordAddressIssue("候选地址缺少主机"); continue }
+            guard let url = components.url else { recordAddressIssue(L10n.string("候选地址无法解析")); continue }
+            guard let rawHost = url.host, !rawHost.isEmpty else { recordAddressIssue(L10n.string("候选地址缺少主机")); continue }
             guard let host = safeDiagnosticHost(rawHost) else {
-                recordAddressIssue(rawHost.contains(":") ? "IP 地址格式不受支持" : "主机名格式不受支持")
+                recordAddressIssue(rawHost.contains(":") ? L10n.string("IP 地址格式不受支持") : L10n.string("主机名格式不受支持"))
                 continue
             }
             if url.user != nil || url.password != nil || (url.port != nil && url.port != 443) {
@@ -396,11 +417,11 @@ struct QQDirectProvider: DirectMusicProvider {
             return url
         }
         guard !rejectedHosts.isEmpty else {
-            throw MusicError.message("QQ 音乐返回的音频地址不可用（\(firstAddressIssue ?? "没有可用的候选地址")），请稍后重试。")
+            throw MusicError.message(L10n.string("QQ 音乐返回的音频地址不可用（\(firstAddressIssue ?? L10n.string("没有可用的候选地址"))），请稍后重试。"))
         }
         let hosts = rejectedHosts.joined(separator: "、")
-        if unsupportedConnection { throw MusicError.message("QQ 音乐返回的音频连接参数不受支持（主机：\(hosts)）。") }
-        throw MusicError.message("QQ 音乐返回了不受信任的音频地址（主机：\(hosts)），暂未播放。")
+        if unsupportedConnection { throw MusicError.message(L10n.string("QQ 音乐返回的音频连接参数不受支持（主机：\(hosts)）。")) }
+        throw MusicError.message(L10n.string("QQ 音乐返回了不受信任的音频地址（主机：\(hosts)），暂未播放。"))
     }
     private func playbackData(mid: String, songType: Int, filename: String, account: Session, playbackKey: String, cookies: [MusicSessionCookie]) async throws -> [String: Any] {
         let parameters: [String: Any] = ["guid": String(UInt64.random(in: 10_000_000...99_999_999)), "songmid": [mid], "songtype": [songType], "uin": account.webUin, "loginflag": 1, "platform": "20", "filename": [filename]]
@@ -410,22 +431,22 @@ struct QQDirectProvider: DirectMusicProvider {
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes])
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         let root = try json(await http.data(for: request, source: .qq, cookies: cookies))
-        try check(root, operation: "获取播放地址")
+        try check(root, operation: L10n.string("获取播放地址"))
         guard let result = root["req_0"] as? [String: Any] else { throw malformed() }
-        try check(result, operation: "获取播放地址")
+        try check(result, operation: L10n.string("获取播放地址"))
         guard let data = result["data"] as? [String: Any] else { throw malformed() }
-        if data["code"] != nil { try check(data, operation: "获取播放地址") }
+        if data["code"] != nil { try check(data, operation: L10n.string("获取播放地址")) }
         return data
     }
-    private func rpc(module: String, method: String, parameters: [String: Any], account: Session, cookies: [MusicSessionCookie]) async throws -> [String: Any] {
+    private func rpc(module: String, method: String, parameters: [String: Any], account: Session, cookies: [MusicSessionCookie], timeout: TimeInterval? = nil) async throws -> [String: Any] {
         // Metadata keeps the browser cookie + UIN/CSRF contract. Playback uses
         // its separate ticket-authenticated request above; do not mix the two.
         let payload: [String: Any] = ["comm": ["ct": 24, "cv": 4747474, "uin": account.commUin, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "g_tk": account.legacyCSRF, "g_tk_new_20200303": account.csrf], "req_0": ["module": module, "method": method, "param": parameters]]
         let body = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes])
         var url = URLComponents(string: "https://u.y.qq.com/cgi-bin/musics.fcg")!
         url.queryItems = [URLQueryItem(name: "sign", value: QQWebSigning.signature(for: body))]
-        var request = request(url.url!); request.httpMethod = "POST"; request.httpBody = body; request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        let operation = ["uniform_get_Dissinfo": "读取歌单曲目", "get_song_detail_yqq": "读取歌曲资料", "DoSearchForQQMusicDesktop": "搜索歌曲"][method] ?? "完成请求"
+        var request = request(url.url!); if let timeout { request.timeoutInterval = timeout }; request.httpMethod = "POST"; request.httpBody = body; request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        let operation = ["uniform_get_Dissinfo": L10n.string("读取歌单曲目"), "get_song_detail_yqq": L10n.string("读取歌曲资料"), "DoSearchForQQMusicDesktop": L10n.string("搜索歌曲"), "GetPlayLyricInfo": L10n.string("读取歌词")][method] ?? L10n.string("完成请求")
         let root = try json(await http.data(for: request, source: .qq, cookies: cookies)); try check(root, operation: operation)
         guard let result = root["req_0"] as? [String: Any] else { throw malformed() }; try check(result, operation: operation)
         guard let data = result["data"] as? [String: Any] else { throw malformed() }
@@ -444,11 +465,11 @@ struct QQDirectProvider: DirectMusicProvider {
     private func json(_ data: Data) throws -> [String: Any] {
         guard let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw malformed() }; return result
     }
-    private func check(_ result: [String: Any], operation: String = "完成请求") throws {
+    private func check(_ result: [String: Any], operation: String = L10n.string("完成请求")) throws {
         guard let code = integer(result["code"]) else { throw malformed() }
         guard code == 0 else {
-            if [1000, -1000, 101010].contains(code) { throw MusicError.message("QQ 音乐登录已失效，请重新登录（平台返回码 \(code)）。") }
-            throw MusicError.message("QQ 音乐\(operation)失败（平台返回码 \(code)），请稍后重试。")
+            if [1000, -1000, 101010].contains(code) { throw MusicError.message(L10n.string("QQ 音乐登录已失效，请重新登录（平台返回码 \(String(code))）。")) }
+            throw MusicError.message(L10n.string("QQ 音乐\(operation)失败（平台返回码 \(String(code))），请稍后重试。"))
         }
     }
     private func track(_ row: [String: Any]) -> Track? {
@@ -458,7 +479,7 @@ struct QQDirectProvider: DirectMusicProvider {
         let singers = (row["singer"] as? [[String: Any]] ?? []).compactMap { string($0["name"]) }.joined(separator: " / ")
         let album = row["album"] as? [String: Any] ?? [:], albumID = string(album["mid"]) ?? string(row["albummid"])
         let cover = albumID.flatMap { validID($0) ? URL(string: "https://y.gtimg.cn/music/photo_new/T002R500x500M000\($0).jpg") : nil }
-        return Track(id: "qq:\(mid)", title: plain(title), artist: plain(singers), album: plain(string(album["title"]) ?? string(album["name"]) ?? string(row["albumname"]) ?? ""), duration: Double(max(0, integer(row["interval"]) ?? 0)), source: .qq, sourceID: mid, artworkURL: cover, format: "QQ 音乐")
+        return Track(id: "qq:\(mid)", title: plain(title), artist: plain(singers), album: plain(string(album["title"]) ?? string(album["name"]) ?? string(row["albumname"]) ?? ""), duration: Double(max(0, integer(row["interval"]) ?? 0)), source: .qq, sourceID: mid, artworkURL: cover, format: L10n.string("QQ 音乐"))
     }
     private func trackMID(_ row: [String: Any]) -> String? {
         [row["mid"], row["songmid"]].compactMap { $0 as? String }.first(where: validID)
@@ -475,13 +496,13 @@ struct QQDirectProvider: DirectMusicProvider {
         return id ?? songID
     }
     private func numericIDDiagnostic(_ value: Any?) -> String {
-        "\(playlistFieldType(value))（\(positiveSongID(value) == nil ? "非有效正整数" : "有效正整数")）"
+        L10n.string("\(playlistFieldType(value))（\(positiveSongID(value) == nil ? L10n.string("非有效正整数") : L10n.string("有效正整数"))）")
     }
     private func midDiagnostic(_ value: Any?) -> String {
         guard let text = value as? String else { return playlistFieldType(value) }
-        if text.isEmpty { return "空文本" }
-        if text.count > 80 { return "超长字段" }
-        return validID(text) ? "有效" : "含不支持字符"
+        if text.isEmpty { return L10n.string("空文本") }
+        if text.count > 80 { return L10n.string("超长字段") }
+        return validID(text) ? L10n.string("有效") : L10n.string("含不支持字符")
     }
     /// Supported response containers share one parser in search and playlists.
     /// Do not merge conflicting containers or invent a MID from a numeric song ID.
@@ -527,5 +548,5 @@ struct QQDirectProvider: DirectMusicProvider {
         guard let value, var url = URLComponents(string: value.hasPrefix("//") ? "https:\(value)" : value), url.scheme == "http" || url.scheme == "https", url.user == nil, url.password == nil else { return nil }
         url.scheme = "https"; return url.url
     }
-    private func malformed() -> MusicError { .message("QQ 音乐响应格式已变化，请稍后重试或更新应用。") }
+    private func malformed() -> MusicError { .message(L10n.string("QQ 音乐响应格式已变化，请稍后重试或更新应用。")) }
 }

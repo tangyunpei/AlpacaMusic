@@ -36,7 +36,7 @@ final class NeteaseQRAuthentication: NSObject, WKNavigationDelegate, WKUIDelegat
         navigationTimeout = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .seconds(35)) } catch { return }
             guard let self, self.generation == attempt, self.phase == .loading else { return }
-            self.fail("网易云官方扫码组件加载超时，请重新载入或使用网页登录。")
+            self.fail(L10n.string("网易云官方扫码组件加载超时，请重新载入或使用网页登录。"))
         }
         view.load(URLRequest(url: Self.origin, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 25))
     }
@@ -60,7 +60,7 @@ final class NeteaseQRAuthentication: NSObject, WKNavigationDelegate, WKUIDelegat
                 if phase == .ready {
                     let state = try await script(Self.statusScript, attempt: attempt)
                     guard state["ok"] as? Bool == true else {
-                        throw MusicError.message("网易云官方扫码页面已变化，请重新载入或使用网页登录。")
+                        throw MusicError.message(L10n.string("网易云官方扫码页面已变化，请重新载入或使用网页登录。"))
                     }
                     if state["succeeded"] as? Bool == true {
                         if cookieDeadline == nil { cookieDeadline = .now.advanced(by: .seconds(10)) }
@@ -71,13 +71,13 @@ final class NeteaseQRAuthentication: NSObject, WKNavigationDelegate, WKUIDelegat
                             return session
                         }
                         if let cookieDeadline, .now >= cookieDeadline {
-                            throw MusicError.message("网易云已确认扫码，但未返回有效登录会话，请重新载入或使用网页登录。")
+                            throw MusicError.message(L10n.string("网易云已确认扫码，但未返回有效登录会话，请重新载入或使用网页登录。"))
                         }
                     }
                 }
                 try await Task.sleep(for: .milliseconds(350))
             }
-            throw MusicError.message("网易云登录等待已超时，请重新载入。")
+            throw MusicError.message(L10n.string("网易云登录等待已超时，请重新载入。"))
         } catch {
             if error is CancellationError || Task.isCancelled { throw CancellationError() }
             if failedAttempt == attempt, let terminalFailure { throw terminalFailure }
@@ -158,7 +158,7 @@ final class NeteaseQRAuthentication: NSObject, WKNavigationDelegate, WKUIDelegat
         if webView === mainWebView && navigationResponse.isForMainFrame {
             guard let response = navigationResponse.response as? HTTPURLResponse,
                   (200..<300).contains(response.statusCode), response.mimeType == "text/html" else {
-                fail("网易云官方扫码页面暂时无法载入，请稍后重试。")
+                fail(L10n.string("网易云官方扫码页面暂时无法载入，请稍后重试。"))
                 return .cancel
             }
         }
@@ -181,12 +181,12 @@ final class NeteaseQRAuthentication: NSObject, WKNavigationDelegate, WKUIDelegat
                         self.navigationTimeout?.cancel(); self.navigationTimeout = nil
                         return
                     }
-                    guard state["ok"] as? Bool == true else { throw MusicError.message("网易云官方扫码组件无法启动，请使用网页登录。") }
+                    guard state["ok"] as? Bool == true else { throw MusicError.message(L10n.string("网易云官方扫码组件无法启动，请使用网页登录。")) }
                     try await Task.sleep(for: .milliseconds(250))
                 }
             } catch {
                 guard self.generation == attempt, !(error is CancellationError) else { return }
-                self.fail("网易云官方扫码组件无法载入，请检查网络后重试或使用网页登录。")
+                self.fail(L10n.string("网易云官方扫码组件无法载入，请检查网络后重试或使用网页登录。"))
             }
         }
     }
@@ -195,11 +195,11 @@ final class NeteaseQRAuthentication: NSObject, WKNavigationDelegate, WKUIDelegat
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { navigationFailed(webView, error) }
     private func navigationFailed(_ view: WKWebView, _ error: Error) {
         guard owns(view), view === mainWebView, (error as NSError).code != NSURLErrorCancelled else { return }
-        fail("网易云官方扫码页面无法载入，请检查网络后重试。")
+        fail(L10n.string("网易云官方扫码页面无法载入，请检查网络后重试。"))
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard owns(webView) else { return }
-        fail("网易云扫码页面已停止，请重新载入。")
+        fail(L10n.string("网易云扫码页面已停止，请重新载入。"))
     }
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
@@ -226,7 +226,7 @@ final class NeteaseQRAuthentication: NSObject, WKNavigationDelegate, WKUIDelegat
         timeouts[id] = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .seconds(10)) } catch { return }
             guard let self, let reject = self.pending[id], self.finish(id) else { return }
-            reject(MusicError.message("网易云扫码页面响应超时，请重新载入。"))
+            reject(MusicError.message(L10n.string("网易云扫码页面响应超时，请重新载入。")))
         }
     }
     private func finish(_ id: UUID) -> Bool {
@@ -236,7 +236,7 @@ final class NeteaseQRAuthentication: NSObject, WKNavigationDelegate, WKUIDelegat
     }
     private func script(_ body: String, attempt: UUID) async throws -> [String: Any] {
         try ensureActive(attempt)
-        guard let view = mainWebView, Self.isRoot(view.url) else { throw MusicError.message("网易云扫码页面地址已变化，请重新载入。") }
+        guard let view = mainWebView, Self.isRoot(view.url) else { throw MusicError.message(L10n.string("网易云扫码页面地址已变化，请重新载入。")) }
         let data: Data = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let id = UUID()
@@ -247,11 +247,11 @@ final class NeteaseQRAuthentication: NSObject, WKNavigationDelegate, WKUIDelegat
                     switch result {
                     case .success(let value):
                         guard let object = value as? [String: Any], let data = try? JSONSerialization.data(withJSONObject: object), data.count <= 4096 else {
-                            continuation.resume(throwing: MusicError.message("网易云扫码组件返回了无效状态。")); return
+                            continuation.resume(throwing: MusicError.message(L10n.string("网易云扫码组件返回了无效状态。"))); return
                         }
                         continuation.resume(returning: data)
                     case .failure:
-                        continuation.resume(throwing: MusicError.message("网易云扫码组件未能响应，请重新载入。"))
+                        continuation.resume(throwing: MusicError.message(L10n.string("网易云扫码组件未能响应，请重新载入。")))
                     }
                 }
             }

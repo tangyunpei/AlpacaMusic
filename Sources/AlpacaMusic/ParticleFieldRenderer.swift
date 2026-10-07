@@ -38,7 +38,7 @@ final class ParticleFieldRenderer: NSObject, MTKViewDelegate {
 
     init(view: MTKView, device: any MTLDevice, signal: @escaping @MainActor () -> AudioLevels) throws {
         self.view = view; self.signal = signal
-        guard let queue = device.makeCommandQueue() else { throw MusicError.message("无法建立粒子视效命令队列") }
+        guard let queue = device.makeCommandQueue() else { throw MusicError.message(L10n.string("无法建立粒子视效命令队列")) }
         self.queue = queue
         pipeline = try ParticleFieldPipeline(device: device)
         super.init()
@@ -143,7 +143,7 @@ final class ParticleFieldRenderer: NSObject, MTKViewDelegate {
                 Task { @MainActor [weak self] in
                     guard let self, !self.stopped else { return }
                     self.failed = true; self.refreshScheduling()
-                    self.onNotice("粒子视效暂时不可用，音乐可继续播放。")
+                    self.onNotice(L10n.string("粒子视效暂时不可用，音乐可继续播放。"))
                 }
             }
         }

@@ -107,29 +107,29 @@ actor LyricsStorage {
         do {
             let data = try read(location, maximumBytes: 8 * 1024 * 1024)
             let record = try JSONDecoder().decode(Record.self, from: data)
-            guard record.version == 1, record.key == key else { throw MusicError.message("歌词关联资料无效。") }
-            return try LyricsParser.parse(record.text, format: record.format, sourceDescription: "手动导入")
+            guard record.version == 1, record.key == key else { throw MusicError.message(L10n.string("歌词关联资料无效。")) }
+            return try LyricsParser.parse(record.text, format: record.format, sourceDescription: L10n.string("手动导入"))
         } catch is CancellationError { throw CancellationError() }
-        catch { throw MusicError.message("已导入的歌词资料无法读取，请重新导入；原文件仍保留。") }
+        catch { throw MusicError.message(L10n.string("已导入的歌词资料无法读取，请重新导入；原文件仍保留。")) }
     }
 
     func importFile(_ url: URL, for track: Track) throws -> LyricDocument {
         try Task.checkCancellation()
-        guard url.isFileURL else { throw MusicError.message("请选择本机的 LRC、SRT 或 TXT 歌词文件。") }
+        guard url.isFileURL else { throw MusicError.message(L10n.string("请选择本机的 LRC、SRT 或 TXT 歌词文件。")) }
         let format: LyricsFormat
         switch url.pathExtension.lowercased() {
         case "lrc": format = .lrc
         case "srt": format = .srt
         case "txt": format = .plain
-        default: throw MusicError.message("支持 LRC、SRT 和 TXT 歌词文件。")
+        default: throw MusicError.message(L10n.string("支持 LRC、SRT 和 TXT 歌词文件。"))
         }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let text: String
         do { text = try decodeText(read(url, maximumBytes: LyricsParser.maximumBytes)) }
         catch let error as MusicError { throw error }
-        catch { throw MusicError.message("无法读取所选歌词文件，请重新选择。") }
-        let document = try LyricsParser.parse(text, format: format, sourceDescription: "手动导入")
+        catch { throw MusicError.message(L10n.string("无法读取所选歌词文件，请重新选择。")) }
+        let document = try LyricsParser.parse(text, format: format, sourceDescription: L10n.string("手动导入"))
         try Task.checkCancellation()
         let key = LyricsIdentity.key(for: track)
         let record = Record(key: key, text: text, format: format)
@@ -137,7 +137,7 @@ actor LyricsStorage {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(record)
             try data.write(to: location(for: key), options: [.atomic])
-        } catch { throw MusicError.message("歌词已读取，但无法保存到本机。请检查资料目录权限后重试。") }
+        } catch { throw MusicError.message(L10n.string("歌词已读取，但无法保存到本机。请检查资料目录权限后重试。")) }
         return document
     }
 
@@ -158,7 +158,7 @@ actor LyricsStorage {
             let url = audioURL.deletingPathExtension().appendingPathExtension(suffix)
             guard let data = try? read(url, maximumBytes: LyricsParser.maximumBytes) else { continue }
             let format: LyricsFormat = suffix.lowercased() == "srt" ? .srt : (suffix.lowercased() == "txt" ? .plain : .lrc)
-            return try LyricsParser.parse(decodeText(data), format: format, sourceDescription: "本地同名歌词")
+            return try LyricsParser.parse(decodeText(data), format: format, sourceDescription: L10n.string("本地同名歌词"))
         }
         return nil
     }
@@ -166,18 +166,18 @@ actor LyricsStorage {
     private func location(for key: String) -> URL { directory.appending(path: "\(key).json") }
     private func read(_ url: URL, maximumBytes: Int) throws -> Data {
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true else { throw MusicError.message("请选择普通歌词文件。") }
-        guard (values.fileSize ?? 0) <= maximumBytes else { throw MusicError.message("歌词文件过大，无法读取。") }
+        guard values.isRegularFile == true, values.isSymbolicLink != true else { throw MusicError.message(L10n.string("请选择普通歌词文件。")) }
+        guard (values.fileSize ?? 0) <= maximumBytes else { throw MusicError.message(L10n.string("歌词文件过大，无法读取。")) }
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
-        guard data.count <= maximumBytes else { throw MusicError.message("歌词文件过大，无法读取。") }
+        guard data.count <= maximumBytes else { throw MusicError.message(L10n.string("歌词文件过大，无法读取。")) }
         return data
     }
     private func decodeText(_ data: Data) throws -> String {
         if let value = String(data: data, encoding: .utf8) { return value }
         if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]), let value = String(data: data, encoding: .utf16) { return value }
-        throw MusicError.message("歌词编码无法读取，请将文件保存为 UTF-8 或带字节序标记的 UTF-16。")
+        throw MusicError.message(L10n.string("歌词编码无法读取，请将文件保存为 UTF-8 或带字节序标记的 UTF-16。"))
     }
 }
 
@@ -186,6 +186,16 @@ actor LyricsStorage {
     private(set) var status: LyricsStatus = .idle
     private(set) var error: String?
     private(set) var automaticAppleMusicLookup: Bool
+    private(set) var automaticAudioAlignment: Bool
+    private(set) var audioAlignmentStatus: LyricAudioAlignmentStatus = .waitingAudio
+    @ObservationIgnored private let alignmentCache: LyricAlignmentCache
+    @ObservationIgnored private let alignmentOperation: LyricAlignmentRunner.Operation
+    @ObservationIgnored private var alignmentRequest: Task<Void, Never>?
+    @ObservationIgnored private var alignmentGeneration = UUID()
+    @ObservationIgnored private var audioSource: LyricAudioSource?
+    @ObservationIgnored private var originalDocument: LyricDocument?
+    @ObservationIgnored private var alignedResult: LyricAlignmentResult?
+    @ObservationIgnored private var alignmentPosition: Double = 0
     @ObservationIgnored private let client: NativeMusicClient
     @ObservationIgnored private let storage: LyricsStorage
     @ObservationIgnored private let online: LRCLIBClient
@@ -199,12 +209,19 @@ actor LyricsStorage {
     private struct CacheKey: Hashable { let track: String; let scope: LyricsSessionScope }
     private struct LoadResult { var document: LyricDocument?; var manual = false; var explanation: String? = nil }
 
-    init(client: NativeMusicClient, directory: URL? = nil, online: LRCLIBClient = LRCLIBClient(), automaticAppleMusicLookup: Bool = true) {
+    init(client: NativeMusicClient, directory: URL? = nil, online: LRCLIBClient = LRCLIBClient(), automaticAppleMusicLookup: Bool = true, automaticAudioAlignment: Bool = true,
+         alignmentOperation: @escaping LyricAlignmentRunner.Operation = { source, track, document, cache, position, progress, publish in
+             await LyricAlignmentRunner.run(source: source, track: track, document: document, cache: cache, position: position, progress: progress, publish: publish)
+         }) {
         self.client = client
         self.online = online
         self.automaticAppleMusicLookup = automaticAppleMusicLookup
+        self.automaticAudioAlignment = automaticAudioAlignment
+        self.alignmentOperation = alignmentOperation
+        audioAlignmentStatus = automaticAudioAlignment ? .waitingAudio : .off
         let environmentDirectory = ProcessInfo.processInfo.environment["ALPACA_DATA_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         storage = LyricsStorage(directory: directory ?? environmentDirectory ?? URL.applicationSupportDirectory.appending(path: "AlpacaMusic", directoryHint: .isDirectory))
+        alignmentCache = LyricAlignmentCache(directory: directory ?? environmentDirectory ?? URL.applicationSupportDirectory.appending(path: "AlpacaMusic", directoryHint: .isDirectory))
         accountObserver = Task { [weak self, client] in
             let changes = await client.lyricsSessionChanges()
             for await source in changes {
@@ -213,7 +230,73 @@ actor LyricsStorage {
             }
         }
     }
-    deinit { request?.cancel(); accountObserver?.cancel() }
+    deinit { request?.cancel(); accountObserver?.cancel(); alignmentRequest?.cancel() }
+
+    func shutdown() async {
+        request?.cancel(); accountObserver?.cancel()
+        let pending = alignmentRequest
+        cancelAlignment(); audioSource = nil
+        await pending?.value
+    }
+
+    func setAutomaticAudioAlignment(_ enabled: Bool) {
+        automaticAudioAlignment = enabled
+        cancelAlignment()
+        if let originalDocument { document = originalDocument }
+        if enabled { startAlignment() } else { audioAlignmentStatus = .off }
+    }
+
+    func setAudioSource(_ source: LyricAudioSource?, position: Double) {
+        if position.isFinite { alignmentPosition = max(0, position) }
+        guard audioSource != source else { return }
+        audioSource = source; cancelAlignment()
+        if let originalDocument { document = originalDocument }
+        startAlignment()
+    }
+
+    func updateAlignmentPosition(_ position: Double, didSeek: Bool = false) {
+        guard position.isFinite else { return }
+        alignmentPosition = max(0, position)
+        if didSeek, let originalDocument, let alignedResult {
+            document = LyricAnalysisWindow.merge(alignedResult, into: originalDocument, position: nil, includeCurrent: true)
+        }
+    }
+
+    private func cancelAlignment() {
+        alignmentGeneration = UUID(); alignmentRequest?.cancel(); alignmentRequest = nil; alignedResult = nil
+    }
+
+    private func installedDocument(_ value: LyricDocument?) {
+        cancelAlignment(); originalDocument = value; document = value
+        startAlignment()
+    }
+
+    private func startAlignment() {
+        guard automaticAudioAlignment else { audioAlignmentStatus = .off; return }
+        guard let track = current, let originalDocument, !originalDocument.isInstrumental,
+              originalDocument.timing != .plain else { audioAlignmentStatus = .waitingAudio; return }
+        guard originalDocument.lines.contains(where: { $0.words.isEmpty }) else { audioAlignmentStatus = .provider; return }
+        guard let audioSource, audioSource.trackKey == LyricsIdentity.key(for: track) else { audioAlignmentStatus = .waitingAudio; return }
+        let token = alignmentGeneration
+        audioAlignmentStatus = .preparing
+        let cache = alignmentCache
+        let operation = alignmentOperation
+        alignmentRequest = Task.detached(priority: .utility) { [weak self] in
+            await operation(audioSource, track, originalDocument, cache,
+                { @MainActor [weak self] in self?.alignmentPosition ?? 0 },
+                { @MainActor [weak self] status in
+                    guard let self, self.alignmentGeneration == token else { return }
+                    self.audioAlignmentStatus = status
+                }, { @MainActor [weak self] result, cached in
+                    guard let self, self.alignmentGeneration == token else { return }
+                    self.alignedResult = result
+                    // Fresh analysis never rewrites a phrase already on screen.
+                    // Cached timing is available immediately on a later play/seek.
+                    self.document = LyricAnalysisWindow.merge(result, into: originalDocument,
+                                                             position: self.alignmentPosition, includeCurrent: cached)
+                })
+        }
+    }
 
     func setAutomaticAppleMusicLookup(_ enabled: Bool) async {
         automaticAppleMusicLookup = enabled
@@ -223,6 +306,8 @@ actor LyricsStorage {
     func load(track: Track?) async {
         generation = UUID(); let token = generation
         request?.cancel(); request = nil
+        cancelAlignment(); originalDocument = nil
+        audioAlignmentStatus = automaticAudioAlignment ? .waitingAudio : .off
         current = track; document = nil; manualDocument = false; error = nil
         guard let track else { status = .idle; return }
         status = .loading
@@ -232,7 +317,7 @@ actor LyricsStorage {
             let result = try await withTaskCancellationHandler { try await pending.value } onCancel: { pending.cancel() }
             try Task.checkCancellation()
             guard generation == token else { return }
-            document = result.document; manualDocument = result.manual
+            installedDocument(result.document); manualDocument = result.manual
             status = result.document == nil ? .unavailable : .ready
             error = result.explanation
         } catch is CancellationError {
@@ -250,18 +335,19 @@ actor LyricsStorage {
         generation = UUID(); let token = generation
         request?.cancel(); request = nil
         document = nil; manualDocument = false; status = .loading; error = nil
+        cancelAlignment(); originalDocument = nil
         let pending = Task { [online, storage] in
             let value = try await online.lookup(track)
             if let value { try? await storage.cacheOnline(value, for: track) }
             try Task.checkCancellation()
-            return LoadResult(document: value, manual: true, explanation: value == nil ? "LRCLIB 未匹配到这首歌曲的歌词，可手动导入歌词文件。" : nil)
+            return LoadResult(document: value, manual: true, explanation: value == nil ? L10n.string("LRCLIB 未匹配到这首歌曲的歌词，可手动导入歌词文件。") : nil)
         }
         request = pending
         do {
             let result = try await withTaskCancellationHandler { try await pending.value } onCancel: { pending.cancel() }
             try Task.checkCancellation()
             guard generation == token else { return }
-            document = result.document; manualDocument = result.manual
+            installedDocument(result.document); manualDocument = result.manual
             status = result.document == nil ? .unavailable : .ready; error = result.explanation
         } catch is CancellationError {
             if generation == token { status = .idle }
@@ -276,7 +362,7 @@ actor LyricsStorage {
         try Task.checkCancellation()
         guard current.map({ LyricsIdentity.key(for: $0) }) == LyricsIdentity.key(for: track) else { return }
         generation = UUID(); request?.cancel(); request = nil
-        document = imported; status = .ready; error = nil; manualDocument = true
+        installedDocument(imported); status = .ready; error = nil; manualDocument = true
     }
     func activeIndex(at seconds: Double) -> Int? { document?.activeIndex(at: seconds) }
 
@@ -289,24 +375,24 @@ actor LyricsStorage {
         if track.source == .appleMusic, automaticAppleMusicLookup {
             guard !track.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return .init(document: nil, explanation: "歌曲名或歌手资料不足，无法匹配歌词；可手动导入。")
+                return .init(document: nil, explanation: L10n.string("歌曲名或歌手资料不足，无法匹配歌词；可手动导入。"))
             }
             let value = try await online.lookup(track)
             try Task.checkCancellation()
             if let value { try? await storage.cacheOnline(value, for: track) }
             try Task.checkCancellation()
             return .init(document: value, manual: true, explanation: value == nil
-                ? "LRCLIB 未找到与这首歌的歌名、歌手和时长匹配的歌词。可重新查找或导入歌词文件。" : nil)
+                ? L10n.string("LRCLIB 未找到与这首歌的歌名、歌手和时长匹配的歌词。可重新查找或导入歌词文件。") : nil)
         }
         if track.source == .soda {
             guard track.sodaPlayback != nil else {
-                return .init(document: nil, explanation: "播放时会读取汽水音乐当前可用片段及同步歌词。")
+                return .init(document: nil, explanation: L10n.string("播放时会读取汽水音乐当前可用片段及同步歌词。"))
             }
             if !(await client.connectedSources()).contains(.soda) {
                 let key = LyricsIdentity.key(for: track)
                 if let value = publicSodaCache[key] { return .init(document: value) }
                 guard let payload = try await SodaDirectProvider().lyrics(track, cookies: []) else {
-                    return .init(document: nil, explanation: "汽水音乐未提供当前片段的歌词。")
+                    return .init(document: nil, explanation: L10n.string("汽水音乐未提供当前片段的歌词。"))
                 }
                 let value = try await Task.detached(priority: .utility) {
                     try LyricsParser.parse(payload, sourceDescription: MusicSource.soda.title)
@@ -318,8 +404,8 @@ actor LyricsStorage {
             }
         }
         guard DirectMusicAccess.sources.contains(track.source) else {
-            if track.source == .spotify { return .init(document: nil, explanation: "Spotify 接口不提供歌词，可在 LRCLIB 查找或导入歌词文件。") }
-            let explanation = track.source == .appleMusic ? "Apple Music 自动查词已关闭，可在线查找或导入歌词文件。" : "没有找到同名歌词文件，可手动导入 LRC、SRT 或 TXT 歌词。"
+            if track.source == .spotify { return .init(document: nil, explanation: L10n.string("Spotify 接口不提供歌词，可在 LRCLIB 查找或导入歌词文件。")) }
+            let explanation = track.source == .appleMusic ? L10n.string("Apple Music 自动查词已关闭，可在线查找或导入歌词文件。") : L10n.string("没有找到同名歌词文件，可手动导入 LRC、SRT 或 TXT 歌词。")
             return .init(document: nil, explanation: explanation)
         }
         let scope = try await client.lyricsScope(for: track.source)
@@ -328,7 +414,7 @@ actor LyricsStorage {
             try await client.validateLyricsScope(scope)
             return .init(document: value)
         }
-        guard let payload = try await client.lyrics(track, scope: scope) else { return .init(document: nil, explanation: "平台暂未提供这首歌曲的歌词，可手动导入。") }
+        guard let payload = try await client.lyrics(track, scope: scope) else { return .init(document: nil, explanation: L10n.string("平台暂未提供这首歌曲的歌词，可手动导入。")) }
         let description = track.source.title
         let value = try await Task.detached(priority: .utility) { try LyricsParser.parse(payload, sourceDescription: description) }.value
         try Task.checkCancellation(); try await client.validateLyricsScope(scope)
@@ -339,6 +425,10 @@ actor LyricsStorage {
     private func accountChanged(_ source: MusicSource) {
         cache = cache.filter { $0.key.scope.source != source }
         if source == .soda { publicSodaCache.removeAll(keepingCapacity: true) }
+        if current?.source == source {
+            audioSource = nil; cancelAlignment(); document = originalDocument
+            audioAlignmentStatus = automaticAudioAlignment ? .waitingAudio : .off
+        }
         guard let track = current, track.source == source, !manualDocument else { return }
         generation = UUID(); let token = generation
         request?.cancel(); request = nil

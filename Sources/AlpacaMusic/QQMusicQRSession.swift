@@ -10,7 +10,7 @@ enum QQMusicQRPolicy {
     enum Method: String, CaseIterable, Identifiable, Sendable {
         case qq, wechat
         var id: String { rawValue }
-        var title: String { self == .qq ? "QQ 扫码" : "微信扫码" }
+        var title: String { self == .qq ? L10n.string("QQ 扫码") : L10n.string("微信扫码") }
     }
     static let returnURL = URL(string: "https://y.qq.com/n/ryqq/")!
     static let callbackPath = "/portal/wx_redirect.html"
@@ -141,11 +141,11 @@ final class QQMusicQRSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         while true {
             try Task.checkCancellation()
             guard current == generation, phase != .cancelled else { throw CancellationError() }
-            if phase == .failed { throw MusicError.message(message ?? "QQ 音乐扫码登录未完成，请刷新二维码重试。") }
+            if phase == .failed { throw MusicError.message(message ?? L10n.string("QQ 音乐扫码登录未完成，请刷新二维码重试。")) }
             let cookies = await store.httpCookieStore.allCookies()
             try Task.checkCancellation()
             guard current == generation, phase != .cancelled else { throw CancellationError() }
-            if phase == .failed { throw MusicError.message(message ?? "QQ 音乐扫码登录未完成，请刷新二维码重试。") }
+            if phase == .failed { throw MusicError.message(message ?? L10n.string("QQ 音乐扫码登录未完成，请刷新二维码重试。")) }
             if callbackAccepted, phase == .exchanging || phase == .ready, let completed = QQMusicQRPolicy.completedCookies(cookies.map(MusicSessionCookie.init), method: method) {
                 phase = .ready; isLoading = false
                 // Leave temporary storage alive until the caller validates the
@@ -153,11 +153,11 @@ final class QQMusicQRSession: NSObject, WKNavigationDelegate, WKUIDelegate {
                 return completed
             }
             if let exchangeStarted, exchangeStarted.duration(to: .now) >= .seconds(30) {
-                fail("手机确认后，QQ 音乐未能完成账号连接，请刷新二维码重试。")
+                fail(L10n.string("手机确认后，QQ 音乐未能完成账号连接，请刷新二维码重试。"))
                 throw MusicError.message(message!)
             }
             guard start.duration(to: .now) < .seconds(600) else {
-                fail("二维码已等待较久，请刷新后重新扫码。")
+                fail(L10n.string("二维码已等待较久，请刷新后重新扫码。"))
                 throw MusicError.message(message!)
             }
             try await Task.sleep(for: .milliseconds(500))
@@ -191,12 +191,12 @@ final class QQMusicQRSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard phase != .cancelled, phase != .failed else { return false }
         guard DirectLoginPolicy.allows(url, source: .qq, isMainFrame: mainFrame) else {
             // A blocked auxiliary link must not discard a usable QR session.
-            message = "此链接不属于扫码登录流程，请继续扫码或刷新二维码。"
+            message = L10n.string("此链接不属于扫码登录流程，请继续扫码或刷新二维码。")
             return false
         }
         if QQMusicQRPolicy.isCallback(url) {
             guard QQMusicQRPolicy.validCallback(url, method: method, state: callbackState) else {
-                fail("登录确认与当前二维码不匹配，请刷新二维码重试。")
+                fail(L10n.string("登录确认与当前二维码不匹配，请刷新二维码重试。"))
                 return false
             }
             if !callbackAccepted { exchangeStarted = .now }
@@ -206,7 +206,7 @@ final class QQMusicQRSession: NSObject, WKNavigationDelegate, WKUIDelegate {
             // The official callback has already exchanged the code and set
             // cookies. Keep this compact surface from navigating to the home.
             if callbackAccepted { phase = .exchanging; isLoading = true }
-            else { fail("QQ 音乐未返回本次扫码的确认，请刷新二维码重试。") }
+            else { fail(L10n.string("QQ 音乐未返回本次扫码的确认，请刷新二维码重试。")) }
             return false
         }
         return true
@@ -221,11 +221,11 @@ final class QQMusicQRSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
         guard isActive(webView), permits(navigationResponse.response.url, mainFrame: navigationResponse.isForMainFrame) else { return .cancel }
         guard navigationResponse.canShowMIMEType else {
-            fail("官方扫码页面返回了无法显示的内容，请刷新二维码。")
+            fail(L10n.string("官方扫码页面返回了无法显示的内容，请刷新二维码。"))
             return .cancel
         }
         if let response = navigationResponse.response as? HTTPURLResponse, response.statusCode >= 400 {
-            fail("官方扫码页面暂时无法载入（HTTP \(response.statusCode)），请稍后刷新。")
+            fail(L10n.string("官方扫码页面暂时无法载入（HTTP \(String(response.statusCode))），请稍后刷新。"))
             return .cancel
         }
         return .allow
@@ -238,11 +238,11 @@ final class QQMusicQRSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) { if isActive(webView) { failedNavigation(error) } }
     private func failedNavigation(_ error: any Error) {
         guard (error as NSError).code != NSURLErrorCancelled else { return }
-        fail("官方扫码页面暂时无法载入，请检查网络后刷新二维码。")
+        fail(L10n.string("官方扫码页面暂时无法载入，请检查网络后刷新二维码。"))
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard isActive(webView) else { return }
-        fail("扫码页面已停止，请刷新二维码。")
+        fail(L10n.string("扫码页面已停止，请刷新二维码。"))
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {

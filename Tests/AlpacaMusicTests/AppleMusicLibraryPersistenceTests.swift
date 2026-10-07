@@ -214,7 +214,7 @@ private func appleLibraryTrack(_ id: String, title: String = "Fixture", addedAt:
 
         await #expect(throws: MusicError.self) { try await library.importAppleMusicSongsAndSave([appleLibraryTrack("i.new")]) }
         #expect(library.tracks.isEmpty && library.playlists.isEmpty)
-        #expect(library.error?.contains("无法读取") == true)
+        #expect(library.error == L10n.string("无法读取音乐资料库，请检查应用数据目录权限"))
         #expect(try Data(contentsOf: sentinel) == bytes)
         #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).count == 1)
     }
@@ -232,8 +232,8 @@ private func appleLibraryTrack(_ id: String, title: String = "Fixture", addedAt:
             _ = try await library.importAppleMusicSongsAndSave([incoming])
             Issue.record("A failed disk write must not report a successful import")
         } catch {
-            #expect(error.localizedDescription.contains("已加入当前会话"))
-            #expect(error.localizedDescription.contains("未能保存到磁盘"))
+            let persistenceError = try #require(library.persistenceError)
+            #expect(error.localizedDescription == L10n.string("Apple Music 歌曲已加入当前会话，但未能保存到磁盘。\(persistenceError)"))
         }
         #expect(library.tracks == [incoming] && library.persistenceError != nil)
         try FileManager.default.removeItem(at: location)

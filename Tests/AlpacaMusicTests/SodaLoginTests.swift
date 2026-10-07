@@ -131,7 +131,7 @@ private struct SodaQRCookieSnapshot: Sendable {
         #expect(query.contains(URLQueryItem(name: "device_platform", value: "PC")))
         #expect(query.contains(URLQueryItem(name: "version_code", value: "3.7.0")))
         #expect(!query.contains { ["device_id", "did", "iid", "install_id"].contains($0.name) })
-        #expect(value.message.contains("汽水音乐 App") && value.message.contains("扫一扫"))
+        #expect(value.message == L10n.string("在汽水音乐 App 打开「搜索」，点击搜索框右侧「扫一扫」，并在手机上确认。"))
         #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
         #expect(request.value(forHTTPHeaderField: "x-tt-passport-csrf-token") == "")
         #expect(request.value(forHTTPHeaderField: "Accept") == "application/json, text/javascript")
@@ -213,7 +213,7 @@ private struct SodaQRCookieSnapshot: Sendable {
         try await value.create()
         await #expect(throws: MusicError.self) { try await value.poll() }
         #expect(value.phase == .failed)
-        #expect(value.message.contains("未向本次扫码返回有效会话"))
+        #expect(value.message == L10n.string("手机已确认，但汽水音乐未向本次扫码返回有效会话。请重新获取二维码；当前接口可能要求官方浏览器验证。"))
         #expect(!value.message.contains("must-not-create-cookie"))
     }
 
@@ -264,7 +264,7 @@ private struct SodaQRCookieSnapshot: Sendable {
         try await value.create()
         await #expect(throws: MusicError.self) { try await value.poll() }
         #expect(value.phase == .failed)
-        #expect(value.message.contains("2046") && value.message.contains("二次身份验证"))
+        #expect(value.message == L10n.string("抖音要求二次身份验证（错误 2046）。当前扫码接入无法完成这一步；请先在官方汽水音乐客户端完成验证，再重新扫码。"))
         #expect(!value.message.contains("private-decision"))
         #expect(try await value.poll() == nil)
         #expect(await fixture.requests.count == 2)
@@ -281,7 +281,7 @@ private struct SodaQRCookieSnapshot: Sendable {
             try await value.create()
             await #expect(throws: MusicError.self) { try await value.poll() }
             #expect(value.phase == .failed)
-            #expect(value.message.contains("无效的登录错误码"))
+            #expect(value.message == L10n.string("汽水音乐返回了无效的登录错误码，请重新获取二维码。"))
         }
         let clock = SodaQRTestClock()
         let fixture = SodaQRFixture([.init(json: #"{"data":{"error_code":1e300,"token":"synthetic-qr-token","qrcode_index_url":"https://bff-pc.qishui.com/ucenter_web/app/sdk-next"}}"#)])
@@ -380,7 +380,7 @@ private struct SodaQRCookieSnapshot: Sendable {
         try await value.create()
         await #expect(throws: MusicError.self) { try await value.poll() }
         #expect(value.phase == .failed)
-        #expect(value.message.contains("跨域登录回调") && value.message.contains("暂未支持"))
+        #expect(value.message == L10n.string("手机已确认，但汽水音乐要求跨域登录回调，当前网页接入暂未支持这一步。请关闭后重试，或使用官方客户端。"))
         #expect(await fixture.requests.count == 2)
         #expect(await fixture.requests.allSatisfy { $0.url?.host == "api.qishui.com" })
     }
@@ -467,8 +467,9 @@ private struct SodaQRCookieSnapshot: Sendable {
         try await value.create()
         await #expect(throws: MusicError.self) { try await value.poll() }
         #expect(value.phase == .failed)
-        #expect(value.message.contains("扫码确认") && value.message.contains("2156"))
-        #expect(value.message.contains("平台说明：扫码确认未完成"))
+        let hidden = L10n.string("[已隐藏]")
+        let explanation = "扫码确认未完成 " + Array(repeating: hidden, count: 6).joined(separator: " ")
+        #expect(value.message == sodaBusinessFailureExpectation(code: 2156, description: explanation))
         for secret in ["synthetic-qr-token", "synthetic-csrf", "other-secret", "13812345678", "private@example.com", "abcdefghijklmnopqrstuvwxyz0123456789"] {
             #expect(!value.message.contains(secret))
         }
@@ -491,9 +492,9 @@ private struct SodaQRCookieSnapshot: Sendable {
             await #expect(throws: MusicError.self) { try await value.poll() }
             #expect(value.phase == .failed)
             if json.contains("2156") {
-                #expect(value.message.contains("2156") && value.message.contains("外层平台拒绝"))
+                #expect(value.message == sodaBusinessFailureExpectation(code: 2156, description: "外层平台拒绝 \(L10n.string("[已隐藏]")) \(L10n.string("[已隐藏]"))"))
                 #expect(!value.message.contains("short-root-token") && !value.message.contains("short-session"))
-            } else { #expect(value.message.contains("无效的登录错误码")) }
+            } else { #expect(value.message == L10n.string("汽水音乐返回了无效的登录错误码，请重新获取二维码。")) }
         }
     }
 
@@ -507,9 +508,9 @@ private struct SodaQRCookieSnapshot: Sendable {
             let value = authentication(fixture, clock: clock)
             try await value.create()
             await #expect(throws: MusicError.self) { try await value.poll() }
-            #expect(value.message.count <= 290)
+            let expectedDescription = detail == "success" ? nil : String(detail.prefix(220))
+            #expect(value.message == sodaBusinessFailureExpectation(code: 2156, description: expectedDescription))
             #expect(!value.message.contains("success"))
-            if detail == "success" { #expect(value.message.contains("未提供具体原因")) }
         }
     }
 
@@ -565,8 +566,7 @@ private struct SodaQRCookieSnapshot: Sendable {
         try await value.create()
         await #expect(throws: MusicError.self) { try await value.poll() }
         #expect(value.phase == .failed)
-        #expect(value.message.contains("平台无法确认登录"))
-        #expect(!value.message.contains("错误 0") && !value.message.contains("错误 -1"))
+        #expect(value.message == sodaBusinessFailureExpectation(code: 0, description: "平台无法确认登录"))
         #expect(try await value.poll() == nil)
     }
 
@@ -629,7 +629,7 @@ private struct SodaQRCookieSnapshot: Sendable {
         try await value.create()
         await #expect(throws: MusicError.self) { try await value.poll() }
         #expect(value.phase == .failed && value.challenge == nil)
-        #expect(value.message.contains("未向本次扫码返回有效会话"))
+        #expect(value.message == L10n.string("手机已确认，但汽水音乐未向本次扫码返回有效会话。请重新获取二维码；当前接口可能要求官方浏览器验证。"))
         #expect(!value.message.contains("synthetic-body-cookie"))
         #expect(browser.snapshotReads == 2 && browser.cancellations == 1)
     }
@@ -674,7 +674,7 @@ private struct SodaQRCookieSnapshot: Sendable {
             #expect(value.challenge == nil)
             if delay >= 180 {
                 #expect(value.phase == .expired)
-                #expect(value.message == "二维码已过期，请重新获取。")
+                #expect(value.message == L10n.string("二维码已过期，请重新获取。"))
             } else {
                 #expect(value.phase == .failed)
                 #expect(value.message == "合成的获取二维码请求超时")
@@ -699,7 +699,7 @@ private struct SodaQRCookieSnapshot: Sendable {
             #expect(value.challenge == nil)
             if delay >= 180 {
                 #expect(value.phase == .expired)
-                #expect(value.message == "二维码已过期，请重新获取。")
+                #expect(value.message == L10n.string("二维码已过期，请重新获取。"))
             } else {
                 #expect(value.phase == .failed)
                 #expect(value.message == "合成的扫码确认请求超时")
@@ -841,8 +841,8 @@ private struct SodaQRCookieSnapshot: Sendable {
 
     @Test func realSessionDoesNotPermitUntrustedCallbackAndSameOriginWithoutSessionIsUnsupported() async throws {
         for (callback, snapshot, expected) in [
-            ("https://foreign.example/private-redirect-token", [MusicSessionCookie(name: "sessionid", value: "synthetic-session", domain: ".qishui.com")], "不受信任"),
-            ("https://api.qishui.com/passport/callback", [], "暂未支持该登录回调")
+            ("https://foreign.example/private-redirect-token", [MusicSessionCookie(name: "sessionid", value: "synthetic-session", domain: ".qishui.com")], L10n.string("汽水音乐返回了不受信任的登录回调，已停止连接。")),
+            ("https://api.qishui.com/passport/callback", [], L10n.string("手机已确认，但汽水音乐未返回有效会话，当前网页接入暂未支持该登录回调。请关闭后重试，或使用官方客户端。"))
         ] {
             let clock = SodaQRTestClock()
             let fixture = SodaQRFixture([
@@ -853,11 +853,21 @@ private struct SodaQRCookieSnapshot: Sendable {
             let value = SodaQRAuthentication(browserFactory: { browser }, now: { clock.now })
             try await value.create()
             await #expect(throws: MusicError.self) { try await value.poll() }
-            #expect(value.phase == .failed && value.message.contains(expected))
+            #expect(value.phase == .failed && value.message == expected)
             #expect(!value.message.contains("private-redirect-token"))
             #expect(await fixture.requests.count == 2)
             #expect(browser.cancellations == 1)
         }
     }
 
+}
+
+// Full expectations keep phase, platform code, bounded explanation, and retry
+// guidance under test in either UI language. Server-authored descriptions remain
+// fixture text; only app-authored labels are resolved through localization.
+private func sodaBusinessFailureExpectation(code: Int, description: String?) -> String {
+    let stage = L10n.string("扫码确认")
+    let codeLabel = code == 0 ? "" : L10n.string("（错误 \(String(code))）")
+    let explanation = description.map { L10n.string("平台说明：\($0)") } ?? L10n.string("平台未提供具体原因。")
+    return L10n.string("汽水音乐未完成\(stage)\(codeLabel)。\(explanation)\n请重新获取二维码。")
 }

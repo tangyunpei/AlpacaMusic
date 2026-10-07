@@ -77,24 +77,27 @@ private struct SpectrumBarsExportScene: View {
         try Data(rows.joined(separator: "\n").utf8).write(
             to: directory.appending(path: "actual-analysis.csv"), options: .atomic)
         try OrbitRhythmFixture.writePCM(to: directory.appending(path: "original-rhythm.wav"))
-        let movieClock = VisualizationClock()
-        try await TemporalDesignExport.movie(to: directory.appending(path: "spectrum-bars-silent.mp4"),
-                                            duration: OrbitRhythmFixture.duration) { time in
-            let frame = movieClock.frame(at: epoch.addingTimeInterval(time), animated: true,
-                                         levels: OrbitRhythmFixture.levels(at: time), playing: true, spectrumBarsActive: true)
-            let image = try TemporalDesignExport.image(SpectrumBarsExportScene(frame: frame), size: immersiveSize)
-            return try TemporalDesignExport.labelled(image,
-                text: "原创合成节奏 / \(OrbitRhythmFixture.phase(at: time)) / \(String(format: "%.2f", time))s",
-                size: immersiveSize)
+        if ProcessInfo.processInfo.environment["ALPACA_EXPORT_SPECTRUM_STILLS_ONLY"] != "1" {
+            let movieClock = VisualizationClock()
+            try await TemporalDesignExport.movie(to: directory.appending(path: "spectrum-bars-silent.mp4"),
+                                                duration: OrbitRhythmFixture.duration) { time in
+                let frame = movieClock.frame(at: epoch.addingTimeInterval(time), animated: true,
+                                             levels: OrbitRhythmFixture.levels(at: time), playing: true, spectrumBarsActive: true)
+                let image = try TemporalDesignExport.image(SpectrumBarsExportScene(frame: frame), size: immersiveSize)
+                return try TemporalDesignExport.labelled(image,
+                    text: "原创合成节奏 / \(OrbitRhythmFixture.phase(at: time)) / \(String(format: "%.2f", time))s",
+                    size: immersiveSize)
+            }
         }
         let readme = """
-        Retro segmented LED spectrum redesign: original synthetic 16-second rhythm, 44.1 kHz, mono.
+        Modern continuous-column spectrum redesign: original synthetic 16-second rhythm, 44.1 kHz, mono.
         No music, account, library, microphone, or system-audio source was accessed.
         The existing OrbitRhythmFixture supplies 8,192 consecutive PCM samples to production AudioBandAnalysis.
         Every FFT bin and scalar measurement comes from actual fixture PCM, without invented beat markers.
         Stills and movie advance the production VisualizationClock at 30 fps and pass frame.spectrumBars to production SpectrumBarsRenderer.
-        Clean immersive stills are 960 x 540; compact stills are 320 x 180. Production pillars use stepped LED cells, sparse glow, and retained peak caps.
-        Their scene contains no axes, numeric grid, reflections, or low / mid / high labels.
+        Clean immersive stills are 960 x 540; compact stills are 320 x 180. Production columns are slim and continuous, blue to cyan-white, with sparse glow and retained peak caps.
+        Warm caps appear only at high measured levels. Zero-energy input has no dormant cell wall or fabricated lights.
+        The scene contains no axes, numeric grid, reflections, or low / mid / high labels.
         Contact-sheet captions and the small movie caption identify synthetic review moments outside the production scene design.
         0-1 s: silence. 1 / 1.5 s: isolated percussive attacks. 3 / 3.5 s and 5-5.75 s: other isolated voices.
         7-12 s: 120 BPM mixed groove. 12-13 s: rest. 13-15 s: denser fill with rising actual gain. 15-16 s: ending silence.

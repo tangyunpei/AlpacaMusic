@@ -16,6 +16,74 @@ private func qqRPC(_ request: URLRequest) throws -> [String: Any] {
     return try #require(root?["req_0"] as? [String: Any])
 }
 struct QQDirectTests {
+    @Test func qrcUsesSignedOfficialRPCAndMeasuredTimes() async throws {
+        let value = QQDirectProvider(http: NativeMusicHTTP(transport: { request in
+            #expect(request.url?.host == "u.y.qq.com")
+            #expect(request.url?.path == "/cgi-bin/musics.fcg")
+            let body = try #require(try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any])
+            let operation = try #require(body["req_0"] as? [String: Any])
+            #expect(operation["module"] as? String == "music.musichallSong.PlayLyricInfo")
+            #expect(operation["method"] as? String == "GetPlayLyricInfo")
+            let params = try #require(operation["param"] as? [String: Any])
+            #expect(params["qrc"] as? Int == 1)
+            #expect(params["trans"] as? Int == 1)
+            #expect(params["songMid"] as? String == "fixtureMID")
+            #expect(request.timeoutInterval == 8)
+            return try qqReply(request, ["code": 0, "req_0": ["code": 0, "data": [
+                "lyric": "[1000,4200]青(1000,500)山(1800,600)远(3100,2100)",
+                "trans": Data("[00:01]Fixture translation".utf8).base64EncodedString()
+            ]]])
+        }))
+        let track = Track(id: "qq:fixtureMID", title: "Fixture", artist: "", album: "", duration: 100, source: .qq, sourceID: "fixtureMID")
+        let payload = try #require(try await value.lyrics(track, cookies: qqCookies))
+        let document = try LyricsParser.parse(payload, sourceDescription: "Fixture")
+        #expect(document.timing == .word)
+        #expect(document.lines[0].words.map(\.start) == [1, 1.8, 3.1])
+        #expect(document.lines[0].translation == "Fixture translation")
+    }
+
+    @Test func malformedOrUnavailableQrcFallsBackWithoutLosingTranslation() async throws {
+        for status in [0, 500] {
+            let requests = Mutex<[String]>([])
+            let value = QQDirectProvider(http: NativeMusicHTTP(transport: { request in
+                requests.withLock { $0.append(request.url?.path ?? "") }
+                if request.url?.host == "u.y.qq.com" {
+                    return try qqReply(request, ["code": 0, "req_0": ["code": status, "data": ["lyric": "[1000,1000]青(500,600)"]]])
+                }
+                return try qqReply(request, ["code": 0, "lyric": Data("[00:01]Fallback fixture".utf8).base64EncodedString(), "trans": Data("[00:01]译文".utf8).base64EncodedString()])
+            }))
+            let track = Track(id: "qq:fixtureMID", title: "Fixture", artist: "", album: "", duration: 100, source: .qq, sourceID: "fixtureMID")
+            let payload = try #require(try await value.lyrics(track, cookies: qqCookies))
+            #expect(payload.document == nil)
+            #expect(payload.text == "[00:01]Fallback fixture")
+            #expect(payload.translation == "[00:01]译文")
+            #expect(requests.withLock { $0 } == ["/cgi-bin/musics.fcg", "/lyric/fcgi-bin/fcg_query_lyric_new.fcg"])
+        }
+    }
+
+    @Test func validLrcFromNewRPCDoesNotRequireLegacyRequest() async throws {
+        let value = QQDirectProvider(http: NativeMusicHTTP(transport: { request in
+            #expect(request.url?.host == "u.y.qq.com")
+            return try qqReply(request, ["code": 0, "req_0": ["code": 0, "data": [
+                "lyric": Data("[00:01]New line fixture".utf8).base64EncodedString(),
+                "trans": Data("[00:01]译文".utf8).base64EncodedString()
+            ]]])
+        }))
+        let track = Track(id: "qq:fixtureMID", title: "Fixture", artist: "", album: "", duration: 100, source: .qq, sourceID: "fixtureMID")
+        let payload = try #require(try await value.lyrics(track, cookies: qqCookies))
+        #expect(payload.text == "[00:01]New line fixture")
+        #expect(payload.translation == "[00:01]译文")
+    }
+
+    @Test func qrcCancellationDoesNotStartLegacyRequest() async {
+        let value = QQDirectProvider(http: NativeMusicHTTP(transport: { request in
+            #expect(request.url?.path == "/cgi-bin/musics.fcg")
+            throw CancellationError()
+        }))
+        let track = Track(id: "qq:fixtureMID", title: "Fixture", artist: "", album: "", duration: 100, source: .qq, sourceID: "fixtureMID")
+        await #expect(throws: CancellationError.self) { try await value.lyrics(track, cookies: qqCookies) }
+    }
+
     @Test func checksumUsesExactUTF8WireBytes() {
         #expect(QQWebSigning.signature(for: Data()) == "zzcf0e03e5gx4qeiq5cfgdyqwu7sdqfsb5fro3aa45053")
         #expect(QQWebSigning.signature(for: Data("测试 🎵".utf8)) == "zzc52ecb01okzpdhy0kdwnjqrotbkldsdeumcb14112ca")
@@ -117,7 +185,7 @@ struct QQDirectTests {
             for cookies in [qqCookies, qqWechatCookies] {
                 do { _ = try await provider.profile(cookies: cookies); Issue.record("Encrypted field overrode invalid account") }
                 catch {
-                    #expect(error.localizedDescription.contains(numericID == "99999999" ? "与本次登录不一致" : "数字标识字段格式不支持"))
+                    #expect(error.localizedDescription == (numericID == "99999999" ? L10n.string("QQ 音乐返回的账户与本次登录不一致，请重新完成官网登录。") : L10n.string("QQ 音乐返回的账户资料缺少有效账号标识（本人资料：数字标识字段格式不支持），请稍后重试。")))
                     #expect(!error.localizedDescription.contains(numericID))
                     #expect(!error.localizedDescription.contains("fixtureEncryptedSelf"))
                 }
@@ -126,10 +194,10 @@ struct QQDirectTests {
     }
     @Test func encryptedSelfStillRequiresSuccessfulResponseAndNickname() async throws {
         let cases: [([String: Any], String)] = [
-            (["code": 1000, "data": ["creator": ["uin": 0, "nick": "Private fixture nickname", "encrypt_uin": "fixtureEncryptedSelf**"]]], "登录已失效"),
-            (["code": 0, "data": ["creator": ["uin": 0, "encrypt_uin": "fixtureEncryptedSelf**"]]], "未返回当前账户昵称"),
-            (["code": 0, "data": ["creator": ["uin": 0, "nick": "<b> </b>", "encrypt_uin": "fixtureEncryptedSelf**"]]], "未返回当前账户昵称"),
-            (["code": 0, "data": ["creator": ["uin": 0, "nick": "Private fixture nickname"]]], "缺少有效账号标识")
+            (["code": 1000, "data": ["creator": ["uin": 0, "nick": "Private fixture nickname", "encrypt_uin": "fixtureEncryptedSelf**"]]], L10n.string("QQ 音乐登录已失效，请重新登录（平台返回码 \(String(1000))）。")),
+            (["code": 0, "data": ["creator": ["uin": 0, "encrypt_uin": "fixtureEncryptedSelf**"]]], L10n.string("QQ 音乐未返回当前账户昵称，请稍后重试。")),
+            (["code": 0, "data": ["creator": ["uin": 0, "nick": "<b> </b>", "encrypt_uin": "fixtureEncryptedSelf**"]]], L10n.string("QQ 音乐未返回当前账户昵称，请稍后重试。")),
+            (["code": 0, "data": ["creator": ["uin": 0, "nick": "Private fixture nickname"]]], L10n.string("QQ 音乐返回的账户资料缺少有效账号标识（本人资料：数字标识隐藏；\(L10n.string("缺少加密标识"))），请稍后重试。"))
         ]
         for (payload, explanation) in cases {
             let data = try JSONSerialization.data(withJSONObject: payload)
@@ -138,7 +206,7 @@ struct QQDirectTests {
             }))
             for cookies in [qqCookies, qqWechatCookies] {
                 do { _ = try await provider.profile(cookies: cookies); Issue.record("Incomplete encrypted profile accepted") }
-                catch { #expect(error.localizedDescription.contains(explanation)) }
+                catch { #expect(error.localizedDescription == explanation) }
             }
         }
     }
@@ -151,8 +219,8 @@ struct QQDirectTests {
             for cookies in [qqCookies, qqWechatCookies] {
                 do { _ = try await provider.profile(cookies: cookies); Issue.record("Invalid opaque identity accepted") }
                 catch {
-                    #expect(error.localizedDescription.contains("数字标识隐藏"))
-                    #expect(error.localizedDescription.contains(encryptedID is NSNull || (encryptedID as? String)?.isEmpty == true ? "缺少加密标识" : "加密标识字段格式不支持"))
+                    let category = encryptedID is NSNull || (encryptedID as? String)?.isEmpty == true ? L10n.string("缺少加密标识") : L10n.string("加密标识字段格式不支持")
+                    #expect(error.localizedDescription == L10n.string("QQ 音乐返回的账户资料缺少有效账号标识（本人资料：数字标识隐藏；\(category)），请稍后重试。"))
                     #expect(!error.localizedDescription.contains("test-session-key"))
                 }
             }
@@ -160,12 +228,12 @@ struct QQDirectTests {
     }
     @Test func profileFailuresExplainTheMissingPartWithoutDisclosingAccountData() async throws {
         let cases: [([String: Any], String)] = [
-            (["code": 0, "data": [:]], "没有返回当前账户资料"),
-            (["code": 0, "data": ["creator": ["nick": "Private fixture nickname"]]], "缺少有效账号标识"),
-            (["code": 0, "data": ["creator": ["uin": "invalid-private-id", "nick": "Private fixture nickname"]]], "缺少有效账号标识"),
-            (["code": 0, "data": ["creator": ["uin": "99999999", "nick": "Private fixture nickname"]]], "与本次登录不一致"),
-            (["code": 0, "data": ["creator": ["uin": "12345678"]]], "未返回当前账户昵称"),
-            (["code": 0, "data": ["creator": ["uin": "12345678", "nick": "<b> </b>"]]], "未返回当前账户昵称")
+            (["code": 0, "data": [:]], L10n.string("QQ 音乐没有返回当前账户资料，请重新完成官网登录。")),
+            (["code": 0, "data": ["creator": ["nick": "Private fixture nickname"]]], L10n.string("QQ 音乐返回的账户资料缺少有效账号标识（本人资料：数字标识隐藏；\(L10n.string("缺少加密标识"))），请稍后重试。")),
+            (["code": 0, "data": ["creator": ["uin": "invalid-private-id", "nick": "Private fixture nickname"]]], L10n.string("QQ 音乐返回的账户资料缺少有效账号标识（本人资料：数字标识字段格式不支持），请稍后重试。")),
+            (["code": 0, "data": ["creator": ["uin": "99999999", "nick": "Private fixture nickname"]]], L10n.string("QQ 音乐返回的账户与本次登录不一致，请重新完成官网登录。")),
+            (["code": 0, "data": ["creator": ["uin": "12345678"]]], L10n.string("QQ 音乐未返回当前账户昵称，请稍后重试。")),
+            (["code": 0, "data": ["creator": ["uin": "12345678", "nick": "<b> </b>"]]], L10n.string("QQ 音乐未返回当前账户昵称，请稍后重试。"))
         ]
         for (payload, explanation) in cases {
             let data = try JSONSerialization.data(withJSONObject: payload)
@@ -174,7 +242,7 @@ struct QQDirectTests {
             }))
             do { _ = try await provider.profile(cookies: qqCookies); Issue.record("Incomplete profile was accepted") }
             catch {
-                #expect(error.localizedDescription.contains(explanation))
+                #expect(error.localizedDescription == explanation)
                 for secret in ["12345678", "99999999", "invalid-private-id", "Private fixture nickname", "test-session-key"] {
                     #expect(!error.localizedDescription.contains(secret))
                 }
@@ -184,7 +252,7 @@ struct QQDirectTests {
     @Test func profileTimeoutIsPropagatedAsAnActionableRedactedFailure() async {
         let provider = QQDirectProvider(http: NativeMusicHTTP(transport: { _ in throw URLError(.timedOut) }))
         do { _ = try await provider.profile(cookies: qqCookies); Issue.record("Timeout was swallowed") }
-        catch { #expect(error.localizedDescription.contains("QQ 音乐")); #expect(error.localizedDescription.contains("超时")); #expect(error.localizedDescription.contains("-1001")) }
+        catch { #expect(error.localizedDescription == expectedQQTimeout()) }
     }
     @Test func profileRejectsExpiredServerSessionAndMismatchedIdentity() async {
         for payload in [["code": 1000, "data": [:]], ["code": 0, "data": ["creator": ["uin": "99999999", "nick": "Wrong person"]]]] as [[String: Any]] {
@@ -213,7 +281,7 @@ struct QQDirectTests {
         let provider = QQDirectProvider(http: NativeMusicHTTP(transport: { request in
             try qqReply(request, ["code": 0, "req_0": ["code": 0, "data": ["meta": ["is_filter": -2], "body": ["song": ["list": []]]]]])
         }))
-        do { _ = try await provider.search("test", cookies: qqCookies); Issue.record("Filtered response appeared successful") } catch { #expect(error.localizedDescription.contains("限制")) }
+        do { _ = try await provider.search("test", cookies: qqCookies); Issue.record("Filtered response appeared successful") } catch { #expect(error.localizedDescription == L10n.string("QQ 音乐限制了本次搜索，请重新登录或稍后重试。")) }
     }
     @Test func searchAndPlaylistShareAllSupportedTrackContainers() async throws {
         for wrapper in ["", "track_info", "songInfo", "songinfo", "song"] {
@@ -238,11 +306,11 @@ struct QQDirectTests {
     }
     @Test func playlistContainersDoNotInventIdentityOrSilentlySelectConflictingRows() async throws {
         let cases: [([String: Any], String)] = [
-            (["track_info": NSNull()], "track_info=空值"),
-            (["song": "private-value"], "song=文本"),
-            (["songInfo": qqSong("mid1"), "songinfo": qqSong("mid2")], "多个包裹字段"),
-            (["songinfo": ["id": -12345, "title": "private-title"]], "mid=缺失"),
-            (["song": ["songid": -12345, "title": "private-title"]], "songmid=缺失")
+            (["track_info": NSNull()], L10n.string("曲目包裹字段 \("track_info")=\(L10n.string("空值"))，预期对象")),
+            (["song": "private-value"], L10n.string("曲目包裹字段 \("song")=\(L10n.string("文本"))，预期对象")),
+            (["songInfo": qqSong("mid1"), "songinfo": qqSong("mid2")], L10n.string("曲目含多个包裹字段，格式不明确")),
+            (["songinfo": ["id": -12345, "title": "private-title"]], expectedQQIdentityIssue(idType: L10n.string("数字或布尔值"))),
+            (["song": ["songid": -12345, "title": "private-title"]], expectedQQIdentityIssue(songIDType: L10n.string("数字或布尔值")))
         ]
         for (row, reason) in cases {
             let body = try JSONSerialization.data(withJSONObject: ["code": 0, "req_0": ["code": 0, "data": ["songlist": [row], "total_song_num": 1]]])
@@ -251,8 +319,7 @@ struct QQDirectTests {
             }))
             do { _ = try await provider.tracks(in: .init(id: "123", name: "Fixture", trackCount: 1, source: .qq), cookies: qqCookies); Issue.record("Invalid track container accepted") }
             catch {
-                #expect(error.localizedDescription.contains(reason))
-                #expect(error.localizedDescription.contains("本次未导入"))
+                #expect(error.localizedDescription == expectedQQUnimportedPlaylist(issue: reason))
                 #expect(!error.localizedDescription.contains("private"))
                 #expect(!error.localizedDescription.contains("12345"))
             }
@@ -288,7 +355,7 @@ struct QQDirectTests {
         }))
         for identifier in ["", "abc", "0", "-1", "+123", "999999999999999999999999"] {
             do { _ = try await provider.tracks(in: .init(id: identifier, name: "Fixture", trackCount: 1, source: .qq), cookies: qqCookies); Issue.record("Invalid numeric playlist ID accepted") }
-            catch { #expect(error.localizedDescription.contains("歌单标识无效")) }
+            catch { #expect(error.localizedDescription == L10n.string("QQ 音乐歌单标识无效，请刷新歌单列表。")) }
         }
         #expect(calls.withLock { $0 } == 0)
     }
@@ -298,9 +365,7 @@ struct QQDirectTests {
         }))
         do { _ = try await provider.tracks(in: .init(id: "123", name: "Fixture", trackCount: 1, source: .qq), cookies: qqWechatCookies); Issue.record("RPC failure accepted") }
         catch {
-            #expect(error.localizedDescription.contains("读取歌单曲目失败"))
-            #expect(error.localizedDescription.contains("10006"))
-            #expect(!error.localizedDescription.contains("会员"))
+            #expect(error.localizedDescription == expectedQQRPCFailure(operation: L10n.string("读取歌单曲目"), code: 10006))
             #expect(!error.localizedDescription.contains("fixture-wechat-key"))
         }
     }
@@ -324,7 +389,7 @@ struct QQDirectTests {
             return try qqReply(request, ["code": 0, "req_0": ["code": 0, "data": ["code": 0, "total_song_num": 200, "songlist": (0..<100).map { qqSong("song\($0)") }]]])
         }))
         do { _ = try await provider.tracks(in: .init(id: "123", name: "List", trackCount: 200, source: .qq), cookies: qqCookies); Issue.record("Repeated page was accepted") }
-        catch { #expect(error.localizedDescription.contains("重复")) }
+        catch { #expect(error.localizedDescription == L10n.string("QQ 音乐返回了重复的歌单分页，本次未导入，请稍后重试。")) }
         #expect(requests.withLock { $0 } == 2)
     }
     @Test func missingPageOrMalformedTrackCannotBecomePartialImportSuccess() async {
@@ -336,7 +401,7 @@ struct QQDirectTests {
             }))
             do { _ = try await provider.tracks(in: .init(id: "123", name: "List", trackCount: 2, source: .qq), cookies: qqCookies); Issue.record("Incomplete playlist import appeared successful") }
             catch let MusicError.incompletePlaylist(partial) { #expect(partial.failedCount == 1); #expect(partial.tracks.count == 1) }
-            catch { #expect(error.localizedDescription.contains("格式")) }
+            catch { #expect(error.localizedDescription == L10n.string("QQ 音乐歌单分页格式不完整（第 \(2) 页为空，已读取 \(1)/\(2) 首），本次未导入。")) }
         }
     }
     @Test func playlistBadRowReportsPositionAndParsedCountWithoutPrivateValues() async throws {
@@ -349,9 +414,10 @@ struct QQDirectTests {
         do { _ = try await provider.tracks(in: .init(id: "123", name: "Fixture", trackCount: 82, source: .qq), cookies: qqCookies); Issue.record("Bad row became a successful partial import") }
         catch let MusicError.incompletePlaylist(partial) {
             let message = partial.message + partial.issues.joined(separator: "；")
-            #expect(message.contains("81/82")); #expect(message.contains("第 37 首"))
-            #expect(message.contains("mid=缺失")); #expect(message.contains("songmid=缺失"))
-            #expect(!partial.message.contains("本次未导入")); #expect(!message.contains("private"))
+            #expect(partial.message == expectedQQPartialSummary(total: 82, parsed: 81, failed: 1, firstPosition: 37,
+                                                               firstFailure: L10n.string("：歌曲资料缺少有效标识或标题。")))
+            #expect(partial.issues == [expectedQQPlaylistIssue(position: 37, failure: L10n.string("：\(expectedQQIdentityIssue())"))])
+            #expect(!message.contains("private"))
             #expect(partial.failedCount == 1); #expect(partial.totalCount == 82); #expect(partial.tracks.count == 81)
         }
     }
@@ -408,8 +474,10 @@ struct QQDirectTests {
         catch let MusicError.incompletePlaylist(partial) {
             #expect(partial.tracks.count == 81); #expect(partial.totalCount == 82); #expect(partial.failedCount == 1)
             #expect(partial.tracks.map(\.sourceID) == (0..<82).filter { $0 != 14 }.map { "song\($0)" })
-            #expect(partial.issues.count == 1); #expect(partial.issues[0].contains("第 15 首")); #expect(partial.issues[0].contains("500"))
-            #expect(!partial.message.contains("private")); #expect(!partial.message.contains("本次未导入"))
+            let failure = L10n.string("补资料失败：\(expectedQQRPCFailure(operation: L10n.string("读取歌曲资料"), code: 500))")
+            #expect(partial.issues == [expectedQQPlaylistIssue(position: 15, failure: failure)])
+            #expect(partial.message == expectedQQPartialSummary(total: 82, parsed: 81, failed: 1, firstPosition: 15, firstFailure: failure))
+            #expect(!partial.message.contains("private"))
         }
     }
     @Test func originalPageFailureOrMismatchNeverOffersPartialTracks() async throws {
@@ -446,7 +514,9 @@ struct QQDirectTests {
         catch let MusicError.incompletePlaylist(partial) {
             #expect(partial.tracks.map(\.sourceID) == ["validFirst", "validLast"])
             #expect(partial.totalCount == 25); #expect(partial.failedCount == 23); #expect(partial.issues.count == 20)
-            #expect(partial.message.contains("另有 3 条")); #expect(!partial.message.contains("private"))
+            let failure = L10n.string("补资料失败：\(expectedQQRPCFailure(operation: L10n.string("读取歌曲资料"), code: 500))")
+            #expect(partial.message == expectedQQPartialSummary(total: 25, parsed: 2, failed: 23, firstPosition: 2, firstFailure: failure, omitted: 3))
+            #expect(!partial.message.contains("private"))
         }
         #expect(details.withLock { $0 } == 1)
     }
@@ -462,15 +532,27 @@ struct QQDirectTests {
         catch let MusicError.incompletePlaylist(partial) {
             #expect(partial.tracks.map(\.sourceID) == ["lastSong"]); #expect(partial.totalCount == 101)
             #expect(partial.failedCount == 100); #expect(partial.issues.count == 20)
-            #expect(partial.message.contains("另有 80 条"))
+            #expect(partial.message == expectedQQPartialSummary(total: 101, parsed: 1, failed: 100, firstPosition: 1,
+                                                               firstFailure: L10n.string("：歌曲资料缺少有效标识或标题。"), omitted: 80))
         }
         #expect(calls.withLock { $0 } == 2)
     }
     @Test func invalidNumericSongIDsNeverTriggerHydrationAndDiagnosticsAreStatic() async throws {
-        let values: [Any] = [NSNull(), true, false, 1.5, -12345, 0, "1e3", "999999999999999999999999999999", "private-value", ["private": "value"]]
-        var rows: [[String: Any]] = values.map { ["mid": "", "id": $0, "title": "private-title"] }
-        rows.append(["mid": "private/invalid", "id": 12345, "songid": 67890, "title": "private-title"])
-        for row in rows {
+        let values: [(Any, String)] = [
+            (NSNull(), L10n.string("空值")), (true, L10n.string("数字或布尔值")),
+            (false, L10n.string("数字或布尔值")), (1.5, L10n.string("数字或布尔值")),
+            (-12345, L10n.string("数字或布尔值")), (0, L10n.string("数字或布尔值")),
+            ("1e3", L10n.string("文本")), ("999999999999999999999999999999", L10n.string("文本")),
+            ("private-value", L10n.string("文本")), (["private": "value"], L10n.string("对象"))
+        ]
+        var rows: [([String: Any], String)] = values.map { value, type in
+            (["mid": "", "id": value, "title": "private-title"],
+             expectedQQIdentityIssue(midType: L10n.string("空文本"), idType: type))
+        }
+        rows.append((["mid": "private/invalid", "id": 12345, "songid": 67890, "title": "private-title"],
+                     expectedQQIdentityIssue(midType: L10n.string("含不支持字符"), idType: L10n.string("数字或布尔值"),
+                                             songIDType: L10n.string("数字或布尔值"), idValid: true, songIDValid: true, conflict: true)))
+        for (row, issue) in rows {
             let body = try JSONSerialization.data(withJSONObject: ["code": 0, "req_0": ["code": 0, "data": ["songlist": [row], "total_song_num": 1]]])
             let calls = Mutex(0)
             let provider = QQDirectProvider(http: NativeMusicHTTP(transport: { request in
@@ -482,25 +564,25 @@ struct QQDirectTests {
             do { _ = try await provider.tracks(in: .init(id: "123", name: "Fixture", trackCount: 1, source: .qq), cookies: qqCookies); Issue.record("Invalid numeric identity accepted") }
             catch {
                 let message = error.localizedDescription
-                #expect(message.contains("本次未导入")); #expect(message.contains("id=")); #expect(message.contains("songid="))
+                #expect(message == expectedQQUnimportedPlaylist(issue: issue))
+                #expect(message.contains("id=")); #expect(message.contains("songid="))
                 #expect(!message.contains("private")); #expect(!message.contains("12345")); #expect(!message.contains("67890"))
-                #expect(message.contains("空文本") || message.contains("两个数字编号冲突"))
             }
             #expect(calls.withLock { $0 } == 1)
         }
     }
     @Test func playlistHydrationRequiresSuccessfulMatchingCompleteDetail() async throws {
         let cases: [([String: Any], String)] = [
-            (["code": 0, "req_0": ["code": 104003, "msg": "private-value"]], "104003"),
-            (["code": 0, "req_0": ["code": 0, "data": ["code": 10006]]], "10006"),
-            (["code": 0, "req_0": ["code": 0, "data": [:]]], "缺少曲目对象"),
-            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["mid": "good", "title": "private-title"]]]], "缺少有效数字"),
-            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": true, "mid": "good", "title": "private-title"]]]], "缺少有效数字"),
-            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 67890, "mid": "good", "title": "private-title"]]]], "编号不一致"),
-            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 12345, "mid": "bad/private", "title": "private-title"]]]], "没有合法歌曲 MID"),
-            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 12345, "mid": true, "title": "private-title"]]]], "没有合法歌曲 MID"),
-            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 12345, "mid": 67890, "title": "private-title"]]]], "没有合法歌曲 MID"),
-            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 12345, "mid": "good"]]]], "缺少可用标题")
+            (["code": 0, "req_0": ["code": 104003, "msg": "private-value"]], expectedQQRPCFailure(operation: L10n.string("读取歌曲资料"), code: 104003)),
+            (["code": 0, "req_0": ["code": 0, "data": ["code": 10006]]], expectedQQRPCFailure(operation: L10n.string("读取歌曲资料"), code: 10006)),
+            (["code": 0, "req_0": ["code": 0, "data": [:]]], L10n.string("平台详情缺少曲目对象，无法确认该歌曲是否仍存在。")),
+            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["mid": "good", "title": "private-title"]]]], L10n.string("平台详情缺少有效数字歌曲编号。")),
+            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": true, "mid": "good", "title": "private-title"]]]], L10n.string("平台详情缺少有效数字歌曲编号。")),
+            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 67890, "mid": "good", "title": "private-title"]]]], L10n.string("平台返回的歌曲与请求编号不一致。")),
+            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 12345, "mid": "bad/private", "title": "private-title"]]]], L10n.string("平台详情仍没有合法歌曲 MID。")),
+            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 12345, "mid": true, "title": "private-title"]]]], L10n.string("平台详情仍没有合法歌曲 MID。")),
+            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 12345, "mid": 67890, "title": "private-title"]]]], L10n.string("平台详情仍没有合法歌曲 MID。")),
+            (["code": 0, "req_0": ["code": 0, "data": ["track_info": ["id": 12345, "mid": "good"]]]], L10n.string("平台详情缺少可用标题或曲目结构不受支持。"))
         ]
         for (payload, reason) in cases {
             let response = try JSONSerialization.data(withJSONObject: payload), calls = Mutex(0)
@@ -515,7 +597,9 @@ struct QQDirectTests {
             catch let MusicError.incompletePlaylist(partial) {
                 let message = partial.message + partial.issues.joined(separator: "；")
                 #expect(partial.tracks.count == 1); #expect(partial.failedCount == 1)
-                #expect(message.contains("第 2 首补资料失败")); #expect(message.contains(reason)); #expect(!partial.message.contains("本次未导入"))
+                let failure = L10n.string("补资料失败：\(reason)")
+                #expect(partial.issues == [expectedQQPlaylistIssue(position: 2, failure: failure)])
+                #expect(partial.message == expectedQQPartialSummary(total: 2, parsed: 1, failed: 1, firstPosition: 2, firstFailure: failure))
                 #expect(!message.contains("private")); #expect(!message.contains("12345")); #expect(!message.contains("67890"))
             }
             #expect(calls.withLock { $0 } == 2)
@@ -542,8 +626,11 @@ struct QQDirectTests {
                 let tracks = try await provider.tracks(in: .init(id: "123", name: "Fixture", trackCount: count + 1, source: .qq), cookies: qqCookies)
                 #expect(!exceedsLimit); #expect(tracks.map(\.sourceID) == (1...20).map { "mid\($0)" })
             } catch let MusicError.incompletePlaylist(partial) {
-                #expect(exceedsLimit); #expect(partial.message.contains("第 22 首"))
-                #expect(partial.message.contains("20 次")); #expect(partial.failedCount == 1); #expect(partial.tracks.count == 20)
+                #expect(exceedsLimit)
+                let failure = L10n.string("补资料失败：已达到每次导入最多 20 次的补充请求上限。")
+                #expect(partial.message == expectedQQPartialSummary(total: 22, parsed: 21, failed: 1, firstPosition: 22, firstFailure: failure))
+                #expect(partial.issues == [expectedQQPlaylistIssue(position: 22, failure: failure)])
+                #expect(partial.failedCount == 1); #expect(partial.tracks.count == 20)
             }
             #expect(detailIDs.withLock { $0 } == Array(1...20))
         }
@@ -560,19 +647,20 @@ struct QQDirectTests {
             do { _ = try await provider.tracks(in: .init(id: "123", name: "Fixture", trackCount: 1, source: .qq), cookies: qqCookies); Issue.record("Failed hydration accepted") }
             catch is CancellationError { #expect(cancel) }
             catch {
-                #expect(!cancel); #expect(error.localizedDescription.contains("第 1 首补资料失败"))
-                #expect(error.localizedDescription.contains("超时")); #expect(error.localizedDescription.contains("-1001"))
-                #expect(error.localizedDescription.contains("本次未导入"))
+                #expect(!cancel)
+                let failure = L10n.string("补资料失败：\(expectedQQTimeout())")
+                let row = expectedQQPlaylistIssue(position: 1, failure: failure)
+                #expect(error.localizedDescription == L10n.string("QQ 音乐歌单曲目格式不完整（成功解析 \(0)/\(1) 首；\(row)\("")），本次未导入。"))
             }
         }
     }
     @Test func playlistMalformedFieldsUseStaticTypeDiagnostics() async throws {
         let cases: [(Any, String)] = [
-            (["private": "private-value"], "songlist 为对象"),
-            (NSNull(), "songlist 为空值"),
-            (["private-row"], "曲目为文本"),
-            ([["mid": "private-invalid-id/", "title": "private-title"]], "歌曲标识格式不支持"),
-            ([["mid": "valid", "title": ["private": "value"], "name": NSNull()]], "title=对象、name=空值、songname=缺失")
+            (["private": "private-value"], L10n.string("QQ 音乐歌单响应格式异常（读取歌单曲目：第 \(1) 页 songlist 为\(L10n.string("对象"))，预期列表），本次未导入。")),
+            (NSNull(), L10n.string("QQ 音乐歌单响应格式异常（读取歌单曲目：第 \(1) 页 songlist 为\(L10n.string("空值"))，预期列表），本次未导入。")),
+            (["private-row"], expectedQQUnimportedPlaylist(issue: L10n.string("曲目为\(L10n.string("文本"))，预期对象"))),
+            ([["mid": "private-invalid-id/", "title": "private-title"]], expectedQQUnimportedPlaylist(issue: expectedQQIdentityIssue(midType: L10n.string("含不支持字符")))),
+            ([["mid": "valid", "title": ["private": "value"], "name": NSNull()]], expectedQQUnimportedPlaylist(issue: L10n.string("标题字段 title=\(L10n.string("对象"))、name=\(L10n.string("空值"))、songname=\(L10n.string("缺失"))")))
         ]
         for (list, category) in cases {
             let body = try JSONSerialization.data(withJSONObject: ["code": 0, "req_0": ["code": 0, "data": ["songlist": list]]])
@@ -581,8 +669,7 @@ struct QQDirectTests {
             }))
             do { _ = try await provider.tracks(in: .init(id: "123", name: "Fixture", trackCount: 1, source: .qq), cookies: qqCookies); Issue.record("Malformed playlist accepted") }
             catch {
-                #expect(error.localizedDescription.contains(category))
-                #expect(error.localizedDescription.contains("本次未导入"))
+                #expect(error.localizedDescription == category)
                 #expect(!error.localizedDescription.contains("private"))
             }
         }
@@ -595,8 +682,9 @@ struct QQDirectTests {
         }))
         do { _ = try await provider.tracks(in: .init(id: "123", name: "Fixture", trackCount: 101, source: .qq), cookies: qqCookies); Issue.record("Earlier page returned after a later bad row") }
         catch let MusicError.incompletePlaylist(partial) {
-            #expect(partial.issues.first?.contains("第 2 页") == true)
-            #expect(partial.issues.first?.contains("第 101 首") == true); #expect(!partial.message.contains("本次未导入"))
+            #expect(partial.issues == [expectedQQPlaylistIssue(page: 2, position: 101, failure: L10n.string("：\(expectedQQIdentityIssue())"))])
+            #expect(partial.message == expectedQQPartialSummary(total: 101, parsed: 100, failed: 1, firstPosition: 101,
+                                                               firstFailure: L10n.string("：歌曲资料缺少有效标识或标题。")))
             #expect(!partial.message.contains("private")); #expect(partial.tracks.count == 100); #expect(partial.failedCount == 1)
         }
     }
@@ -744,7 +832,7 @@ struct QQDirectTests {
             }))
             let cookies = [qqCookies[0], MusicSessionCookie(name: "qqmusic_key", value: raw, domain: ".y.qq.com")]
             do { _ = try await provider.profile(cookies: cookies); Issue.record("Malformed session accepted") }
-            catch { #expect(error.localizedDescription.contains("编码无法识别")); #expect(!error.localizedDescription.contains("private")) }
+            catch { #expect(error.localizedDescription == L10n.string("QQ 音乐登录信息的编码无法识别，请重新完成官网登录。")); #expect(!error.localizedDescription.contains("private")) }
         }
     }
     @Test func playbackPrefersWebTicketWithSafeFailureDiagnosticsAndNoRetry() async throws {
@@ -874,7 +962,7 @@ struct QQDirectTests {
             let track = Track(id: "qq:mid1", title: "Fixture", artist: "", album: "", duration: 1, source: .qq, sourceID: "mid1")
             do { _ = try await provider.resolve(track, cookies: cookies); #expect(expected != nil) }
             catch {
-                #expect(expected == nil); #expect(error.localizedDescription.contains("缺少播放票据"))
+                #expect(expected == nil); #expect(error.localizedDescription == L10n.string("QQ 音乐网页登录有效，但本次会话缺少播放票据，请重新打开应用内官网窗口完成登录。"))
                 #expect(!error.localizedDescription.contains("private"))
             }
             #expect(calls.withLock { $0 } == (expected == nil ? 0 : 2))
@@ -924,7 +1012,7 @@ struct QQDirectTests {
         let track = Track(id: "qq:mid1", title: "Fixture", artist: "", album: "", duration: 1, source: .qq, sourceID: "mid1")
         do { _ = try await provider.resolve(track, cookies: cookies); Issue.record("Different scoped accounts accepted") }
         catch {
-            #expect(error.localizedDescription.contains("账户不一致"))
+            #expect(error.localizedDescription == L10n.string("QQ 音乐资料与播放会话的账户不一致，请重新打开应用内官网窗口完成登录。"))
             #expect(!error.localizedDescription.contains("12345678"))
             #expect(!error.localizedDescription.contains("87654321"))
         }
@@ -942,7 +1030,7 @@ struct QQDirectTests {
             }))
             let track = Track(id: "qq:mid1", title: "Fixture", artist: "", album: "", duration: 1, source: .qq, sourceID: "mid1")
             do { _ = try await provider.resolve(track, cookies: qqCookies); Issue.record("Missing media ID accepted") }
-            catch { #expect(error.localizedDescription.contains("媒体编号")); #expect(!error.localizedDescription.contains("private")) }
+            catch { #expect(error.localizedDescription == L10n.string("QQ 音乐未返回这首歌的有效媒体编号，暂时无法请求播放地址。")); #expect(!error.localizedDescription.contains("private")) }
             #expect(calls.withLock { $0 } == 1)
         }
     }
@@ -972,14 +1060,14 @@ struct QQDirectTests {
     }
     @Test func authorizationFailuresKeepDistinctSafeReasonsAndNeverRetryOtherRoutes() async throws {
         let cases: [([String: Any], String)] = [
-            ([:], "缺少歌曲列表"),
-            (["midurlinfo": [["songmid": "different-mid", "purl": "M500fixture.mp3"]]], "未返回所选歌曲"),
-            (["midurlinfo": [["songmid": "mid1", "result": 104003, "msg": "fixture-wechat-key private info"]]], "104003"),
-            (["midurlinfo": [["songmid": "mid1", "result": 0, "filename": "M500other.mp3", "purl": "M500other.mp3"]]], "不一致"),
-            (["midurlinfo": [["songmid": "mid1", "result": 104005, "purl": "M500fixture.mp3", "msg": "fixture-wechat-key private info"]]], "104005"),
-            (["midurlinfo": [["songmid": "mid1", "purl": ""]]], "未提供当前账户可播放"),
-            (["midurlinfo": [["songmid": "mid1", "purl": "RS02fixture.mp3"]]], "试听"),
-            (["midurlinfo": [["songmid": "mid1", "purl": "F000fixture.mflac"]]], "音频格式暂不支持")
+            ([:], L10n.string("QQ 音乐播放授权响应缺少歌曲列表，请稍后重试或更新应用。")),
+            (["midurlinfo": [["songmid": "different-mid", "purl": "M500fixture.mp3"]]], L10n.string("QQ 音乐未返回所选歌曲的播放授权，请在官网查看其可播放状态。")),
+            (["midurlinfo": [["songmid": "mid1", "result": 104003, "msg": "fixture-wechat-key private info"]]], L10n.string("QQ 音乐未能返回这首歌的播放地址（平台返回码 \(String(104003))），平台未说明具体原因。")),
+            (["midurlinfo": [["songmid": "mid1", "result": 0, "filename": "M500other.mp3", "purl": "M500other.mp3"]]], L10n.string("QQ 音乐返回的音频文件与本次请求不一致，暂未播放。")),
+            (["midurlinfo": [["songmid": "mid1", "result": 104005, "purl": "M500fixture.mp3", "msg": "fixture-wechat-key private info"]]], L10n.string("QQ 音乐未能返回这首歌的播放地址（平台返回码 \(String(104005))），平台未说明具体原因。")),
+            (["midurlinfo": [["songmid": "mid1", "purl": ""]]], L10n.string("QQ 音乐未提供当前账户可播放的完整音频链接，请在官网查看这首歌的可播放状态。")),
+            (["midurlinfo": [["songmid": "mid1", "purl": "RS02fixture.mp3"]]], L10n.string("QQ 音乐仅返回了试听音频，暂不播放；请在官网查看完整歌曲的可播放状态。")),
+            (["midurlinfo": [["songmid": "mid1", "purl": "F000fixture.mflac"]]], L10n.string("QQ 音乐返回的音频格式暂不支持；加密文件不会被解密或播放。"))
         ]
         for (payload, explanation) in cases {
             let calls = Mutex(0), data = try JSONSerialization.data(withJSONObject: ["code": 0, "req_0": ["code": 0, "data": payload]])
@@ -993,13 +1081,7 @@ struct QQDirectTests {
             let track = Track(id: "qq:mid1", title: "Fixture", artist: "", album: "", duration: 1, source: .qq, sourceID: "mid1")
             do { _ = try await provider.resolve(track, cookies: qqWechatCookies); Issue.record("Denied or unsupported audio accepted") }
             catch {
-                #expect(error.localizedDescription.contains(explanation)); #expect(!error.localizedDescription.contains("fixture-wechat-key"))
-                if explanation == "104003" || explanation == "104005" {
-                    #expect(error.localizedDescription.contains("平台未说明具体原因"))
-                    #expect(!error.localizedDescription.contains("播放授权"))
-                    #expect(!error.localizedDescription.contains("会员"))
-                    #expect(!error.localizedDescription.contains("地区"))
-                }
+                #expect(error.localizedDescription == explanation); #expect(!error.localizedDescription.contains("fixture-wechat-key"))
             }
             #expect(calls.withLock { $0 } == 2)
         }
@@ -1020,10 +1102,10 @@ struct QQDirectTests {
     }
     @Test func rejectedAudioHostDiagnosticNeverIncludesSignedURLOrUserInfo() async throws {
         let cases: [(String, String)] = [
-            ("https://unverified.example.com/private-path.mp3?vkey=private-vkey&uin=private-account", "不受信任的音频地址"),
-            ("https://private-user:private-pass@unverified.example.com/private-path.mp3?vkey=private-vkey", "连接参数不受支持"),
-            ("https://unverified.example.com:8443/private-path.mp3?vkey=private-vkey", "连接参数不受支持"),
-            ("https://127.0.0.1/private-path.mp3?vkey=private-vkey", "不受信任的音频地址")
+            ("https://unverified.example.com/private-path.mp3?vkey=private-vkey&uin=private-account", L10n.string("QQ 音乐返回了不受信任的音频地址（主机：\("unverified.example.com")），暂未播放。")),
+            ("https://private-user:private-pass@unverified.example.com/private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回的音频连接参数不受支持（主机：\("unverified.example.com")）。")),
+            ("https://unverified.example.com:8443/private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回的音频连接参数不受支持（主机：\("unverified.example.com")）。")),
+            ("https://127.0.0.1/private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回了不受信任的音频地址（主机：\("127.0.0.1")），暂未播放。"))
         ]
         for (purl, explanation) in cases {
             let provider = QQDirectProvider(http: NativeMusicHTTP(transport: { request in
@@ -1035,7 +1117,7 @@ struct QQDirectTests {
             let track = Track(id: "qq:mid1", title: "Fixture", artist: "", album: "", duration: 1, source: .qq, sourceID: "mid1")
             do { _ = try await provider.resolve(track, cookies: qqWechatCookies); Issue.record("Rejected host accepted") }
             catch {
-                #expect(error.localizedDescription.contains(explanation))
+                #expect(error.localizedDescription == explanation)
                 #expect(error.localizedDescription.contains(purl.contains("127.0.0.1") ? "127.0.0.1" : "unverified.example.com"))
                 for secret in ["private-path", "private-vkey", "private-account", "private-user", "private-pass", "https://", "?", "8443"] {
                     #expect(!error.localizedDescription.contains(secret))
@@ -1085,7 +1167,7 @@ struct QQDirectTests {
                 #expect(expectedSuccess); #expect(url.scheme == "https"); #expect(url.port == nil)
             } catch {
                 #expect(!expectedSuccess)
-                #expect(error.localizedDescription.contains("连接参数不受支持"))
+                #expect(error.localizedDescription == L10n.string("QQ 音乐返回的音频连接参数不受支持（主机：\("ws6.stream.qqmusic.qq.com")）。"))
             }
         }
     }
@@ -1104,18 +1186,18 @@ struct QQDirectTests {
             }))
             let track = Track(id: "qq:mid1", title: "Fixture", artist: "", album: "", duration: 1, source: .qq, sourceID: "mid1")
             do { _ = try await provider.resolve(track, cookies: qqCookies); Issue.record("Rejected address was replaced with a default CDN") }
-            catch { #expect(error.localizedDescription.contains("不受信任")); #expect(error.localizedDescription.contains(expectedHost)) }
+            catch { #expect(error.localizedDescription == L10n.string("QQ 音乐返回了不受信任的音频地址（主机：\(expectedHost)），暂未播放。")); #expect(error.localizedDescription.contains(expectedHost)) }
         }
     }
     @Test func malformedAudioAddressIsDistinctAndDoesNotEchoUnboundedHost() async throws {
         let cases: [(String, String, String)] = [
-            ("not-an-absolute-server", "M500private-path.mp3?vkey=private-vkey", "缺少协议"),
-            ("https://" + String(repeating: "x", count: 254) + "/", "M500private-path.mp3?vkey=private-vkey", "主机名格式不受支持"),
-            ("ftp://private-host/", "M500private-path.mp3?vkey=private-vkey", "地址协议不受支持"),
-            ("https:///", "M500private-path.mp3?vkey=private-vkey", "缺少主机"),
-            ("https://[2001:db8::1]/", "M500private-path.mp3?vkey=private-vkey", "IP 地址格式不受支持"),
-            ("https://[invalid-private-host/", "M500private-path.mp3?vkey=private-vkey", "候选地址无法解析"),
-            ("https://ws6.stream.qqmusic.qq.com/", "https://[invalid-private-host/M500private-path.mp3?vkey=private-vkey", "音频地址无法解析")
+            ("not-an-absolute-server", "M500private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回的音频地址不可用（\(L10n.string("候选地址缺少协议"))），请稍后重试。")),
+            ("https://" + String(repeating: "x", count: 254) + "/", "M500private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回的音频地址不可用（\(L10n.string("主机名格式不受支持"))），请稍后重试。")),
+            ("ftp://private-host/", "M500private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回的音频地址不可用（\(L10n.string("地址协议不受支持"))），请稍后重试。")),
+            ("https:///", "M500private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回的音频地址不可用（\(L10n.string("候选地址缺少主机"))），请稍后重试。")),
+            ("https://[2001:db8::1]/", "M500private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回的音频地址不可用（\(L10n.string("IP 地址格式不受支持"))），请稍后重试。")),
+            ("https://[invalid-private-host/", "M500private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回的音频地址不可用（\(L10n.string("候选地址无法解析"))），请稍后重试。")),
+            ("https://ws6.stream.qqmusic.qq.com/", "https://[invalid-private-host/M500private-path.mp3?vkey=private-vkey", L10n.string("QQ 音乐返回的音频地址无法解析，请稍后重试。"))
         ]
         for (server, purl, reason) in cases {
             let provider = QQDirectProvider(http: NativeMusicHTTP(transport: { request in
@@ -1127,7 +1209,7 @@ struct QQDirectTests {
             let track = Track(id: "qq:mid1", title: "Fixture", artist: "", album: "", duration: 1, source: .qq, sourceID: "mid1")
             do { _ = try await provider.resolve(track, cookies: qqCookies); Issue.record("Malformed address accepted") }
             catch {
-                #expect(error.localizedDescription.contains(reason))
+                #expect(error.localizedDescription == reason)
                 #expect(error.localizedDescription.utf8.count < 200)
                 #expect(!error.localizedDescription.contains("private"))
                 #expect(!error.localizedDescription.contains("2001:db8"))
@@ -1140,7 +1222,7 @@ struct QQDirectTests {
             (Data("<html>test-session-key upstream debug</html>".utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         }))
         do { _ = try await provider.profile(cookies: qqCookies); Issue.record("Accepted HTML") }
-        catch { #expect(!error.localizedDescription.contains("test-session-key")); #expect(error.localizedDescription.contains("格式")) }
+        catch { #expect(!error.localizedDescription.contains("test-session-key")); #expect(error.localizedDescription == L10n.string("QQ 音乐响应格式已变化，请稍后重试或更新应用。")) }
     }
     @Test func cancellationDiscardsTransportLateResult() async {
         let called = Mutex(false)
@@ -1153,4 +1235,39 @@ struct QQDirectTests {
         while !called.withLock({ $0 }) { await Task.yield() }; task.cancel()
         do { _ = try await task.value; Issue.record("Cancelled profile succeeded") } catch { #expect(error is CancellationError) }
     }
+}
+
+private func expectedQQTimeout() -> String {
+    let reason = L10n.string("请求超时，请重试")
+    return L10n.string("\(MusicSource.qq.title)：\(reason)（网络错误 \(String(-1001))）")
+}
+private func expectedQQRPCFailure(operation: String, code: Int) -> String {
+    L10n.string("QQ 音乐\(operation)失败（平台返回码 \(String(code))），请稍后重试。")
+}
+private func expectedQQPlaylistIssue(page: Int = 1, position: Int, failure: String) -> String {
+    L10n.string("第 \(page) 页，第 \(position) 首\(failure)")
+}
+private func expectedQQPartialSummary(total: Int, parsed: Int, failed: Int, firstPosition: Int,
+                                      firstFailure: String, omitted: Int = 0) -> String {
+    let first = L10n.string("第 \(firstPosition) 首\(firstFailure)")
+    let remainder = omitted > 0 ? L10n.string("；另有 \(omitted) 条失败原因未展开") : ""
+    return L10n.string("已读完整份 \(total) 首歌单，成功解析 \(parsed)/\(total) 首，\(failed) 首未能读取。\(first)\(remainder)")
+}
+private func expectedQQUnimportedPlaylist(issue: String) -> String {
+    let failure = L10n.string("：\(issue)")
+    let row = expectedQQPlaylistIssue(position: 1, failure: failure)
+    return L10n.string("QQ 音乐歌单曲目格式不完整（成功解析 \(0)/\(1) 首；\(row)\("")），本次未导入。")
+}
+
+private func expectedQQIdentityIssue(midType: String = L10n.string("缺失"), songMIDType: String = L10n.string("缺失"),
+                                      idType: String = L10n.string("缺失"), songIDType: String = L10n.string("缺失"),
+                                      idValid: Bool = false, songIDValid: Bool = false, conflict: Bool = false) -> String {
+    let mid = L10n.string("mid=\(midType)、songmid=\(songMIDType)")
+    let idValidity = idValid ? L10n.string("有效正整数") : L10n.string("非有效正整数")
+    let songIDValidity = songIDValid ? L10n.string("有效正整数") : L10n.string("非有效正整数")
+    let id = L10n.string("\(idType)（\(idValidity)）")
+    let songID = L10n.string("\(songIDType)（\(songIDValidity)）")
+    let numeric = L10n.string("id=\(id)、songid=\(songID)")
+    let mismatch = conflict ? L10n.string("；两个数字编号冲突") : ""
+    return L10n.string("歌曲标识格式不支持（\(mid)；\(numeric)\(mismatch)）")
 }

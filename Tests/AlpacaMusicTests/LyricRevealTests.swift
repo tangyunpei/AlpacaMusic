@@ -35,23 +35,22 @@ import Testing
         #expect(hello.first?.start == 4.4)
         #expect(hello.last?.end == 6.4)
         #expect(hello.allSatisfy { $0.start >= 4.4 && $0.end <= 6.4 })
-        #expect(fragments[2].map(\.start) == [8, 9])
+        #expect(fragments[2].map(\.start) == [8, 8.55])
         #expect(fragments[2].allSatisfy { $0.opacity(at: 7.9) == 0 })
         #expect(Set(hello.map(\.start)).count == 5)
     }
 
-    @Test func lineEstimatesScaleWithAvailableSingingTime() throws {
+    @Test func lineEstimatesFitDenseCuesAndKeepLongTailsOnTheLastCharacter() throws {
         let fast = LyricReveal.timeline(for: .init(id: 3, text: "你好世界", start: 10, end: 12))
         let slow = LyricReveal.timeline(for: .init(id: 4, text: "你好世界", start: 10, end: 18))
         #expect(fast.isEstimated && slow.isEstimated)
         #expect(fast.units.map(\.start) == [10, 10.5, 11, 11.5])
-        #expect(slow.units.map(\.start) == [10, 12, 14, 16])
-        for (a, b) in zip(fast.units, slow.units) {
-            #expect(abs((b.start - 10) - (a.start - 10) * 4) < 0.000_001)
-        }
+        #expect(slow.units.map(\.start) == [10, 10.55, 11.1, 11.65])
+        #expect(slow.units.last?.end == 18)
+        #expect(slow.units.allSatisfy { $0.opacity(at: 12) == 1 })
         let latin = LyricReveal.timeline(for: .init(id: 5, text: "I ocean", start: 0, end: 3))
         let ocean = try #require(latin.fragments(["I ", "ocean"]).last)
-        #expect(abs((ocean.first?.start ?? -1) - 1) < 0.000_001)
+        #expect(abs((ocean.first?.start ?? -1) - 0.55) < 0.000_001)
     }
 
     @Test func estimatesShareEmphasisPronunciationAndPunctuationAllocation() throws {

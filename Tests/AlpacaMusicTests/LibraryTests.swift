@@ -173,7 +173,7 @@ private func writeWAV(in directory: URL, name: String = "actual.wav") throws -> 
         let original = Data("{broken-json".utf8)
         try original.write(to: directory.appending(path: "library-v1.json"))
         let library = MusicLibrary(directory: directory); await library.load()
-        #expect(library.error?.contains("备份") == true && library.tracks.isEmpty)
+        #expect(library.error == L10n.string("音乐资料库格式损坏，已保留原始备份并创建空资料库。原始音频文件没有改动。") && library.tracks.isEmpty)
         let backup = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first { $0.lastPathComponent.contains(".corrupt-") })
         #expect(try Data(contentsOf: backup) == original)
         #expect(library.ready)
@@ -203,7 +203,7 @@ private func writeWAV(in directory: URL, name: String = "actual.wav") throws -> 
         #expect(result.tracks.count == 1 && result.tracks.first?.title == "visible")
         let unsupported = music.appending(path: "notes.txt"); try Data("hello".utf8).write(to: unsupported)
         let rejected = await importer.importURLs([unsupported])
-        #expect(rejected.tracks.isEmpty && rejected.errors.first?.contains("不支持") == true)
+        #expect(rejected.tracks.isEmpty && rejected.errors.first == L10n.string("\(unsupported.lastPathComponent)：不支持此文件格式"))
     }
     @Test func startupMutationsReplayAfterDemoSeedingWithoutLosingImports() async throws {
         let directory = try makeLibraryDirectory(seedEmpty: false); defer { try? FileManager.default.removeItem(at: directory) }
