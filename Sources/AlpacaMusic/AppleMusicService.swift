@@ -51,11 +51,13 @@ struct AppleMusicPlaybackSnapshot: Sendable {
     func requestAuthorization() async -> MusicAuthorization.Status
     func subscription() async throws -> AppleMusicCapabilities
     func search(_ query: String) async throws -> [Track]
-    func librarySongs(validate: @MainActor () throws -> Void) async throws -> [Track]
+    func librarySongs(validate: @MainActor () throws -> Void, progress: @MainActor (ImportProgress) -> Void) async throws -> [Track]
     func libraryPlaylists(validate: @MainActor () throws -> Void) async throws -> [AppleMusicLibraryPlaylist]
-    func libraryTracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void) async throws -> [Track]
+    func libraryTracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void,
+                       progress: @MainActor (ImportProgress) -> Void) async throws -> [Track]
     func libraryAlbums(validate: @MainActor () throws -> Void) async throws -> [AppleMusicLibraryAlbum]
-    func libraryTracks(in album: AppleMusicLibraryAlbum, validate: @MainActor () throws -> Void) async throws -> [Track]
+    func libraryTracks(in album: AppleMusicLibraryAlbum, validate: @MainActor () throws -> Void,
+                       progress: @MainActor (ImportProgress) -> Void) async throws -> [Track]
     func setSession(_ id: UUID?)
     func prepare(_ track: Track, session: UUID) async throws -> Double
     func play(session: UUID) async throws
@@ -64,8 +66,67 @@ struct AppleMusicPlaybackSnapshot: Sendable {
     func snapshot() -> AppleMusicPlaybackSnapshot
 }
 
+/// Readable, localized text for Apple Music failures. Raw NSError/MusicKit
+/// descriptions (such as "MusicKit.MusicDataRequest.Error error 1") are never
+/// returned; only app-authored `MusicError` text passes through unchanged.
+enum AppleMusicErrorMessage {
+    static func describe(_ error: any Error) -> String {
+        recognized(error) ?? L10n.string("请检查 Apple Music 连接后重试。")
+    }
+
+    /// Short wording by HTTP status plus a compact diagnostic suffix.
+    static func describe(status: Int, code: Int) -> String {
+        let reason: String
+        switch status {
+        case 400: reason = L10n.string("Apple Music 拒绝了此次请求。")
+        case 401, 403: reason = L10n.string("Apple Music 授权、订阅或开发者配置无效。")
+        case 404: reason = L10n.string("Apple Music 未找到所请求的内容。")
+        case 429: reason = L10n.string("Apple Music 请求过于频繁，请稍后重试。")
+        case 500...599: reason = L10n.string("Apple Music 服务暂时不可用，请稍后重试。")
+        default: reason = L10n.string("Apple Music 请求失败，请稍后重试。")
+        }
+        return L10n.string("\(reason)（HTTP \(status) · \(code)）")
+    }
+
+    /// A service-surface error: cancellation and app-authored messages stay
+    /// intact, everything else becomes a readable `MusicError`.
+    static func readable(_ error: any Error) -> any Error {
+        if error is CancellationError { return error }
+        if let value = error as? URLError, value.code == .cancelled { return CancellationError() }
+        if error is MusicError { return error }
+        return MusicError.message(describe(error))
+    }
+
+    /// Playback keeps unrecognized errors so `PlaybackErrorMessage` can apply
+    /// its stage-specific fallback; MusicKit request/token failures are worded here.
+    static func playback(_ error: any Error) -> any Error {
+        if error is CancellationError { return error }
+        if let value = error as? URLError, value.code == .cancelled { return CancellationError() }
+        if error is MusicError { return error }
+        if error is MusicDataRequest.Error || error is MusicTokenRequestError { return MusicError.message(describe(error)) }
+        return error
+    }
+
+    private static func recognized(_ error: any Error) -> String? {
+        if let value = error as? MusicError { return value.localizedDescription }
+        if let value = error as? MusicDataRequest.Error { return describe(status: value.status, code: value.code) }
+        if let value = error as? MusicTokenRequestError { return AppleMusicLibraryClient.tokenFailureMessage(value) }
+        if let value = error as? URLError {
+            switch value.code {
+            case .timedOut: return L10n.string("网络请求超时，请重试。")
+            case .notConnectedToInternet: return L10n.string("当前没有网络连接。")
+            default: return L10n.string("网络连接失败，请重试。")
+            }
+        }
+        return nil
+    }
+}
+
 @MainActor @Observable
 final class AppleMusicService {
+    /// Apple's catalog search accepts at most 25 results per resource type;
+    /// larger values make every search fail with HTTP 400.
+    static let catalogSearchLimit = 25
     private(set) var isEnabled: Bool
     let isConfigured: Bool
     private(set) var isBusy = false
@@ -134,7 +195,7 @@ final class AppleMusicService {
             subscriptionCaption = value.canPlayCatalog ? "可播放 Apple Music 曲库" : "当前账户无法播放订阅曲库"
         } catch {
             guard generation == token, isEnabled else { return }
-            capabilities = nil; subscriptionCaption = "订阅检查失败"; self.error = error.localizedDescription
+            capabilities = nil; subscriptionCaption = "订阅检查失败"; self.error = AppleMusicErrorMessage.describe(error)
         }
     }
     private func requireAccess() throws {
@@ -146,7 +207,12 @@ final class AppleMusicService {
         try requireAccess()
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines); guard !term.isEmpty else { return [] }
         let token = generation
-        let tracks = try await adapter.search(term)
+        let tracks: [Track]
+        do { tracks = try await adapter.search(term) }
+        catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw AppleMusicErrorMessage.readable(error)
+        }
         try Task.checkCancellation(); try requireAccess()
         guard generation == token else { throw CancellationError() }
         return tracks
@@ -156,9 +222,11 @@ final class AppleMusicService {
         guard generation == id else { throw CancellationError() }
         try requireAccess()
     }
-    func librarySongs() async throws -> [Track] {
+    /// Progress arrives on the main actor after each page: items read so far
+    /// and Apple's reported total when known.
+    func librarySongs(progress: @MainActor (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
         try requireAccess(); let token = generation
-        let result = try await adapter.librarySongs { try self.validateLibrarySession(token) }
+        let result = try await adapter.librarySongs(validate: { try self.validateLibrarySession(token) }, progress: progress)
         try validateLibrarySession(token)
         return result
     }
@@ -168,9 +236,13 @@ final class AppleMusicService {
         try validateLibrarySession(token)
         return result
     }
-    func libraryTracks(in playlist: AppleMusicLibraryPlaylist) async throws -> [Track] {
+    /// Progress totals fall back to the playlist's track count when Apple
+    /// omits `meta.total`.
+    func libraryTracks(in playlist: AppleMusicLibraryPlaylist,
+                       progress: @MainActor (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
         try requireAccess(); let token = generation
-        let result = try await adapter.libraryTracks(in: playlist) { try self.validateLibrarySession(token) }
+        let result = try await adapter.libraryTracks(in: playlist, validate: { try self.validateLibrarySession(token) },
+                                                     progress: progress)
         try validateLibrarySession(token)
         return result
     }
@@ -180,9 +252,13 @@ final class AppleMusicService {
         try validateLibrarySession(token)
         return result
     }
-    func libraryTracks(in album: AppleMusicLibraryAlbum) async throws -> [Track] {
+    /// Progress totals fall back to the album's track count when Apple omits
+    /// `meta.total`.
+    func libraryTracks(in album: AppleMusicLibraryAlbum,
+                       progress: @MainActor (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
         try requireAccess(); let token = generation
-        let result = try await adapter.libraryTracks(in: album) { try self.validateLibrarySession(token) }
+        let result = try await adapter.libraryTracks(in: album, validate: { try self.validateLibrarySession(token) },
+                                                     progress: progress)
         try validateLibrarySession(token)
         return result
     }
@@ -190,14 +266,18 @@ final class AppleMusicService {
         try requireAccess()
         // Refresh at each activation so an expired subscription is not cached as playable.
         let token = generation
-        let latest = try await adapter.subscription()
+        let latest: AppleMusicCapabilities
+        do { latest = try await adapter.subscription() }
+        catch { throw AppleMusicErrorMessage.playback(error) }
         try Task.checkCancellation(); try requireAccess()
         guard generation == token else { throw CancellationError() }
         capabilities = latest
         subscriptionCaption = latest.canPlayCatalog ? "可播放 Apple Music 曲库" : "当前账户无法播放订阅曲库"
         guard latest.canPlayCatalog else { throw MusicError.message(L10n.string("当前 Apple Music 账户不能播放订阅曲库，请检查订阅。")) }
         playbackSession = session; adapter.setSession(session)
-        let duration = try await adapter.prepare(track, session: session)
+        let duration: Double
+        do { duration = try await adapter.prepare(track, session: session) }
+        catch { throw AppleMusicErrorMessage.playback(error) }
         try Task.checkCancellation(); try requireAccess()
         guard playbackSession == session else { throw CancellationError() }
         return duration
@@ -205,7 +285,7 @@ final class AppleMusicService {
     func resumePlayback(session: UUID) async throws {
         try requireAccess(); guard playbackSession == session else { throw CancellationError() }
         do { try await adapter.play(session: session) }
-        catch { if playbackSession == nil { adapter.setSession(nil) }; throw error }
+        catch { if playbackSession == nil { adapter.setSession(nil) }; throw AppleMusicErrorMessage.playback(error) }
         if playbackSession == nil { adapter.setSession(nil) }
         try Task.checkCancellation(); try requireAccess()
         guard playbackSession == session else { throw CancellationError() }
@@ -231,7 +311,7 @@ final class AppleMusicService {
         return AppleMusicCapabilities(canPlayCatalog: value.canPlayCatalogContent, hasCloudLibrary: value.hasCloudLibraryEnabled)
     }
     func search(_ query: String) async throws -> [Track] {
-        var request = MusicCatalogSearchRequest(term: query, types: [Song.self]); request.limit = 40
+        var request = MusicCatalogSearchRequest(term: query, types: [Song.self]); request.limit = AppleMusicService.catalogSearchLimit
         let result = try await request.response()
         return result.songs.map { song in
             Track(id: "appleMusic:\(song.id.rawValue)", title: song.title, artist: song.artistName, album: song.albumTitle ?? "",
@@ -240,14 +320,18 @@ final class AppleMusicService {
                   artworkURL: song.artwork?.url(width: 640, height: 640), format: "Apple Music", unavailable: song.playParameters == nil)
         }
     }
-    func librarySongs(validate: @MainActor () throws -> Void) async throws -> [Track] { try await library.songs(validate: validate) }
+    func librarySongs(validate: @MainActor () throws -> Void, progress: @MainActor (ImportProgress) -> Void) async throws -> [Track] {
+        try await library.songs(validate: validate, progress: progress)
+    }
     func libraryPlaylists(validate: @MainActor () throws -> Void) async throws -> [AppleMusicLibraryPlaylist] { try await library.playlists(validate: validate) }
-    func libraryTracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void) async throws -> [Track] {
-        try await library.tracks(in: playlist, validate: validate)
+    func libraryTracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void,
+                       progress: @MainActor (ImportProgress) -> Void) async throws -> [Track] {
+        try await library.tracks(in: playlist, validate: validate, progress: progress)
     }
     func libraryAlbums(validate: @MainActor () throws -> Void) async throws -> [AppleMusicLibraryAlbum] { try await library.albums(validate: validate) }
-    func libraryTracks(in album: AppleMusicLibraryAlbum, validate: @MainActor () throws -> Void) async throws -> [Track] {
-        try await library.tracks(in: album, validate: validate)
+    func libraryTracks(in album: AppleMusicLibraryAlbum, validate: @MainActor () throws -> Void,
+                       progress: @MainActor (ImportProgress) -> Void) async throws -> [Track] {
+        try await library.tracks(in: album, validate: validate, progress: progress)
     }
     func setSession(_ id: UUID?) { session = id; wantsPlayback = false; player?.stop(); if id == nil { player?.queue = [] } }
     func prepare(_ track: Track, session request: UUID) async throws -> Double {
@@ -258,8 +342,12 @@ final class AppleMusicService {
             song = try await library.playbackSong(libraryID: id)
         case .catalogSong:
             let requestValue = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: MusicItemID(id))
-            let response = try await requestValue.response()
-            guard let value = response.items.first, value.id.rawValue == id else { throw MusicError.message(L10n.string("Apple Music 未找到这首歌曲。")) }
+            let value: Song
+            do {
+                let response = try await requestValue.response()
+                guard let first = response.items.first, first.id.rawValue == id else { throw MusicError.message(L10n.string("Apple Music 未找到这首歌曲。")) }
+                value = first
+            } catch { throw AppleMusicErrorMessage.playback(error) }
             song = value
         }
         try Task.checkCancellation(); guard session == request else { throw CancellationError() }
