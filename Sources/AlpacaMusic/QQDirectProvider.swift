@@ -197,6 +197,10 @@ struct QQDirectProvider: DirectMusicProvider {
         return output
     }
     func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        try await tracks(in: playlist, cookies: cookies, progress: { _ in })
+    }
+    func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie],
+                progress: @MainActor @Sendable (ImportProgress) -> Void) async throws -> [Track] {
         let account = try session(cookies)
         guard playlist.source == .qq, !playlist.id.isEmpty, playlist.id.utf8.allSatisfy({ (48...57).contains($0) }),
               let identifier = Int64(playlist.id), identifier > 0 else { throw MusicError.message(L10n.string("QQ 音乐歌单标识无效，请刷新歌单列表。")) }
@@ -264,6 +268,7 @@ struct QQDirectProvider: DirectMusicProvider {
             }
             output = uniqueTracks(output + parsed); offset += list.count
             let total = reportedTotal ?? (playlist.trackCount > 0 ? playlist.trackCount : nil)
+            await progress(ImportProgress(completed: offset, total: total))
             if list.isEmpty, let total, offset < total {
                 throw MusicError.message(L10n.string("QQ 音乐歌单分页格式不完整（第 \(page + 1) 页为空，已读取 \(offset)/\(total) 首），本次未导入。"))
             }

@@ -43,6 +43,11 @@ struct NeteaseDirectProvider: DirectMusicProvider {
     }
 
     func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        try await tracks(in: playlist, cookies: cookies, progress: { _ in })
+    }
+
+    func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie],
+                progress: @MainActor @Sendable (ImportProgress) -> Void) async throws -> [Track] {
         guard playlist.source == .netease else { throw MusicError.message(L10n.string("该歌单不是网易云歌单")) }
         try requireID(playlist.id)
         let response: NEPlaylistResponse = try await request("v6/playlist/detail", payload: ["id": playlist.id, "n": 100000, "s": 0], cookies: cookies)
@@ -54,6 +59,7 @@ struct NeteaseDirectProvider: DirectMusicProvider {
         guard items.count <= 10000 else { throw MusicError.message(L10n.string("歌单超过 10000 首，本次未导入；请拆分歌单后重试")) }
         let orderedIDs = items.map { $0.id.value }
         var songsByID = Dictionary((detail.tracks ?? []).map { ($0.id.value, $0.track) }, uniquingKeysWith: { first, _ in first })
+        await progress(ImportProgress(completed: 0, total: orderedIDs.count))
         for offset in stride(from: 0, to: orderedIDs.count, by: 200) {
             try Task.checkCancellation()
             let ids = Array(orderedIDs[offset..<min(offset + 200, orderedIDs.count)])
@@ -62,6 +68,7 @@ struct NeteaseDirectProvider: DirectMusicProvider {
             let result: NESongsResponse = try await request("v3/song/detail", payload: ["c": String(decoding: c, as: UTF8.self)], cookies: cookies)
             guard let songs = result.songs else { throw MusicError.message(L10n.string("网易云曲目读取中断，未导入不完整歌单")) }
             for song in songs { songsByID[song.id.value] = song.track }
+            await progress(ImportProgress(completed: offset + ids.count, total: orderedIDs.count))
         }
         return orderedIDs.map { id in
             songsByID[id] ?? Track(id: "netease:\(id)", title: L10n.string("暂不可用的歌曲"), artist: L10n.string("未知艺术家"), album: playlist.name, duration: 0, source: .netease, sourceID: id, unavailable: true)

@@ -58,6 +58,10 @@ protocol DirectMusicProvider: Sendable {
     func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie]) async throws -> [Track]
     func albums(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicAlbum]
     func tracks(in album: RemoteMusicAlbum, cookies: [MusicSessionCookie]) async throws -> [Track]
+    /// Same as `tracks(in:cookies:)`, reporting songs read so far after each
+    /// page on the main actor. Providers that cannot page report nothing.
+    func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie],
+                progress: @MainActor @Sendable (ImportProgress) -> Void) async throws -> [Track]
     /// Refresh expiring share metadata before opening media. Most platforms
     /// resolve URLs separately and keep the imported track unchanged.
     func preparePlayback(_ track: Track, cookies: [MusicSessionCookie]) async throws -> Track
@@ -70,6 +74,10 @@ extension DirectMusicProvider {
     }
     func tracks(in album: RemoteMusicAlbum, cookies: [MusicSessionCookie]) async throws -> [Track] {
         throw MusicError.message(L10n.string("此音源暂不支持专辑导入。"))
+    }
+    func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie],
+                progress: @MainActor @Sendable (ImportProgress) -> Void) async throws -> [Track] {
+        try await tracks(in: playlist, cookies: cookies)
     }
     func preparePlayback(_ track: Track, cookies: [MusicSessionCookie]) async throws -> Track { track }
     func lyrics(_ track: Track, cookies: [MusicSessionCookie]) async throws -> LyricsPayload? { nil }
