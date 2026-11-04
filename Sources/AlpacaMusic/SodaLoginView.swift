@@ -25,9 +25,9 @@ struct SodaLoginView: View {
     var body: some View {
         VStack(spacing: 22) {
             HStack {
-                Text("汽水音乐登录").font(.title3.weight(.semibold))
+                Text(L10n.string("汽水音乐登录")).font(.title3.weight(.semibold))
                 Spacer()
-                Button("取消", action: cancel).keyboardShortcut(.cancelAction)
+                Button(L10n.string("取消"), action: cancel).keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("sodaLoginCancel")
             }
             Spacer(minLength: 0)
@@ -35,7 +35,7 @@ struct SodaLoginView: View {
                ![.expired, .failed, .cancelled].contains(authentication.phase) {
                 Image(nsImage: image).interpolation(.none).resizable()
                     .frame(width: 240, height: 240).padding(16).background(.white, in: RoundedRectangle(cornerRadius: 16))
-                    .accessibilityLabel("使用汽水音乐 App 扫一扫登录的二维码")
+                    .accessibilityLabel(L10n.string("使用汽水音乐 App 扫一扫登录的二维码"))
                     .accessibilityIdentifier("sodaLoginQR")
             } else if authentication.phase == .creating || authentication.phase == .idle {
                 ProgressView().frame(width: 272, height: 272)
@@ -50,13 +50,13 @@ struct SodaLoginView: View {
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("sodaLoginStatus")
             }
-            Button("重新获取二维码", action: start)
+            Button(L10n.string("重新获取二维码"), action: start)
                 .disabled([.creating, .verifying, .connected].contains(authentication.phase))
                 .accessibilityIdentifier("sodaLoginRefresh")
             Spacer(minLength: 0)
             HStack(spacing: 18) {
-                Link("汽水音乐用户协议", destination: URL(string: "https://luna-web.douyin.com/terms")!)
-                Link("隐私政策", destination: URL(string: "https://luna-web.douyin.com/privacy")!)
+                Link(L10n.string("汽水音乐用户协议"), destination: URL(string: "https://luna-web.douyin.com/terms")!)
+                Link(L10n.string("隐私政策"), destination: URL(string: "https://luna-web.douyin.com/privacy")!)
             }.font(.caption).foregroundStyle(palette.secondary)
         }
         .padding(24).frame(minWidth: 560, minHeight: 540)
@@ -83,7 +83,7 @@ struct SodaLoginView: View {
                 let challenge = try await authentication.create()
                 try Task.checkCancellation()
                 image = Self.qrImage(challenge.scanURL.absoluteString)
-                guard image != nil else { throw MusicError.message("无法显示二维码，请重新获取。") }
+                guard image != nil else { throw MusicError.message(L10n.string("无法显示二维码，请重新获取。")) }
                 while !Task.isCancelled {
                     if let cookies = try await authentication.poll() {
                         try Task.checkCancellation()

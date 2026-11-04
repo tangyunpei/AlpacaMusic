@@ -17,31 +17,35 @@ Created by [byalpaca](https://byalpaca.dev) (Junpei Tang). **macOS 26 or later.*
 ### Features
 
 - Local files, folders, HTTP/HTTPS audio links, favorites, playlists, search, and a mixed-source queue.
-- Album-art point clouds, orbital particles, flowing ribbons, oscilloscopes, and a segmented spectrum display. Audio-reactive effects use real samples when available.
-- Scrolling lyrics and animated captions with selective word and character emphasis: character-by-character Chinese and word-by-word English, Spanish, and similar languages. Missing word timestamps are estimated.
+- An Albums cover grid with album details, ordered track lists, and whole-album playback. Existing songs with album metadata appear automatically.
+- Album-art point clouds, orbital particles, flowing ribbons, oscilloscopes, and a continuous spectrum display. Audio-reactive effects use real samples when available.
+- Scrolling lyrics and animated captions with selective word and character emphasis: character-by-character Chinese and word-by-word English, Spanish, and similar languages. Platform YRC/QRC word timing is preferred; readable audio can be analyzed ahead on-device with voice detection and recording-specific timing caches. Uncertain lines remain estimated. See [lyric alignment](docs/lyric-audio-alignment.md).
+- English and Simplified Chinese UI, following the system by default. Switch languages instantly in Settings without interrupting playback.
 - Saved library and playback position; three original demo tracks to try without an online account.
 
 ### Quick start
 
 1. Open the DMG, drag **AlpacaMusic.app** into **Applications**, and launch it.
-2. Use **Import (导入)** or drag in local music. Open **Sources (音源)** to connect an online account.
-3. Choose a song, then open lyrics (歌词), immersive mode (沉浸模式), or the queue (播放队列) from the player controls.
+2. Use **Import** or drag in local music. Open **Sources** to connect an online account.
+3. Choose a song, then open lyrics, immersive mode, or the queue from the player controls.
 
-See [account connections](docs/account-connections.md) for login and playlist import details. The current app UI is in Chinese; advanced technical guides are mainly in Chinese.
+See [account connections](docs/account-connections.md) for login and playlist import details. Source builds support English and Simplified Chinese; **Settings → Language** selects **Follow System**, **简体中文**, or **English**. System permission prompts and official embedded login pages follow their own language settings. Advanced technical guides are mainly in Chinese. The existing 0.1.5 release package predates this localization update. See [localization](docs/localization.md).
 
 ### Online sources
 
 | Source | Connection and current limits |
 | --- | --- |
-| NetEase Cloud Music | Scan with the NetEase Music app, or use the embedded official web login. Search, import, and playback depend on account and track permissions. |
+| NetEase Cloud Music | Scan with the NetEase Music app, or use the embedded official web login. Import playlists and saved albums; search and playback depend on account and track permissions. |
 | QQ Music | Scan with QQ or WeChat, or use the embedded official web login. Search, import, and playback depend on account and track permissions. |
-| Apple Music | MusicKit authorization, search, personal library/playlist import, and playback. Requires [developer configuration](docs/apple-music-setup.md), user permission, a valid subscription, and track playback rights. |
+| Apple Music | MusicKit authorization, search, personal library/playlist/album import, and playback. Large libraries are paginated without the former 10,000-song app limit. Requires [developer configuration](docs/apple-music-setup.md), user permission, a valid subscription, and track playback rights. |
 | Spotify | Official PKCE login, search, playlist/saved-track import, and remote playback control. Requires your own [Client ID and callback configuration](docs/official-platforms.md#spotify配置与播放); playback needs [Premium and an available official device](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback). Real-account testing is still pending. |
 | Soda Music | The experimental entry is hidden. See the [research notes](docs/soda-thirdparty-integration-2026-10-03.md). |
 
 NetEase and QQ use web-protocol adapters rather than a stable official third-party SDK. No separate compatibility server is required; custom services remain an advanced option. Tested accounts do not establish availability for every account, region, subscription, or track.
 
 This implementation does not obtain Apple Music or Spotify PCM samples, so their playback cannot drive a real waveform or spectrum. Volume is controlled by the system or official playback device. Apple Music's automatic LRCLIB lyric matching is enabled by default and can be turned off in the lyric menu; queries send track metadata without platform login credentials. See the [data boundaries](DISCLAIMER.md#english).
+
+Background audio lyric alignment is enabled by default and can be disabled in Settings. The first use may download an Apple language model; audio is processed locally and temporary audio is deleted. Only derived timing is cached. Protected Apple Music/Spotify playback remains ineligible.
 
 ### Build from source
 
@@ -73,7 +77,7 @@ Each successful release build increments the third component of `CFBundleShortVe
 
 ### Verification
 
-Run `swift test`, `python3 -m unittest discover -s scripts/tests -p 'test_*.py'`, and `./scripts/check-sdk-apis.sh`. See [API compatibility](docs/api-compatibility.md) and [verification records](docs/verification.md) for scope and limitations. The historical `prototype/point-cloud-mode.html` is a design reference and is not loaded by the native app.
+Run `python3 scripts/check-localizations.py`, `swift test`, `python3 -m unittest discover -s scripts/tests -p 'test_*.py'`, and `./scripts/check-sdk-apis.sh`. See [API compatibility](docs/api-compatibility.md) and [verification records](docs/verification.md) for scope and limitations. The historical `prototype/point-cloud-mode.html` is a design reference and is not loaded by the native app.
 
 ### License
 
@@ -113,7 +117,8 @@ macOS 原生音乐播放器，统一管理本地与在线曲库，提供沉浸�
 ### 功能
 
 - 本地文件、文件夹、HTTP/HTTPS 音频链接，以及收藏、歌单、搜索和混合来源队列。
-- 封面点云、轨道粒子、流光绸缎、示波器和分段竖条频谱；有可用采样时以真实音频驱动。
+- 专辑封面网格、专辑详情、按曲序排列的歌曲和整张播放；已有歌曲的专辑资料会自动归入专辑库。
+- 封面点云、轨道粒子、流光绸缎、示波器和连续竖条频谱；有可用采样时以真实音频驱动。
 - 滚动歌词、动态字幕和局部强调：中文逐字，英语、西语等逐词出现；缺少逐词时间时使用估算。
 - 保存曲库和播放位置；内置三首原创试听，无需在线账号即可体验。
 
@@ -123,21 +128,25 @@ macOS 原生音乐播放器，统一管理本地与在线曲库，提供沉浸�
 2. 点 **导入** 或直接拖入本地音乐；在 **音源** 中连接在线账号。
 3. 选择歌曲，通过底部播放器打开歌词、沉浸模式或播放队列。
 
-登录和导入歌单的详细步骤见[账号连接说明](docs/account-connections.md)。当前应用界面为中文，进阶技术文档也以中文为主。
+登录和导入歌单的详细步骤见[账号连接说明](docs/account-connections.md)。进阶技术文档目前以中文为主。
+
+源码构建已支持简体中文和英文，默认跟随系统，可在 **设置 → 语言** 中即时切换。系统权限提示和官方登录网页使用各自的语言设置。现有 **0.1.5 Release 安装包**尚未包含这次更新。详见[多语言说明](docs/localization.md)。
 
 ### 在线音源
 
 | 音源 | 连接方式与当前限制 |
 | --- | --- |
-| 网易云音乐 | 使用网易云音乐 App 扫码，或应用内官方网页登录；搜索、导入和播放取决于账号及曲目权限。 |
+| 网易云音乐 | 使用网易云音乐 App 扫码，或应用内官方网页登录；支持歌单与收藏专辑导入，搜索和播放取决于账号及曲目权限。 |
 | QQ 音乐 | 使用 QQ 或微信扫码，或应用内官方网页登录；搜索、导入和播放取决于账号及曲目权限。 |
-| Apple Music | MusicKit 授权、搜索、个人曲库／歌单导入和播放；需要完成[开发者配置](docs/apple-music-setup.md)、用户授权，并具备有效订阅及曲目播放权限。 |
+| Apple Music | MusicKit 授权、搜索、个人曲库／歌单／专辑导入和播放；大曲库逐页读取，已移除原有的 10000 首应用限制。需要完成[开发者配置](docs/apple-music-setup.md)、用户授权，并具备有效订阅及曲目播放权限。 |
 | Spotify | 官方 PKCE 登录、搜索、歌单／喜欢歌曲导入和远程播放控制；需要自己的 [Client ID 与回调配置](docs/official-platforms.md#spotify配置与播放)，播放需要 [Premium 和可用的官方设备](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback)。真实账号联调尚未完成。 |
 | 汽水音乐 | 实验入口暂时隐藏，见[调研记录](docs/soda-thirdparty-integration-2026-10-03.md)。 |
 
 网易云与 QQ 使用网页协议适配，并非稳定的官方第三方 SDK；无需另行部署兼容服务，自定义服务保留为高级选项。已有账号实测不代表所有账号、地区、订阅和歌曲均可用。
 
 当前实现无法取得 Apple Music 和 Spotify 的 PCM 采样，因此不能用其播放驱动真实示波器或频谱；音量由系统或官方播放设备控制。Apple Music 的 LRCLIB 自动歌词匹配默认开启，可在歌词菜单关闭；查询会发送歌曲资料，不附带平台登录凭证。详见[数据处理边界](DISCLAIMER.md#简体中文)。
+
+后台音频字幕对齐默认开启，可在设置关闭。首次可能下载 Apple 语言模型；音频在本机处理，临时音频在任务结束后删除，只缓存派生时间。优先使用平台 YRC／QRC 逐字时间，分析失败继续估算；缓存区分实际录音版本。Apple Music／Spotify 受保护播放仍无法分析。见[歌词对齐说明](docs/lyric-audio-alignment.md)。
 
 ### 从源码构建
 

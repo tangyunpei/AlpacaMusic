@@ -16,17 +16,17 @@ enum SpotifyAPIError: LocalizedError, Sendable, Equatable {
     var isUnauthorized: Bool { self == .unauthorized }
     var errorDescription: String? {
         switch self {
-        case .unauthorized: "Spotify 登录已失效，请重新连接账号。"
+        case .unauthorized: L10n.string("Spotify 登录已失效，请重新连接账号。")
         case .forbidden(let context): context
-        case .rateLimited(let seconds): "Spotify 请求过于频繁，请至少等待 \(Int(min(seconds.rounded(.up), 31_536_000))) 秒后重试。"
-        case .quotaExceeded(let seconds): "Spotify 开发者账号的共享调用配额已用尽，请至少等待 \(Int(min(seconds.rounded(.up), 31_536_000))) 秒后重试；切换同一开发者的 Client ID 不会重置配额。"
-        case .noActiveDevice: "Spotify 没有可控制的播放设备。请先打开官方 Spotify App 并播放一首歌，再重试。"
-        case .invalidRequest: "Spotify 请求参数不完整或无效。"
-        case .invalidResponse: "Spotify 返回的资料无法读取，请稍后重试。"
-        case .unsafeAddress: "已阻止 Spotify 请求跳转到未授权地址。"
-        case .incompleteCollection: "Spotify 未完整返回列表，本次未导入。请刷新后重试。"
-        case .network: "无法连接 Spotify，请检查网络后重试。"
-        case .http(let status): "Spotify 未完成请求（HTTP \(status)），请稍后重试。"
+        case .rateLimited(let seconds): L10n.string("Spotify 请求过于频繁，请至少等待 \(Int(min(seconds.rounded(.up), 31_536_000))) 秒后重试。")
+        case .quotaExceeded(let seconds): L10n.string("Spotify 开发者账号的共享调用配额已用尽，请至少等待 \(Int(min(seconds.rounded(.up), 31_536_000))) 秒后重试；切换同一开发者的 Client ID 不会重置配额。")
+        case .noActiveDevice: L10n.string("Spotify 没有可控制的播放设备。请先打开官方 Spotify App 并播放一首歌，再重试。")
+        case .invalidRequest: L10n.string("Spotify 请求参数不完整或无效。")
+        case .invalidResponse: L10n.string("Spotify 返回的资料无法读取，请稍后重试。")
+        case .unsafeAddress: L10n.string("已阻止 Spotify 请求跳转到未授权地址。")
+        case .incompleteCollection: L10n.string("Spotify 未完整返回列表，本次未导入。请刷新后重试。")
+        case .network: L10n.string("无法连接 Spotify，请检查网络后重试。")
+        case .http(let status): L10n.string("Spotify 未完成请求（HTTP \(String(status))），请稍后重试。")
         }
     }
 }
@@ -249,11 +249,11 @@ actor SpotifyAPIClient {
         case 403:
             let context: String
             if url.path.hasPrefix("/v1/me/player") {
-                context = "Spotify 拒绝播放控制。此功能需要 Spotify Premium、播放控制授权和可控制的官方设备；开发模式还需将账号加入应用允许名单。"
+                context = L10n.string("Spotify 拒绝播放控制。此功能需要 Spotify Premium、播放控制授权和可控制的官方设备；开发模式还需将账号加入应用允许名单。")
             } else if url.path.hasPrefix("/v1/playlists/") {
-                context = "Spotify 拒绝读取此歌单。开发模式仅支持读取自己创建或参与协作的歌单内容；还需有歌单读取授权，并将账号加入应用允许名单。"
+                context = L10n.string("Spotify 拒绝读取此歌单。开发模式仅支持读取自己创建或参与协作的歌单内容；还需有歌单读取授权，并将账号加入应用允许名单。")
             } else {
-                context = "Spotify 拒绝访问。请确认账号已加入应用允许名单、已授予所需权限，且开发模式应用所有者拥有有效 Premium。"
+                context = L10n.string("Spotify 拒绝访问。请确认账号已加入应用允许名单、已授予所需权限，且开发模式应用所有者拥有有效 Premium。")
             }
             throw SpotifyAPIError.forbidden(context)
         case 404 where url.path.hasPrefix("/v1/me/player"): throw SpotifyAPIError.noActiveDevice
@@ -379,7 +379,7 @@ private struct SpotifyTrackResponse: Decodable, Sendable {
         guard type == "track", isLocal != true, let id, !id.isEmpty, let name, !name.isEmpty else { return nil }
         let duration = max(0, Double(durationMilliseconds ?? 0) / 1_000)
         return Track(id: "spotify:" + id, title: name,
-                     artist: artists?.compactMap(\.name).joined(separator: " / ") ?? "未知歌手",
+                     artist: artists?.compactMap(\.name).joined(separator: " / ") ?? L10n.string("未知歌手"),
                      album: album?.name ?? "", duration: duration, source: .spotify, sourceID: id,
                      artworkURL: album?.images?.first?.secureURL, unavailable: isPlayable == false)
     }

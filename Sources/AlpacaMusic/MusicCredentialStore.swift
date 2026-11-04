@@ -16,7 +16,7 @@ enum MusicCredentialAccount: String, Sendable, CaseIterable {
         case .netease: self = .netease
         case .qq: self = .qq
         case .soda: self = .soda
-        default: throw MusicError.message("此来源不使用网页登录会话")
+        default: throw MusicError.message(L10n.string("此来源不使用网页登录会话"))
         }
     }
     var title: String {
@@ -46,7 +46,7 @@ actor MusicCredentialStore: MusicCredentialStoring {
         guard let data = try await access.read(account) else { return [] }
         guard data.count <= maximumSize,
               let cookies = try? JSONDecoder().decode([MusicSessionCookie].self, from: data) else {
-            throw MusicError.message("保存的登录信息无法读取，请断开后重新登录")
+            throw MusicError.message(L10n.string("保存的登录信息无法读取，请断开后重新登录"))
         }
         return DirectMusicAccess.sessionCookies(cookies, for: source)
     }
@@ -54,9 +54,9 @@ actor MusicCredentialStore: MusicCredentialStoring {
     func save(_ cookies: [MusicSessionCookie], for source: MusicSource) async throws {
         let account = try MusicCredentialAccount(source: source)
         let filtered = DirectMusicAccess.sessionCookies(cookies, for: source)
-        guard !filtered.isEmpty else { throw MusicError.message("没有可保存的登录信息，请重新登录") }
+        guard !filtered.isEmpty else { throw MusicError.message(L10n.string("没有可保存的登录信息，请重新登录")) }
         let data = try JSONEncoder().encode(filtered)
-        guard data.count <= maximumSize else { throw MusicError.message("登录信息过大，请重新登录") }
+        guard data.count <= maximumSize else { throw MusicError.message(L10n.string("登录信息过大，请重新登录")) }
         try Task.checkCancellation()
         try await access.write(data, for: account)
     }
@@ -112,7 +112,7 @@ actor KeychainMusicCredentialAccess: MusicCredentialAccess {
     }
     private func storageError(_ status: OSStatus) -> MusicError {
         // Never include cookie values or URLs in diagnostics.
-        .message("无法访问 AlpacaMusic 的登录信息（\(status)），请解锁钥匙串后重试")
+        .message(L10n.string("无法访问 AlpacaMusic 的登录信息（\(String(status))），请解锁钥匙串后重试"))
     }
 }
 

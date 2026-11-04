@@ -157,30 +157,46 @@ private func appleLibraryTrack(_ id: String, title: String = "Fixture", addedAt:
         #expect(try Data(contentsOf: location) == before)
     }
 
-    @Test func totalLibraryCapacityCountsUniqueIDsAndRejectsWholeOverLimitBatch() async throws {
-        var existing = (0..<9_999).map { appleLibraryTrack("i.\($0)") }
-        // The ceiling is shared with other platforms, not an Apple-only quota.
+    @Test func largeAppleMusicImportRefreshesAndPersistsBeyondTenThousandWithoutLosingExistingState() async throws {
+        var existing = (0..<2).map { appleLibraryTrack("i.\($0)") }
         existing[1] = Track(id: "netease:existing", title: "Other platform", artist: "Artist", album: "Album", duration: 15,
                             source: .netease, sourceID: "existing")
         let directory = try appleLibraryDirectory(tracks: existing)
         defer { try? FileManager.default.removeItem(at: directory) }
         let library = MusicLibrary(directory: directory)
-        let last = appleLibraryTrack("i.9999")
-        #expect(try await library.importAppleMusicSongsAndSave([existing[0], last, last]) == 2)
-        #expect(library.tracks.count == 10_000)
-        let location = directory.appending(path: "library-v1.json")
-        let before = try Data(contentsOf: location)
-        var changed = existing[0]
-        changed.title = "Must not update during rejected import"
-        await #expect(throws: MusicError.self) {
-            try await library.importAppleMusicSongsAndSave([changed, appleLibraryTrack("i.10000")])
-        }
-        #expect(library.tracks.count == 10_000)
-        #expect(library.tracks[0] == existing[0])
-        #expect(try Data(contentsOf: location) == before)
+        await library.load()
+        library.toggleFavorite(existing[0].id)
+        let playlist = library.createPlaylist("Keep local ordering")
+        library.addToPlaylist(playlist.id, track: existing[1])
+        library.addToPlaylist(playlist.id, track: existing[0])
+        await library.flushPersistence()
+        var refreshed = existing[0]
+        refreshed.title = "Updated large library record"
+        refreshed.addedAt = Date(timeIntervalSince1970: 9_999)
+        let additions = (2..<11_100).map { appleLibraryTrack("i.\($0)") }
+        #expect(try await library.importAppleMusicSongsAndSave([refreshed] + additions + [additions[0]]) == additions.count + 1)
+        #expect(library.tracks.count == 11_100)
+        var expected = existing + additions
+        expected[0].title = refreshed.title
+
         let restored = MusicLibrary(directory: directory)
         await restored.load()
-        #expect(restored.tracks == existing + [last])
+        #expect(restored.error == nil && restored.persistenceError == nil)
+        #expect(restored.tracks == expected)
+        #expect(restored.favorites == [existing[0].id])
+        #expect(restored.playlists.first?.trackIDs == [existing[1].id, existing[0].id])
+        #expect(restored.playlists.count == 1)
+        #expect(try !FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).contains { $0.lastPathComponent.contains(".corrupt-") })
+
+        let location = directory.appending(path: "library-v1.json")
+        let before = try Data(contentsOf: location)
+        var collision = existing[1]
+        collision.source = .appleMusic
+        await #expect(throws: MusicError.self) {
+            try await restored.importAppleMusicSongsAndSave([appleLibraryTrack("i.must-not-add"), collision])
+        }
+        #expect(restored.tracks == expected)
+        #expect(try Data(contentsOf: location) == before)
     }
 
     @Test func cancelledImportDoesNotLoadOrSubmitItsBatch() async throws {
@@ -214,7 +230,7 @@ private func appleLibraryTrack(_ id: String, title: String = "Fixture", addedAt:
 
         await #expect(throws: MusicError.self) { try await library.importAppleMusicSongsAndSave([appleLibraryTrack("i.new")]) }
         #expect(library.tracks.isEmpty && library.playlists.isEmpty)
-        #expect(library.error?.contains("无法读取") == true)
+        #expect(library.error == L10n.string("无法读取音乐资料库，请检查应用数据目录权限"))
         #expect(try Data(contentsOf: sentinel) == bytes)
         #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).count == 1)
     }
@@ -232,8 +248,8 @@ private func appleLibraryTrack(_ id: String, title: String = "Fixture", addedAt:
             _ = try await library.importAppleMusicSongsAndSave([incoming])
             Issue.record("A failed disk write must not report a successful import")
         } catch {
-            #expect(error.localizedDescription.contains("已加入当前会话"))
-            #expect(error.localizedDescription.contains("未能保存到磁盘"))
+            let persistenceError = try #require(library.persistenceError)
+            #expect(error.localizedDescription == L10n.string("Apple Music 歌曲已加入当前会话，但未能保存到磁盘。\(persistenceError)"))
         }
         #expect(library.tracks == [incoming] && library.persistenceError != nil)
         try FileManager.default.removeItem(at: location)

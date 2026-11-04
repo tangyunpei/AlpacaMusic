@@ -1,0 +1,3 @@
+// System permission prompts follow the macOS app language.
+"NSAppleMusicUsageDescription" = "Use your Apple Music account to play music and check subscription playback access.";
+"NSLocalNetworkUsageDescription" = "Connect to your configured local music services and network audio devices.";

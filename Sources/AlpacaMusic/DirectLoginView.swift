@@ -42,11 +42,11 @@ enum DirectLoginPolicy {
     static func safeOrigin(of url: URL?) -> String {
         guard let scheme = url?.scheme?.lowercased(), !scheme.isEmpty, scheme.count <= 24,
               scheme.utf8.allSatisfy({ (97...122).contains($0) || (48...57).contains($0) || [43, 45, 46].contains($0) }) else {
-            return "未知协议 / 主机"
+            return L10n.string("未知协议 / 主机")
         }
         guard let host = url?.host?.lowercased(), !host.isEmpty, host.count <= 253,
               host.utf8.allSatisfy({ (97...122).contains($0) || (48...57).contains($0) || [45, 46, 58, 91, 93].contains($0) }) else {
-            return "\(scheme)（无可显示主机）"
+            return L10n.string("\(scheme)（无可显示主机）")
         }
         return "\(scheme)://\(host)"
     }
@@ -80,12 +80,12 @@ struct DirectLoginView: View {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: source.symbol).font(.title2).padding(.top, 2)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("\(source.title)网页登录").font(.title3.weight(.semibold))
-                    Text("在官网登录或扫码后，点击「连接曲库」。")
+                    Text(L10n.string("\(source.title)网页登录")).font(.title3.weight(.semibold))
+                    Text(L10n.string("在官网登录或扫码后，点击「连接曲库」。"))
                         .font(.callout).foregroundStyle(palette.secondary)
                 }
                 Spacer()
-                Button("取消", action: cancel).keyboardShortcut(.cancelAction)
+                Button(L10n.string("取消"), action: cancel).keyboardShortcut(.cancelAction)
             }.padding(20)
             Divider()
             HStack(spacing: 10) {
@@ -95,9 +95,9 @@ struct DirectLoginView: View {
                 if browser?.isLoading == true { ProgressView().controlSize(.small) }
                 Spacer()
                 if browser?.hasPopup == true {
-                    Button("返回官网") { browser?.closePopup() }.disabled(isConnecting)
+                    Button(L10n.string("返回官网")) { browser?.closePopup() }.disabled(isConnecting)
                 }
-                Button("重新载入") { connectionError = nil; browser?.reload() }.disabled(isConnecting)
+                Button(L10n.string("重新载入")) { connectionError = nil; browser?.reload() }.disabled(isConnecting)
             }.padding(.horizontal, 20).padding(.vertical, 10)
             if let message = browser?.message {
                 Text(message).font(.callout).foregroundStyle(palette.secondary)
@@ -120,11 +120,11 @@ struct DirectLoginView: View {
                         .accessibilityIdentifier("directLoginMessage")
                 }
                 HStack(spacing: 16) {
-                    Text("仅保存验证通过的登录信息；取消会清除临时数据。")
+                    Text(L10n.string("仅保存验证通过的登录信息；取消会清除临时数据。"))
                         .font(.caption).foregroundStyle(palette.secondary)
                     Spacer()
                     if isConnecting { ProgressView().controlSize(.small) }
-                    Button(isConnecting ? "正在验证…" : "连接曲库", action: connect)
+                    Button(isConnecting ? L10n.string("正在验证…") : L10n.string("连接曲库"), action: connect)
                         .buttonStyle(.borderedProminent)
                         .disabled(isConnecting || browser?.canConnect != true)
                         .accessibilityIdentifier("directLoginConnect")
@@ -159,13 +159,13 @@ struct DirectLoginView: View {
                 let cookies = await browser.sessionCookies()
                 try Task.checkCancellation()
                 guard !browser.isClosed else { return }
-                guard !cookies.isEmpty else { throw MusicError.message("还未取得有效登录信息，请先在官网完成登录后重试") }
+                guard !cookies.isEmpty else { throw MusicError.message(L10n.string("还未取得有效登录信息，请先在官网完成登录后重试")) }
                 try await onConnect(cookies)
                 try Task.checkCancellation()
                 guard !browser.isClosed else { return }
                 didComplete = true; onComplete(); browser.invalidate(); dismiss()
             } catch is CancellationError {
-                if !Task.isCancelled && !browser.isClosed { connectionError = "连接已中断，请重试。" }
+                if !Task.isCancelled && !browser.isClosed { connectionError = L10n.string("连接已中断，请重试。") }
             }
             catch {
                 guard !browser.isClosed else { return }
@@ -252,7 +252,7 @@ final class DirectLoginBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
     func permitsNavigation(to url: URL?, isMainFrame: Bool) -> Bool {
         guard !isClosed else { return false }
         guard DirectLoginPolicy.allows(url, source: source, isMainFrame: isMainFrame) else {
-            message = "已阻止登录\(isMainFrame ? "主页面" : "子页面")跳转（\(DirectLoginPolicy.safeOrigin(of: url))）。此地址尚未获准用于当前平台登录。"
+            message = L10n.string("已阻止登录\(isMainFrame ? L10n.string("主页面") : L10n.string("子页面"))跳转（\(DirectLoginPolicy.safeOrigin(of: url))）。此地址尚未获准用于当前平台登录。")
             return false
         }
         return true
@@ -263,7 +263,7 @@ final class DirectLoginBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
         guard permitsNavigation(to: navigationResponse.response.url, isMainFrame: navigationResponse.isForMainFrame) else { return .cancel }
         guard navigationResponse.canShowMIMEType else {
-            message = "登录页面返回了无法显示的内容（\(DirectLoginPolicy.safeOrigin(of: navigationResponse.response.url))），请重新载入后重试。"
+            message = L10n.string("登录页面返回了无法显示的内容（\(DirectLoginPolicy.safeOrigin(of: navigationResponse.response.url))），请重新载入后重试。")
             return .cancel
         }
         return .allow
@@ -292,18 +292,18 @@ final class DirectLoginBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard !isClosed else { return }
         isLoading = false
         guard (error as NSError).code != NSURLErrorCancelled else { return }
-        message = "官网暂时无法载入，请检查网络后重新载入。"
+        message = L10n.string("官网暂时无法载入，请检查网络后重新载入。")
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard !isClosed else { return }
         isLoading = false; mainPageLoaded = false
-        message = "登录页面已停止，请重新载入后再试。"
+        message = L10n.string("登录页面已停止，请重新载入后再试。")
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard permitsNavigation(to: navigationAction.request.url, isMainFrame: true) else { return nil }
         guard popupWebView == nil else {
-            message = "已阻止额外登录窗口（\(DirectLoginPolicy.safeOrigin(of: navigationAction.request.url))）。请先返回官网，再使用登录入口。"; return nil
+            message = L10n.string("已阻止额外登录窗口（\(DirectLoginPolicy.safeOrigin(of: navigationAction.request.url))）。请先返回官网，再使用登录入口。"); return nil
         }
         // Preserve official window.opener behavior, within this same temporary
         // store, instead of faking an OAuth callback or launching another browser.

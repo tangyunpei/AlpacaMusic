@@ -78,23 +78,24 @@ struct LyricRevealTimeline: Equatable, Sendable {
 @MainActor enum LyricReveal {
     private struct Entry {
         var line: LyricLine
+        var context: LyricTimingContext
         var timeline: LyricRevealTimeline
     }
     private static var cache: [Entry] = []
     private static let maximumCharacters = 1_024
 
-    static func timeline(for line: LyricLine) -> LyricRevealTimeline {
+    static func timeline(for line: LyricLine, context: LyricTimingContext = .init()) -> LyricRevealTimeline {
         // Oversized input remains readable in the caller's normal Text view,
         // without copying it into thousands of animated or cached units.
         guard line.text.utf8.count <= 16_384, line.words.count <= maximumCharacters,
               line.text.count <= maximumCharacters else { return .init(units: [], isTimed: false, isEstimated: false) }
-        if let entry = cache.last, entry.line == line { return entry.timeline }
-        if let index = cache.lastIndex(where: { $0.line == line }) {
+        if let entry = cache.last, entry.line == line && entry.context == context { return entry.timeline }
+        if let index = cache.lastIndex(where: { $0.line == line && $0.context == context }) {
             let entry = cache.remove(at: index); cache.append(entry); return entry.timeline
         }
-        let result = synchronizingWords(in: makeTimeline(line))
+        let result = synchronizingWords(in: makeTimeline(line, context: context))
         if cache.count >= 96 { cache.removeFirst() }
-        cache.append(.init(line: line, timeline: result))
+        cache.append(.init(line: line, context: context, timeline: result))
         return result
     }
 
@@ -135,7 +136,7 @@ struct LyricRevealTimeline: Equatable, Sendable {
         return result
     }
 
-    private static func makeTimeline(_ line: LyricLine) -> LyricRevealTimeline {
+    private static func makeTimeline(_ line: LyricLine, context: LyricTimingContext) -> LyricRevealTimeline {
         let source = Array(line.text)
         func readable() -> LyricRevealTimeline {
             .init(units: source.map { .init(text: String($0), start: 0, end: 0, untimed: true) },
@@ -143,15 +144,15 @@ struct LyricRevealTimeline: Equatable, Sendable {
         }
         guard !source.isEmpty, let start = line.start, validTime(start) else { return readable() }
         if let end = line.end, !validTime(end) || end <= start || end - start > 120 { return readable() }
-        if let supplied = suppliedTimeline(line) { return supplied }
+        if let supplied = suppliedTimeline(line, context: context) { return supplied }
         let duration = line.end.map { $0 - start } ?? conservativeDuration(line.text, maximum: 12)
         let end = start + duration
         guard validTime(end), end > start else { return readable() }
-        let units = subdivide(line.text, start: start, end: end)
+        let units = subdivide(line.text, start: start, end: end, context: context)
         return .init(units: units, isTimed: true, isEstimated: true)
     }
 
-    private static func suppliedTimeline(_ line: LyricLine) -> LyricRevealTimeline? {
+    private static func suppliedTimeline(_ line: LyricLine, context: LyricTimingContext) -> LyricRevealTimeline? {
         guard let start = line.start, !line.words.isEmpty,
               line.words.reduce(0, { $0 + $1.text.utf8.count }) <= 32_768,
               compact(line.words.map(\.text).joined()) == compact(line.text) else { return nil }
@@ -163,7 +164,7 @@ struct LyricRevealTimeline: Equatable, Sendable {
             if let end = word.end, !validTime(end) || end < word.start || end > limit { return nil }
             previous = word.start
         }
-        var estimated = false
+        var estimated = line.wordTimingOrigin == .audioEstimate
         var units: [LyricRevealUnit] = []
         for index in line.words.indices {
             let word = line.words[index]
@@ -175,26 +176,21 @@ struct LyricRevealTimeline: Equatable, Sendable {
             guard end >= word.start else { return nil }
             let spokenCharacters = word.text.filter { !$0.isWhitespace }.count
             if spokenCharacters > 1 || (word.end == nil && next == nil && line.end == nil) { estimated = true }
-            units += subdivide(word.text, start: word.start, end: end)
+            units += subdivide(word.text, start: word.start, end: end, context: context)
         }
         let supplied = LyricRevealTimeline(units: units, isTimed: true, isEstimated: estimated)
         guard let mapped = supplied.fragments([line.text]).first else { return nil }
         return .init(units: mapped, isTimed: true, isEstimated: estimated)
     }
 
-    private static func subdivide(_ text: String, start: Double, end: Double) -> [LyricRevealUnit] {
+    private static func subdivide(_ text: String, start: Double, end: Double, context: LyricTimingContext) -> [LyricRevealUnit] {
         let characters = Array(text)
         guard !characters.isEmpty else { return [] }
         if characters.count == 1 { return [.init(text: String(characters[0]), start: start, end: end)] }
         guard end > start else { return characters.map { .init(text: String($0), start: start, end: start) } }
         let texts = characters.map(String.init)
-        let cue = LyricLine(id: 0, text: text, start: 0, end: end - start)
-        let windows = LyricEmphasis.estimatedWindows(texts: texts, line: cue)
-        // The shared estimator handles CJK, syllable-weighted Latin words,
-        // mixed scripts and punctuation pauses. Numeric-only cues use the same
-        // pronunciation weights; non-vocal symbols reveal at the supplied start.
-        let fallback = windows == nil ? numericWindows(text, duration: end - start) : nil
-        let timings = windows ?? fallback ?? [:]
+        let schedule = LyricSingingTiming.schedule(text: text, duration: end - start, context: context)
+        let timings = schedule?.characters ?? Array(repeating: nil, count: characters.count)
         var precedingEnd = start
         return characters.indices.map { index in
             if let window = timings[index] {
@@ -203,20 +199,11 @@ struct LyricRevealTimeline: Equatable, Sendable {
                 precedingEnd = ending
                 return .init(text: texts[index], start: onset, end: ending)
             }
-            return .init(text: texts[index], start: precedingEnd, end: precedingEnd)
+            // A held final vowel keeps its singing progress, but closing
+            // punctuation must not wait for the instrumental/cue tail.
+            let displayAt = min(precedingEnd, start + (schedule?.articulationEnd ?? end - start))
+            return .init(text: texts[index], start: displayAt, end: displayAt)
         }
-    }
-
-    private static func numericWindows(_ text: String, duration: Double) -> [Int: LyricAccentWindow]? {
-        guard let weights = LyricEmphasis.estimatedPronunciation(text) else { return nil }
-        let total = weights.speech.reduce(0, +)
-        guard total > 0 else { return nil }
-        var elapsed = 0.0, result: [Int: LyricAccentWindow] = [:]
-        for index in weights.speech.indices where weights.speech[index] > 0 {
-            let end = elapsed + duration * weights.speech[index] / total
-            result[index] = .init(startOffset: elapsed, endOffset: min(duration, end)); elapsed = end
-        }
-        return result
     }
 
     private static func conservativeDuration(_ text: String, maximum: Double) -> Double {

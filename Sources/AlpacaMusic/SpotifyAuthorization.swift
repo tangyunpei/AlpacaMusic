@@ -20,20 +20,20 @@ enum SpotifyAuthorizationError: Error, LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .invalidClientID: "请填写 Spotify Developer 应用的 32 位 Client ID"
-        case .randomGenerationFailed: "无法生成安全的登录请求，请重试"
-        case .alreadyAuthorizing: "Spotify 登录正在进行，请完成或取消后重试"
-        case .browserUnavailable: "无法打开默认浏览器，请检查系统的默认浏览器设置"
-        case .callbackUnavailable: "无法接收 Spotify 登录结果，本机端口 43821 可能正在使用，请关闭其他登录窗口后重试"
-        case .timeout: "Spotify 登录已超时，请重新连接"
-        case .denied: "Spotify 授权已取消"
-        case .invalidCallback: "Spotify 登录返回的验证信息不匹配，请重新连接"
-        case .invalidToken: "Spotify 返回的登录信息无效，请重新连接"
-        case .expiredSession: "Spotify 登录已失效，请重新连接"
-        case .tokenRequestFailed(let status): "Spotify 登录请求失败（HTTP \(status)），请检查 Client ID 和回调地址设置"
-        case .network(let code): "无法连接 Spotify 登录服务，请检查网络后重试（\(code)）"
-        case .credentialStorage(let status): "无法访问 Spotify 登录信息（\(status)），请解锁钥匙串后重试"
-        case .invalidStoredCredential: "保存的 Spotify 登录信息无法读取，请重新连接"
+        case .invalidClientID: L10n.string("请填写 Spotify Developer 应用的 32 位 Client ID")
+        case .randomGenerationFailed: L10n.string("无法生成安全的登录请求，请重试")
+        case .alreadyAuthorizing: L10n.string("Spotify 登录正在进行，请完成或取消后重试")
+        case .browserUnavailable: L10n.string("无法打开默认浏览器，请检查系统的默认浏览器设置")
+        case .callbackUnavailable: L10n.string("无法接收 Spotify 登录结果，本机端口 43821 可能正在使用，请关闭其他登录窗口后重试")
+        case .timeout: L10n.string("Spotify 登录已超时，请重新连接")
+        case .denied: L10n.string("Spotify 授权已取消")
+        case .invalidCallback: L10n.string("Spotify 登录返回的验证信息不匹配，请重新连接")
+        case .invalidToken: L10n.string("Spotify 返回的登录信息无效，请重新连接")
+        case .expiredSession: L10n.string("Spotify 登录已失效，请重新连接")
+        case .tokenRequestFailed(let status): L10n.string("Spotify 登录请求失败（HTTP \(String(status))），请检查 Client ID 和回调地址设置")
+        case .network(let code): L10n.string("无法连接 Spotify 登录服务，请检查网络后重试（\(String(code))）")
+        case .credentialStorage(let status): L10n.string("无法访问 Spotify 登录信息（\(String(status))），请解锁钥匙串后重试")
+        case .invalidStoredCredential: L10n.string("保存的 Spotify 登录信息无法读取，请重新连接")
         }
     }
 }

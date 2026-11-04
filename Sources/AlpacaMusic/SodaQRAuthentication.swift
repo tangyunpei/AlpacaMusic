@@ -29,7 +29,7 @@ enum SodaLoginPhase: Sendable, Equatable {
 final class SodaQRAuthentication {
     private(set) var phase: SodaLoginPhase = .idle
     private(set) var challenge: SodaQRCode?
-    private(set) var message = "正在获取二维码…"
+    private(set) var message = L10n.string("正在获取二维码…")
     private(set) var pollInterval: TimeInterval = 2.5
     private var token = ""
     private var portrait = ""
@@ -76,39 +76,39 @@ final class SodaQRAuthentication {
         // account/device identity or a client signature.
         portrait = UUID().uuidString.lowercased() + ".login"
         traceID = String(UUID().uuidString.prefix(8)).lowercased()
-        phase = .creating; message = "正在获取二维码…"
+        phase = .creating; message = L10n.string("正在获取二维码…")
         do {
             if fixtureTransport == nil {
                 let session = browserFactory()
                 // Assign before prepare so the sheet can mount the real view.
                 browserSession = session
-                message = "正在准备汽水音乐登录…"
+                message = L10n.string("正在准备汽水音乐登录…")
                 try await session.prepare()
                 try ensurePending(attempt)
                 try checkDeadline()
             }
-            message = "正在获取二维码…"
+            message = L10n.string("正在获取二维码…")
             var query = attemptQuery
             query.merge(["next": Self.api.absoluteString, "need_logo": "false", "need_short_url": "false", "is_new_login": "1"]) { _, new in new }
             let request = Self.request(path: "/passport/web/get_qrcode/", query: query)
             let (data, response) = try await send(request, attempt: attempt)
             try checkHTTP(response)
             let payload = try Self.payload(data)
-            try checkBusiness(payload, stage: "获取二维码")
+            try checkBusiness(payload, stage: L10n.string("获取二维码"))
             guard let value = payload.fields["token"] as? String, !value.isEmpty, value.utf8.count <= 4096,
                   let scan = payload.fields["qrcode_index_url"] as? String, scan.utf8.count <= 8192,
                   let url = URL(string: scan), Self.allowedRedirect(url),
                   let scanURL = Self.currentPCScanURL(from: url, token: value) else {
-                throw MusicError.message("汽水音乐未返回有效二维码，请重新获取。")
+                throw MusicError.message(L10n.string("汽水音乐未返回有效二维码，请重新获取。"))
             }
             let upstreamExpiry = Self.number(payload.fields["expire_time"]).map { Date(timeIntervalSince1970: $0) }
             let deadline = min(upstreamExpiry ?? started.addingTimeInterval(180), started.addingTimeInterval(180))
-            guard deadline > now() else { throw MusicError.message("汽水音乐返回的二维码已过期，请重新获取。") }
+            guard deadline > now() else { throw MusicError.message(L10n.string("汽水音乐返回的二维码已过期，请重新获取。")) }
             attemptDeadline = deadline
             token = value
             let code = SodaQRCode(scanURL: scanURL, expiresAt: deadline)
             challenge = code; phase = .waiting; pollInterval = 2.5
-            message = "在汽水音乐 App 打开「搜索」，点击搜索框右侧「扫一扫」，并在手机上确认。"
+            message = L10n.string("在汽水音乐 App 打开「搜索」，点击搜索框右侧「扫一扫」，并在手机上确认。")
             return code
         } catch {
             try ensureActive(attempt)
@@ -147,30 +147,30 @@ final class SodaQRAuthentication {
             try checkHTTP(response)
             let payload = try Self.payload(data)
             let errorCode = payload.errorCode
-            if errorCode == 7 { try throttled(code: "错误 7"); return nil }
+            if errorCode == 7 { try throttled(code: L10n.string("错误 7")); return nil }
             if errorCode == 2046 {
-                throw MusicError.message("抖音要求二次身份验证（错误 2046）。当前扫码接入无法完成这一步；请先在官方汽水音乐客户端完成验证，再重新扫码。")
+                throw MusicError.message(L10n.string("抖音要求二次身份验证（错误 2046）。当前扫码接入无法完成这一步；请先在官方汽水音乐客户端完成验证，再重新扫码。"))
             }
             let status = Self.status(payload.fields["status"])
             if errorCode == 2 {
                 expire()
                 throw MusicError.message(message)
             }
-            try checkBusiness(payload, stage: "扫码确认")
+            try checkBusiness(payload, stage: L10n.string("扫码确认"))
             if ["expired", "expire", "4"].contains(status) {
                 expire()
                 throw MusicError.message(message)
             }
             throttleCount = 0; pollInterval = 2.5
             switch status {
-            case "new", "1": phase = .waiting; message = "在汽水音乐 App 打开「搜索」，点击搜索框右侧「扫一扫」，并在手机上确认。"
-            case "scanned", "2": phase = .scanned; message = "已扫码，请在手机上确认登录。"
+            case "new", "1": phase = .waiting; message = L10n.string("在汽水音乐 App 打开「搜索」，点击搜索框右侧「扫一扫」，并在手机上确认。")
+            case "scanned", "2": phase = .scanned; message = L10n.string("已扫码，请在手机上确认登录。")
             case "confirmed", "success", "3":
                 try ensurePending(attempt)
                 var callback: URL?
                 if let redirect = payload.fields["redirect_url"] as? String, !redirect.isEmpty {
                     guard let url = URL(string: redirect), Self.allowedRedirect(url) else {
-                        throw MusicError.message("汽水音乐返回了不受信任的登录回调，已停止连接。")
+                        throw MusicError.message(L10n.string("汽水音乐返回了不受信任的登录回调，已停止连接。"))
                     }
                     callback = url
                 }
@@ -179,20 +179,20 @@ final class SodaQRAuthentication {
                 guard cookies.contains(where: { Self.sessionNames.contains($0.name) && $0.matches(profileURL, now: now()) }) else {
                     if let url = callback {
                         if url.host?.lowercased() != Self.api.host {
-                            throw MusicError.message("手机已确认，但汽水音乐要求跨域登录回调，当前网页接入暂未支持这一步。请关闭后重试，或使用官方客户端。")
+                            throw MusicError.message(L10n.string("手机已确认，但汽水音乐要求跨域登录回调，当前网页接入暂未支持这一步。请关闭后重试，或使用官方客户端。"))
                         }
-                        throw MusicError.message("手机已确认，但汽水音乐未返回有效会话，当前网页接入暂未支持该登录回调。请关闭后重试，或使用官方客户端。")
+                        throw MusicError.message(L10n.string("手机已确认，但汽水音乐未返回有效会话，当前网页接入暂未支持该登录回调。请关闭后重试，或使用官方客户端。"))
                     }
-                    throw MusicError.message("手机已确认，但汽水音乐未向本次扫码返回有效会话。请重新获取二维码；当前接口可能要求官方浏览器验证。")
+                    throw MusicError.message(L10n.string("手机已确认，但汽水音乐未向本次扫码返回有效会话。请重新获取二维码；当前接口可能要求官方浏览器验证。"))
                 }
                 // The official PC callback resolves success without an extra
                 // exchange. A real browser session must pass profile validation.
-                phase = .verifying; message = "正在验证汽水音乐账号…"
+                phase = .verifying; message = L10n.string("正在验证汽水音乐账号…")
                 return cookies
             case "refused", "5":
-                throw MusicError.message("本次扫码登录已取消，请重新获取二维码。")
+                throw MusicError.message(L10n.string("本次扫码登录已取消，请重新获取二维码。"))
             default:
-                throw MusicError.message("汽水音乐返回了无法识别的扫码状态，请重新获取二维码。")
+                throw MusicError.message(L10n.string("汽水音乐返回了无法识别的扫码状态，请重新获取二维码。"))
             }
             return nil
         } catch {
@@ -210,7 +210,7 @@ final class SodaQRAuthentication {
             try ensureActive(attempt)
             try await onConnect(cookies)
             try ensurePending(attempt)
-            phase = .connected; message = "已连接汽水音乐"
+            phase = .connected; message = L10n.string("已连接汽水音乐")
             closeContext()
         } catch {
             try ensureActive(attempt)
@@ -232,7 +232,7 @@ final class SodaQRAuthentication {
     }
 
     private func expire() {
-        phase = .expired; message = "二维码已过期，请重新获取。"
+        phase = .expired; message = L10n.string("二维码已过期，请重新获取。")
         closeContext()
     }
 
@@ -269,27 +269,27 @@ final class SodaQRAuthentication {
     private func throttled(code: String) throws {
         throttleCount += 1
         guard throttleCount <= 3 else {
-            throw MusicError.message("汽水音乐扫码接口持续限流（\(code)），已停止重试。请稍后重新获取二维码。")
+            throw MusicError.message(L10n.string("汽水音乐扫码接口持续限流（\(String(code))），已停止重试。请稍后重新获取二维码。"))
         }
         phase = .throttled; pollInterval = 5
-        message = "汽水音乐暂时限流（\(code)），5 秒后重试（\(throttleCount)/3）。"
+        message = L10n.string("汽水音乐暂时限流（\(String(code))），5 秒后重试（\(throttleCount)/3）。")
     }
 
     private func checkHTTP(_ response: HTTPURLResponse) throws {
         guard (200..<300).contains(response.statusCode) else {
-            throw MusicError.message("汽水音乐登录请求未完成（HTTP \(response.statusCode)），请重新获取二维码。")
+            throw MusicError.message(L10n.string("汽水音乐登录请求未完成（HTTP \(String(response.statusCode))），请重新获取二维码。"))
         }
     }
 
     private func checkBusiness(_ payload: LoginPayload, stage: String) throws {
         guard payload.errorCode != 0 || payload.wrapperFailure else { return }
         if payload.errorCode == 2046 {
-            throw MusicError.message("抖音要求二次身份验证（错误 2046）。请先在官方汽水音乐客户端完成验证，再重新扫码。")
+            throw MusicError.message(L10n.string("抖音要求二次身份验证（错误 2046）。请先在官方汽水音乐客户端完成验证，再重新扫码。"))
         }
         let details = safePlatformDescription(payload)
-        let explanation = details.map { "平台说明：\($0)" } ?? "平台未提供具体原因。"
-        let codeLabel = payload.errorCode == 0 ? "" : "（错误 \(payload.errorCode)）"
-        throw MusicError.message("汽水音乐未完成\(stage)\(codeLabel)。\(explanation)\n请重新获取二维码。")
+        let explanation = details.map { L10n.string("平台说明：\($0)") } ?? L10n.string("平台未提供具体原因。")
+        let codeLabel = payload.errorCode == 0 ? "" : L10n.string("（错误 \(String(payload.errorCode))）")
+        throw MusicError.message(L10n.string("汽水音乐未完成\(stage)\(codeLabel)。\(explanation)\n请重新获取二维码。"))
     }
 
     /// Show only a bounded, scrubbed human-readable platform explanation. Do
@@ -300,7 +300,7 @@ final class SodaQRAuthentication {
         for raw in payload.descriptions {
             var text = String(raw.prefix(4096))
             for secret in secrets.filter({ !$0.isEmpty }).sorted(by: { $0.count > $1.count }) {
-                text = text.replacingOccurrences(of: secret, with: "[已隐藏]")
+                text = text.replacingOccurrences(of: secret, with: L10n.string("[已隐藏]"))
             }
             for pattern in [
                 #"(?i)https?://[^\s<>"'，。；（）]+"#,
@@ -309,7 +309,7 @@ final class SodaQRAuthentication {
                 #"(?<![0-9])(?:\+?86[- ]?)?1[3-9][0-9]{9}(?![0-9])"#,
                 #"[A-Za-z0-9_+/=-]{24,}"#
             ] {
-                text = text.replacingOccurrences(of: pattern, with: "[已隐藏]", options: .regularExpression)
+                text = text.replacingOccurrences(of: pattern, with: L10n.string("[已隐藏]"), options: .regularExpression)
             }
             text = String(text.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : String($0) }.joined())
             text = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -323,7 +323,7 @@ final class SodaQRAuthentication {
         try ensurePending(attempt)
         try checkDeadline()
         guard let url = input.url, Self.allowedRedirect(url), url.host?.lowercased() == Self.api.host,
-              url.path.hasPrefix("/passport/") else { throw MusicError.message("已阻止非官方登录请求。") }
+              url.path.hasPrefix("/passport/") else { throw MusicError.message(L10n.string("已阻止非官方登录请求。")) }
         var request = input
         request.httpShouldHandleCookies = false
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -349,14 +349,14 @@ final class SodaQRAuthentication {
         if let fixtureTransport {
             result = try await fixtureTransport(request)
         } else {
-            guard let browserSession else { throw MusicError.message("汽水音乐登录页面已关闭，请重新获取二维码。") }
+            guard let browserSession else { throw MusicError.message(L10n.string("汽水音乐登录页面已关闭，请重新获取二维码。")) }
             result = try await browserSession.send(request)
         }
         try ensurePending(attempt)
         try checkDeadline()
         let (data, response) = result
         guard data.count <= 512 * 1024, response.url?.scheme == "https", response.url?.host?.lowercased() == url.host?.lowercased(),
-              response.url?.path == url.path else { throw MusicError.message("汽水音乐登录响应无效，已停止连接。") }
+              response.url?.path == url.path else { throw MusicError.message(L10n.string("汽水音乐登录响应无效，已停止连接。")) }
         if fixtureTransport != nil {
             receiveFixtureCookies(response, url: url)
         } else {
@@ -453,7 +453,7 @@ final class SodaQRAuthentication {
 
     private static func payload(_ data: Data) throws -> LoginPayload {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw MusicError.message("汽水音乐未返回有效登录数据，请重新获取二维码。")
+            throw MusicError.message(L10n.string("汽水音乐未返回有效登录数据，请重新获取二维码。"))
         }
         let wrapped = root["data"] as? [String: Any]
         let fields = wrapped ?? root
@@ -492,10 +492,10 @@ final class SodaQRAuthentication {
     private static func businessCode(_ payload: [String: Any]) throws -> Int {
         guard let value = payload["error_code"] else { return 0 }
         if let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
-            throw MusicError.message("汽水音乐返回了无效的登录错误码，请重新获取二维码。")
+            throw MusicError.message(L10n.string("汽水音乐返回了无效的登录错误码，请重新获取二维码。"))
         }
         guard let parsed = Self.number(value), parsed >= Double(Int32.min), parsed <= Double(Int32.max), parsed.rounded(.towardZero) == parsed else {
-            throw MusicError.message("汽水音乐返回了无效的登录错误码，请重新获取二维码。")
+            throw MusicError.message(L10n.string("汽水音乐返回了无效的登录错误码，请重新获取二维码。"))
         }
         return Int(parsed)
     }

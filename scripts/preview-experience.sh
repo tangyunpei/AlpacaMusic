@@ -34,9 +34,10 @@ cat > "$alpaca_qa_project/Package.swift" <<'SWIFT'
 import PackageDescription
 let package = Package(
     name: "AlpacaExperienceQA",
+    defaultLocalization: "en",
     platforms: [.macOS("26.0")],
     products: [.executable(name: "AlpacaExperienceQA", targets: ["AlpacaExperienceQA"])],
-    targets: [.executableTarget(name: "AlpacaExperienceQA", resources: [.copy("Resources")],
+    targets: [.executableTarget(name: "AlpacaExperienceQA", resources: [.copy("Resources"), .process("Localization")],
                                swiftSettings: [.unsafeFlags(["-warnings-as-errors"])])],
     swiftLanguageModes: [.v6]
 )

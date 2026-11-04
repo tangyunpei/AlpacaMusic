@@ -41,12 +41,23 @@ struct RemoteMusicPlaylist: Identifiable, Sendable, Equatable {
     var source: MusicSource
 }
 
+struct RemoteMusicAlbum: Identifiable, Sendable, Equatable {
+    var id: String
+    var name: String
+    var artist: String = ""
+    var trackCount: Int? = nil
+    var artworkURL: URL? = nil
+    var source: MusicSource
+}
+
 protocol DirectMusicProvider: Sendable {
     var source: MusicSource { get }
     func profile(cookies: [MusicSessionCookie]) async throws -> MusicAccountProfile
     func search(_ query: String, cookies: [MusicSessionCookie]) async throws -> [Track]
     func playlists(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicPlaylist]
     func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie]) async throws -> [Track]
+    func albums(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicAlbum]
+    func tracks(in album: RemoteMusicAlbum, cookies: [MusicSessionCookie]) async throws -> [Track]
     /// Refresh expiring share metadata before opening media. Most platforms
     /// resolve URLs separately and keep the imported track unchanged.
     func preparePlayback(_ track: Track, cookies: [MusicSessionCookie]) async throws -> Track
@@ -54,11 +65,22 @@ protocol DirectMusicProvider: Sendable {
     func lyrics(_ track: Track, cookies: [MusicSessionCookie]) async throws -> LyricsPayload?
 }
 extension DirectMusicProvider {
+    func albums(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicAlbum] {
+        throw MusicError.message(L10n.string("此音源暂不支持专辑导入。"))
+    }
+    func tracks(in album: RemoteMusicAlbum, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        throw MusicError.message(L10n.string("此音源暂不支持专辑导入。"))
+    }
     func preparePlayback(_ track: Track, cookies: [MusicSessionCookie]) async throws -> Track { track }
     func lyrics(_ track: Track, cookies: [MusicSessionCookie]) async throws -> LyricsPayload? { nil }
 }
 
 struct LyricsSessionScope: Hashable, Sendable {
+    let source: MusicSource
+    let generation: UUID
+}
+
+struct LibrarySessionScope: Sendable {
     let source: MusicSource
     let generation: UUID
 }
@@ -115,11 +137,11 @@ struct NativeMusicHTTP: Sendable {
             let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
             defer { session.invalidateAndCancel() }
             let (bytes, response) = try await session.bytes(for: request)
-            guard let response = response as? HTTPURLResponse else { throw MusicError.message("音乐平台返回了无效响应") }
-            guard response.expectedContentLength <= 8 * 1024 * 1024 else { throw MusicError.message("音乐平台响应过大") }
+            guard let response = response as? HTTPURLResponse else { throw MusicError.message(L10n.string("音乐平台返回了无效响应")) }
+            guard response.expectedContentLength <= 8 * 1024 * 1024 else { throw MusicError.message(L10n.string("音乐平台响应过大")) }
             var data = Data()
             for try await byte in bytes {
-                guard data.count < 8 * 1024 * 1024 else { throw MusicError.message("音乐平台响应过大") }
+                guard data.count < 8 * 1024 * 1024 else { throw MusicError.message(L10n.string("音乐平台响应过大")) }
                 data.append(byte)
             }
             return (data, response)
@@ -127,7 +149,7 @@ struct NativeMusicHTTP: Sendable {
     }
     func data(for request: URLRequest, source: MusicSource, cookies: [MusicSessionCookie]) async throws -> Data {
         guard let url = request.url, url.scheme == "https", url.user == nil, url.password == nil,
-              let host = url.host, DirectMusicAccess.allowedAPIHost(host, source: source) else { throw MusicError.message("已阻止非音乐平台的连接") }
+              let host = url.host, DirectMusicAccess.allowedAPIHost(host, source: source) else { throw MusicError.message(L10n.string("已阻止非音乐平台的连接")) }
         var request = request
         request.httpShouldHandleCookies = false
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -136,21 +158,21 @@ struct NativeMusicHTTP: Sendable {
         do {
             let (data, response) = try await transport(request)
             try Task.checkCancellation()
-            guard data.count <= 8 * 1024 * 1024 else { throw MusicError.message("音乐平台响应过大") }
+            guard data.count <= 8 * 1024 * 1024 else { throw MusicError.message(L10n.string("音乐平台响应过大")) }
             guard response.url?.host == host else {
-                throw MusicError.message("已阻止偏离\(source.title)原请求地址的响应（HTTP \(response.statusCode)）")
+                throw MusicError.message(L10n.string("已阻止偏离\(source.title)原请求地址的响应（HTTP \(String(response.statusCode))）"))
             }
             guard (200..<300).contains(response.statusCode) else {
                 let reason: String
                 switch response.statusCode {
-                case 401: reason = "请求需要有效登录，请在音源页重新登录后重试"
-                case 403: reason = "平台拒绝访问，请在官网确认账号权限或验证提示；具体原因未确认"
-                case 404: reason = "请求的接口或资源未找到，具体原因未确认"
-                case 429: reason = "请求过于频繁，请稍后重试"
-                case 500..<600: reason = "平台服务暂时异常，请稍后重试"
-                default: reason = "平台未能完成请求，请稍后重试"
+                case 401: reason = L10n.string("请求需要有效登录，请在音源页重新登录后重试")
+                case 403: reason = L10n.string("平台拒绝访问，请在官网确认账号权限或验证提示；具体原因未确认")
+                case 404: reason = L10n.string("请求的接口或资源未找到，具体原因未确认")
+                case 429: reason = L10n.string("请求过于频繁，请稍后重试")
+                case 500..<600: reason = L10n.string("平台服务暂时异常，请稍后重试")
+                default: reason = L10n.string("平台未能完成请求，请稍后重试")
                 }
-                throw MusicError.message("\(source.title)：\(reason)（HTTP \(response.statusCode)）")
+                throw MusicError.message(L10n.string("\(source.title)：\(reason)（HTTP \(String(response.statusCode))）"))
             }
             return data
         } catch is CancellationError { throw CancellationError() }
@@ -159,18 +181,18 @@ struct NativeMusicHTTP: Sendable {
             if error.code == .cancelled { throw CancellationError() }
             let reason: String
             switch error.code {
-            case .timedOut: reason = "请求超时，请重试"
-            case .notConnectedToInternet: reason = "当前没有网络连接"
-            case .networkConnectionLost: reason = "网络连接中断，请重试"
-            case .cannotFindHost, .dnsLookupFailed: reason = "无法解析平台服务器地址，请检查网络或 DNS"
-            case .cannotConnectToHost: reason = "无法连接平台服务器"
+            case .timedOut: reason = L10n.string("请求超时，请重试")
+            case .notConnectedToInternet: reason = L10n.string("当前没有网络连接")
+            case .networkConnectionLost: reason = L10n.string("网络连接中断，请重试")
+            case .cannotFindHost, .dnsLookupFailed: reason = L10n.string("无法解析平台服务器地址，请检查网络或 DNS")
+            case .cannotConnectToHost: reason = L10n.string("无法连接平台服务器")
             case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid:
-                reason = "无法建立可信的 HTTPS 连接，请检查系统时间和网络"
-            default: reason = "网络请求失败，请重试"
+                reason = L10n.string("无法建立可信的 HTTPS 连接，请检查系统时间和网络")
+            default: reason = L10n.string("网络请求失败，请重试")
             }
-            throw MusicError.message("\(source.title)：\(reason)（网络错误 \(error.code.rawValue)）")
+            throw MusicError.message(L10n.string("\(source.title)：\(reason)（网络错误 \(String(error.code.rawValue))）"))
         }
-        catch { throw MusicError.message("无法连接\(source.title)，请检查网络后重试") }
+        catch { throw MusicError.message(L10n.string("无法连接\(source.title)，请检查网络后重试")) }
     }
 }
 

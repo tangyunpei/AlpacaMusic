@@ -10,6 +10,7 @@ struct LyricProgressText: View {
     var position: Double
     var appearance: Appearance = .highlight
     var reduceMotion = false
+    var timingContext: LyricTimingContext = .init()
 
     var body: some View {
         Text(attributedText)
@@ -17,7 +18,7 @@ struct LyricProgressText: View {
     }
 
     private var attributedText: AttributedString {
-        let timeline = LyricReveal.timeline(for: line)
+        let timeline = LyricReveal.timeline(for: line, context: timingContext)
         guard timeline.isTimed, position.isFinite,
               let units = timeline.fragments([text]).first,
               units.count == text.count else {
