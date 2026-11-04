@@ -26,6 +26,8 @@ import Testing
     var libraryGate: CheckedContinuation<Void, Never>?
     var delaysLibrary = false
     var libraryRequests = 0
+    var albumTrackRequests: [String] = []
+    var ignoresLibraryValidation = false
     var playError: (any Error)?
     func requestAuthorization() async -> MusicAuthorization.Status {
         authorizationRequests += 1
@@ -49,6 +51,20 @@ import Testing
     }
     func libraryTracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void) async throws -> [Track] {
         try await librarySongs(validate: validate)
+    }
+    func libraryAlbums(validate: @MainActor () throws -> Void) async throws -> [AppleMusicLibraryAlbum] {
+        libraryRequests += 1
+        if delaysLibrary { await withCheckedContinuation { libraryGate = $0 } }
+        if !ignoresLibraryValidation { try validate() }
+        return [.init(id: "l.album", name: "Saved Album", artistName: "Album Artist", trackCount: 1)]
+    }
+    func libraryTracks(in album: AppleMusicLibraryAlbum, validate: @MainActor () throws -> Void) async throws -> [Track] {
+        libraryRequests += 1; albumTrackRequests.append(album.id)
+        if delaysLibrary { await withCheckedContinuation { libraryGate = $0 } }
+        if !ignoresLibraryValidation { try validate() }
+        return [Track(id: "appleMusic:library:i.albumSong", title: "Saved Song", artist: album.artistName,
+                      album: album.name, duration: 10, source: .appleMusic, sourceID: "i.albumSong",
+                      appleMusicResourceKind: .librarySong)]
     }
     func setSession(_ id: UUID?) {
         session = id
@@ -105,7 +121,7 @@ private let configuredMusic = AppleMusicConfiguration(enabledInBuild: true, expe
         let adapter = StubAppleMusic(); adapter.authorization = .denied
         let service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
         await service.refresh(); #expect(adapter.subscriptionRequests == 0)
-        await service.connect(); #expect(!service.isEnabled); #expect(service.authorizationDescription == "授权被拒绝")
+        await service.connect(); #expect(!service.isEnabled); #expect(service.authorizationDescription == L10n.string("授权被拒绝"))
         #expect(adapter.subscriptionRequests == 0)
         adapter.authorization = .authorized; await service.connect()
         #expect(service.isEnabled); #expect(service.error == nil); #expect(adapter.authorizationRequests == 2)
@@ -149,6 +165,64 @@ private let configuredMusic = AppleMusicConfiguration(enabledInBuild: true, expe
         let cancelled = Task { try await service.librarySongs() }
         try await waitFor { adapter.libraryGate != nil }; cancelled.cancel(); adapter.libraryGate?.resume()
         await #expect(throws: CancellationError.self) { try await cancelled.value }
+    }
+    @Test(arguments: ["unconfigured", "disconnected", "unauthorized"])
+    func albumReadsRequireAccessBeforeCallingAdapter(_ state: String) async throws {
+        let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
+        let adapter = StubAppleMusic()
+        var configuration = configuredMusic
+        if state == "unconfigured" { configuration.enabledInBuild = false }
+        let service = AppleMusicService(defaults: defaults, configuration: configuration, adapter: adapter)
+        if state == "unauthorized" { await service.connect(); adapter.authorization = .denied }
+        let album = AppleMusicLibraryAlbum(id: "l.album", name: "Saved Album")
+        await #expect(throws: MusicError.self) { try await service.libraryAlbums() }
+        await #expect(throws: MusicError.self) { try await service.libraryTracks(in: album) }
+        #expect(adapter.libraryRequests == 0 && adapter.albumTrackRequests.isEmpty)
+    }
+    @Test func connectedAlbumListAndTracksPreserveAlbumIdentityAndLibraryNamespace() async throws {
+        let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
+        let adapter = StubAppleMusic()
+        let service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
+        await service.connect()
+        let albums = try await service.libraryAlbums()
+        let album = try #require(albums.first)
+        #expect(album.id == "l.album" && album.name == "Saved Album" && album.trackCount == 1)
+        let tracks = try await service.libraryTracks(in: album)
+        #expect(tracks.map(\.id) == ["appleMusic:library:i.albumSong"])
+        #expect(tracks.first?.appleMusicResourceKind == .librarySong)
+        #expect(tracks.first?.album == album.name && tracks.first?.artist == album.artistName)
+        #expect(adapter.libraryRequests == 2 && adapter.albumTrackRequests == [album.id])
+    }
+    @Test(arguments: ["albums", "tracks"])
+    func albumReadsRejectDisconnectedReconnectedAndCancelledLateResults(_ operation: String) async throws {
+        for interruption in ["disconnect", "reconnect", "cancel"] {
+            let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
+            let adapter = StubAppleMusic()
+            let service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
+            await service.connect(); let originalSession = service.librarySessionID
+            adapter.delaysLibrary = true
+            // Even an adapter that returns stale results without validating its
+            // callback cannot bypass the service's final session check.
+            adapter.ignoresLibraryValidation = true
+            let album = AppleMusicLibraryAlbum(id: "l.album", name: "Saved Album")
+            let pending = Task {
+                if operation == "albums" { _ = try await service.libraryAlbums() }
+                else { _ = try await service.libraryTracks(in: album) }
+            }
+            try await waitFor { adapter.libraryGate != nil }
+            let gate = try #require(adapter.libraryGate)
+            if interruption == "cancel" { pending.cancel() }
+            else {
+                service.disconnect()
+                if interruption == "reconnect" { await service.connect() }
+            }
+            gate.resume()
+            await #expect(throws: CancellationError.self) { try await pending.value }
+            #expect(adapter.libraryRequests == 1)
+            if interruption == "cancel" { #expect(service.librarySessionID == originalSession) }
+            else { #expect(service.librarySessionID != originalSession) }
+            #expect(service.isEnabled == (interruption != "disconnect"))
+        }
     }
     @Test func musicKitUsesRealStateAndNeverFabricatesSpectrumOrVolume() async throws {
         let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }

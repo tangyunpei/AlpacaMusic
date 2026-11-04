@@ -1,7 +1,7 @@
 import SwiftUI
 import Observation
 
-enum Destination: Hashable { case home, library, favorites, sources, playlist(String) }
+enum Destination: Hashable { case home, library, albums, favorites, sources, playlist(String), album(String) }
 enum AppSheet: String, Identifiable { case url, playlist, visual, addToPlaylist, appleMusicSetup, qqOfficialPlayback; var id: String { rawValue } }
 
 @MainActor @Observable
@@ -13,6 +13,12 @@ final class AppModel {
     let spotify: SpotifyService
     let accounts: ConnectedMusicAccounts
     let lyrics: LyricsController
+    var language: AppLanguage {
+        didSet {
+            preferences.set(language.rawValue, forKey: L10n.preferenceKey)
+            L10n.setLanguage(language)
+        }
+    }
     var destination: Destination = .home
     var query = ""
     var searchTerm = ""
@@ -27,6 +33,12 @@ final class AppModel {
     var queueOpen = false
     var immersive = false
     var lyricsVisible = true
+    var automaticLyricAudioAlignment: Bool {
+        didSet {
+            preferences.set(automaticLyricAudioAlignment, forKey: "lyrics-audio-alignment")
+            lyrics.setAutomaticAudioAlignment(automaticLyricAudioAlignment)
+        }
+    }
     var automaticAppleMusicLyrics: Bool {
         didSet {
             preferences.set(automaticAppleMusicLyrics, forKey: "apple-music-online-lyrics")
@@ -58,6 +70,7 @@ final class AppModel {
     init(directory suppliedDirectory: URL? = nil, preferences suppliedDefaults: UserDefaults? = nil, ephemeralAccounts: Bool? = nil) {
         let directory = suppliedDirectory ?? ProcessInfo.processInfo.environment["ALPACA_DATA_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         preferences = suppliedDefaults ?? ProcessInfo.processInfo.environment["ALPACA_PREFERENCES_DOMAIN"].flatMap(UserDefaults.init(suiteName:)) ?? .standard
+        language = L10n.preference(in: preferences)
         sodaPublicSearch = preferences.object(forKey: "soda-public-search") as? Bool ?? true
         library = MusicLibrary(directory: directory)
         let isolatedAccounts = ephemeralAccounts ?? (ProcessInfo.processInfo.environment["ALPACA_EPHEMERAL_ACCOUNTS"] == "1")
@@ -65,7 +78,9 @@ final class AppModel {
         accounts = ConnectedMusicAccounts(client: native)
         let automaticLyrics = preferences.object(forKey: "apple-music-online-lyrics") as? Bool ?? true
         automaticAppleMusicLyrics = automaticLyrics
-        lyrics = LyricsController(client: native, directory: directory, automaticAppleMusicLookup: automaticLyrics)
+        let audioAlignment = preferences.object(forKey: "lyrics-audio-alignment") as? Bool ?? true
+        automaticLyricAudioAlignment = audioAlignment
+        lyrics = LyricsController(client: native, directory: directory, automaticAppleMusicLookup: automaticLyrics, automaticAudioAlignment: audioAlignment)
         visualMode = preferences.string(forKey: "visualization-mode").flatMap(VisualizationMode.init(rawValue:)) ?? .pointCloud
         lyricPresentation = preferences.string(forKey: "lyrics-presentation").flatMap(LyricPresentationMode.init(rawValue:)) ?? .scroll
         sourceService = SourceService(native: native)
@@ -81,6 +96,17 @@ final class AppModel {
     var selectedPlaylist: MusicPlaylist? {
         if case let .playlist(id) = destination { return library.playlists.first { $0.id == id } }
         return nil
+    }
+    var selectedAlbum: MusicAlbum? {
+        if case let .album(id) = destination { return library.album(id: id) }
+        return nil
+    }
+    var albumTracks: [Track] {
+        selectedAlbum.map { library.tracks(withIDs: $0.trackIDs) } ?? []
+    }
+    var visibleAlbums: [MusicAlbum] {
+        let albums = library.albums
+        return sourceFilter.map { source in albums.filter { $0.source == source } } ?? albums
     }
     private struct VisibleTrackKey: Equatable {
         let destination: Destination
@@ -101,6 +127,7 @@ final class AppModel {
             switch destination {
             case .favorites: base = library.tracks.filter { library.favorites.contains($0.id) }
             case .playlist: base = selectedPlaylist.map { library.tracks(withIDs: $0.trackIDs) } ?? []
+            case .album: base = albumTracks
             default: base = library.tracks
             }
         }
@@ -109,8 +136,8 @@ final class AppModel {
         return result
     }
     var pageTitle: String {
-        if !searchTerm.isEmpty { return "搜索「\(searchTerm)」" }
-        switch destination { case .home: return "此刻"; case .library: return "我的音乐库"; case .favorites: return "喜欢的音乐"; case .sources: return "音源"; case .playlist: return selectedPlaylist?.name ?? "我的歌单" }
+        if !searchTerm.isEmpty { return L10n.string("搜索「\(searchTerm)」") }
+        switch destination { case .home: return L10n.string("此刻"); case .library: return L10n.string("我的音乐库"); case .albums: return L10n.string("专辑库"); case .favorites: return L10n.string("喜欢的音乐"); case .sources: return L10n.string("音源"); case .playlist: return selectedPlaylist?.name ?? L10n.string("我的歌单"); case .album: return selectedAlbum?.name ?? L10n.string("专辑") }
     }
 
     func load() async {
@@ -130,17 +157,24 @@ final class AppModel {
         destination = target; immersive = false
     }
     func beginLyricsImport() {
-        guard let track = player.current else { notify("先选择一首歌曲，再为它导入歌词。"); return }
+        guard let track = player.current else { notify(L10n.string("先选择一首歌曲，再为它导入歌词。")); return }
         lyricImportTarget = track; showLyricsImporter = true
     }
     func revealLyrics() { lyricsVisible = true; immersive = true }
     func beginImport(folder: Bool) { importFolder = folder; showImporter = true }
     func importURLs(_ urls: [URL]) async {
         let result = await library.importURLs(urls)
-        notify(result.errors.isEmpty ? "已导入 \(result.tracks.count) 首音乐" : "已导入 \(result.tracks.count) 首。\(result.errors.first ?? "")")
+        notify(result.errors.isEmpty ? L10n.string("已导入 \(result.tracks.count) 首音乐") : L10n.string("已导入 \(result.tracks.count) 首。\(result.errors.first ?? "")"))
     }
     func play(_ track: Track, context: [Track]? = nil) {
         Task { await player.play(track, context: context ?? visibleTracks) }
+    }
+    func playAlbum() async {
+        let tracks = albumTracks
+        guard let first = tracks.first(where: { !$0.unavailable }) else { return }
+        if player.shuffle { player.toggleShuffle() }
+        if player.repeatMode == .one { player.cycleRepeat() }
+        await player.play(first, context: tracks)
     }
     func showOfficialQQPlayback(_ track: Track) {
         guard QQOfficialPlaybackPolicy.detailURL(for: track) != nil else { return }
@@ -177,7 +211,7 @@ final class AppModel {
             let results = await configuredResults + officialResults
             guard !Task.isCancelled else { return }
             remoteResults = results.flatMap(\.tracks)
-            searchErrors = results.compactMap { result in result.error.map { "\(result.source.title)：\($0)" } }
+            searchErrors = results.compactMap { result in result.error.map { L10n.string("\(result.source.title)：\($0)") } }
             searching = false
         }
     }
@@ -186,21 +220,21 @@ final class AppModel {
         if player.current?.source == source { player.pause() }
         searchTask?.cancel(); searching = false; remoteResults.removeAll { $0.source == source }
         await accounts.disconnect(source)
-        notify(accounts.state(source).error ?? "已退出\(source.title)，已导入的歌单保留")
+        notify(accounts.state(source).error ?? L10n.string("已退出\(source.title)，已导入的歌单保留"))
     }
     func disconnectAppleMusic() {
         if player.current?.source == .appleMusic { player.pause() }
         appleMusic.disconnect()
         searchTask?.cancel(); searching = false
         remoteResults.removeAll { $0.source == .appleMusic }
-        notify("Apple Music 已停用。系统授权可在系统设置中管理。")
+        notify(L10n.string("Apple Music 已停用。系统授权可在系统设置中管理。"))
     }
-    func remove(_ track: Track) { player.removeFromQueue(track.id); library.removeTrack(track.id); notify("已从音乐库移除，原文件保留") }
+    func remove(_ track: Track) { player.removeFromQueue(track.id); library.removeTrack(track.id); notify(L10n.string("已从音乐库移除，原文件保留")) }
     func addLink(title: String, address: String) throws {
-        guard let url = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil, url.user == nil, url.password == nil else { throw MusicError.message("请输入不含账号密码的 HTTP 或 HTTPS 音频链接") }
+        guard let url = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil, url.user == nil, url.password == nil else { throw MusicError.message(L10n.string("请输入不含账号密码的 HTTP 或 HTTPS 音频链接")) }
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let track = Track(id: "url-\(UUID().uuidString)", title: clean.isEmpty ? (url.host ?? "网络音频") : clean, artist: "网络音频", album: "我的链接", duration: 0, source: .url, url: url)
-        library.addTracks([track]); navigate(.library); sheet = nil; notify("音频链接已加入音乐库")
+        let track = Track(id: "url-\(UUID().uuidString)", title: clean.isEmpty ? (url.host ?? L10n.string("网络音频")) : clean, artist: L10n.string("网络音频"), album: L10n.string("我的链接"), duration: 0, source: .url, url: url)
+        library.addTracks([track]); navigate(.library); sheet = nil; notify(L10n.string("音频链接已加入音乐库"))
     }
     func saveSource(_ config: SourceConfiguration) throws {
         let next = library.sources.map { $0.id == config.id ? config : $0 }
@@ -208,7 +242,7 @@ final class AppModel {
     }
     func savePreset(_ name: String) {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines); guard !clean.isEmpty else { return }
-        presets.removeAll { $0.name == clean }; presets.append(.init(name: clean, settings: visual)); if presets.count > 12 { presets.removeFirst() }; notify("视觉预设已保存")
+        presets.removeAll { $0.name == clean }; presets.append(.init(name: clean, settings: visual)); if presets.count > 12 { presets.removeFirst() }; notify(L10n.string("视觉预设已保存"))
     }
     func notify(_ message: String) {
         noticeTask?.cancel(); notice = message
@@ -225,6 +259,7 @@ extension VisualSettings {
         var v = self
         func clamp(_ value: Float, _ low: Float, _ high: Float, _ fallback: Float) -> Float { value.isFinite ? min(high, max(low, value)) : fallback }
         v.density = [96, 160, 224].contains(v.density) ? v.density : 160
+        v.abstraction = clamp(v.abstraction, 0, 1, 0.2)
         v.pointSize = clamp(v.pointSize, 0.5, 4, 1.8); v.depth = clamp(v.depth, 0, 1, 0.35)
         v.bounce = clamp(v.bounce, 0, 0.4, 0.16); v.speed = clamp(v.speed, 0.5, 8, 3.5)
         v.frequency = clamp(v.frequency, 1, 10, 4); v.idle = clamp(v.idle, 0, 0.05, 0.012)

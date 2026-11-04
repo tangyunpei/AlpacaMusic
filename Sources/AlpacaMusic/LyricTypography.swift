@@ -69,6 +69,7 @@ struct LyricStageFrame {
         var duration: Double
         var cueStart: Double?
         var cueEnd: Double?
+        var timingContext: LyricTimingContext
         var seed: UInt64
         var width: CGFloat
         var height: CGFloat
@@ -146,16 +147,16 @@ struct LyricStageFrame {
     /// Current semantic text only. Decorative echoes and the previous sentence
     /// live in frame(), so content/containment checks need not special-case them.
     static func layout(line: LyricLine, index: Int, in size: CGSize, position: Double, reduceMotion: Bool,
-                       audio: VisualizationAudio = .init()) -> [LyricTypeFragment] {
+                       audio: VisualizationAudio = .init(), context: LyricTimingContext = .init()) -> [LyricTypeFragment] {
         var direction = director(line: line, index: index)
         direction.scene = scene(for: index)
-        return layout(line: line, index: index, direction: direction, in: size, position: position, reduceMotion: reduceMotion, audio: audio)
+        return layout(line: line, index: index, direction: direction, in: size, position: position, reduceMotion: reduceMotion, audio: audio, context: context)
     }
 
     private static func layout(line: LyricLine, index: Int, direction: LyricDirection, in size: CGSize, position: Double,
-                               reduceMotion: Bool, audio: VisualizationAudio, posePosition: Double? = nil) -> [LyricTypeFragment] {
+                               reduceMotion: Bool, audio: VisualizationAudio, context: LyricTimingContext = .init(), posePosition: Double? = nil) -> [LyricTypeFragment] {
         guard size.width.isFinite, size.height.isFinite, size.width > 1, size.height > 1, !line.text.isEmpty else { return [] }
-        let plan = plan(line: line, direction: direction, index: index, size: size)
+        let plan = plan(line: line, direction: direction, index: index, size: size, context: context)
         let phase = reduceMotion ? 0.5 : progress(line: line, position: posePosition ?? position)
         var pieces = pose(plan, phase: phase, audio: reduceMotion ? .init() : audio, stationary: reduceMotion)
         for i in pieces.indices {
@@ -202,9 +203,10 @@ struct LyricStageFrame {
                 let line = document.lines[index]
                 guard let end = line.end, end.isFinite, position >= end,
                       position - end < LyricEmphasis.maximumTailDuration else { continue }
+                let context = LyricSingingTiming.context(for: index, in: document.lines)
                 let continuing = layout(line: line, index: index, direction: director(line: line, index: index),
-                                        in: size, position: position, reduceMotion: false, audio: .init(), posePosition: end)
-                let selectedIDs = plan(line: line, direction: director(line: line, index: index), index: index, size: size).accents.keys.sorted()
+                                        in: size, position: position, reduceMotion: false, audio: .init(), context: context, posePosition: end)
+                let selectedIDs = plan(line: line, direction: director(line: line, index: index), index: index, size: size, context: context).accents.keys.sorted()
                 for var piece in continuing where piece.accent != nil {
                     piece.role = .completingAccent
                     piece.id += 3_000_000 + index * 256
@@ -250,7 +252,8 @@ struct LyricStageFrame {
             if age >= 0, age < 0.42 {
                 let phase = age / 0.42
                 var outgoing = layout(line: line, index: preceding, direction: director(line: line, index: preceding),
-                                      in: size, position: end, reduceMotion: false, audio: .init())
+                                      in: size, position: end, reduceMotion: false, audio: .init(),
+                                      context: LyricSingingTiming.context(for: preceding, in: document.lines))
                 let retainedIDs = Set(result.filter { $0.lineID == line.id && $0.role == .completingAccent }
                     .map { $0.id - 3_000_000 - preceding * 256 })
                 outgoing.removeAll { retainedIDs.contains($0.id) }
@@ -269,7 +272,8 @@ struct LyricStageFrame {
             let line = document.lines[active]
             let direction = director(line: line, index: active)
             let primary = layout(line: line, index: active, direction: direction, in: size, position: position,
-                                 reduceMotion: reduceMotion, audio: audio)
+                                 reduceMotion: reduceMotion, audio: audio,
+                                 context: LyricSingingTiming.context(for: active, in: document.lines))
             if !reduceMotion {
                 result += decorations(primary: primary, direction: direction, phase: progress(line: line, position: position), in: size, audio: audio)
             }
@@ -320,10 +324,10 @@ struct LyricStageFrame {
         return result
     }
 
-    private static func plan(line: LyricLine, direction: LyricDirection, index: Int, size: CGSize) -> StagePlan {
+    private static func plan(line: LyricLine, direction: LyricDirection, index: Int, size: CGSize, context: LyricTimingContext) -> StagePlan {
         let scene = direction.scene, duration = cueDuration(line), seed = stableSeed(line.text, index: index)
         let key = PlanKey(text: line.text, words: line.words.map(\.text), wordStarts: line.words.map(\.start), wordEnds: line.words.map(\.end), scene: scene.rawValue, motion: direction.motion.rawValue,
-                          duration: duration, cueStart: line.start, cueEnd: line.end, seed: seed, width: size.width, height: size.height)
+                          duration: duration, cueStart: line.start, cueEnd: line.end, timingContext: context, seed: seed, width: size.width, height: size.height)
         if let cached = plans[key] { return cached }
         let timed = compatibleWords(line)
         let rawGroups = textGroups(line: line, count: scene == .monument || scene == .hush || scene == .echo ? 2 : 3,
@@ -332,8 +336,8 @@ struct LyricStageFrame {
         // supplied timed words keep their exact one-to-one timing contract.
         let groups = timed ? rawGroups : lexicalGroups(line.text, phrases: rawGroups.map { $0.joined() })
         let texts = groups.flatMap { $0 }
-        let accents = LyricEmphasis.choices(texts: texts, line: line, suppliedWordTiming: timed, seed: seed)
-        let reveal = LyricReveal.timeline(for: line)
+        let accents = LyricEmphasis.choices(texts: texts, line: line, suppliedWordTiming: timed, seed: seed, context: context)
+        let reveal = LyricReveal.timeline(for: line, context: context)
         let revealedFragments = reveal.isTimed ? reveal.fragments(texts) : []
         func makePieces(readingRows: Bool) -> (pieces: [LyricTypeFragment], centers: [CGPoint]) {
             var pieces: [LyricTypeFragment] = [], centers: [CGPoint] = []

@@ -33,6 +33,13 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
     return try JSONSerialization.data(withJSONObject: value)
 }
 
+private func libraryAlbum(_ id: String, count: Int? = nil, favorite: Bool = false) -> [String: Any] {
+    var attributes: [String: Any] = ["name": "Album \(id)", "artistName": "Album Artist", "inFavorites": favorite,
+                                     "artwork": ["url": "https://is1-ssl.mzstatic.com/album/{w}x{h}.{f}"]]
+    if let count { attributes["trackCount"] = count }
+    return ["id": id, "type": "library-albums", "attributes": attributes]
+}
+
 @Suite(.serialized) @MainActor struct AppleMusicLibraryTests {
     @Test func allSongPagesPreserveLibraryIDsArtworkAndUnavailableItems() async throws {
         let fixture = try LibraryFixtureTransport([
@@ -69,7 +76,10 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
         let first = try libraryPage([librarySong("i.one")], next: "/v1/me/library/songs?offset=1", total: 2)
         let fixture = LibraryFixtureTransport([first]); fixture.failureAt = 2
         do { _ = try await AppleMusicLibraryClient(transport: fixture.data).songs(); Issue.record("Returned truncated library") }
-        catch { #expect(error.localizedDescription.contains("超时")) }
+        catch {
+            let context = L10n.string("读取\(L10n.string("个人歌曲"))第 \(2) 页（已读取 \(1) 条）")
+            #expect(error.localizedDescription == L10n.string("\(context)：\(L10n.string("网络请求超时，请重试。"))"))
+        }
         let missing = try LibraryFixtureTransport([libraryPage([librarySong("i.one")], total: 2)])
         await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(transport: missing.data).songs() }
     }
@@ -88,19 +98,43 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
         await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(transport: repeated.data).songs() }
     }
 
-    @Test func sizeLimitNeverClaimsACompleteLibrary() async throws {
+    @Test func optionalSizeLimitNeverClaimsACompleteLibrary() async throws {
         let fixture = try LibraryFixtureTransport([libraryPage([librarySong("i.one"), librarySong("i.two")], next: "/v1/me/library/songs?offset=2")])
         await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(maximumItems: 2, transport: fixture.data).songs() }
         #expect(fixture.requests.count == 1)
-        let tooLarge = try LibraryFixtureTransport([libraryPage([], total: 10_001)])
-        await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(transport: tooLarge.data).songs() }
+        let tooLarge = try LibraryFixtureTransport([libraryPage([], total: 3)])
+        await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(maximumItems: 2, transport: tooLarge.data).songs() }
+    }
+
+    @Test(arguments: [true, false]) func readsEveryPageBeyondTenThousandSongs(reportsTotal: Bool) async throws {
+        let count = 10_037
+        let replies = try stride(from: 0, to: count, by: 100).map { start in
+            let end = min(start + 100, count)
+            let next = end < count ? "/v1/me/library/songs?offset=\(end)&limit=100" : nil
+            return try libraryPage((start..<end).map { librarySong("i.song\($0)") }, next: next,
+                                   total: reportsTotal ? count : nil)
+        }
+        let fixture = LibraryFixtureTransport(replies)
+        // Both the production default and an explicit budget above 10,000 must
+        // work. There is no hidden clamp behind the optional budget.
+        let client = AppleMusicLibraryClient(maximumItems: reportsTotal ? nil : 11_000, transport: fixture.data)
+        let tracks = try await client.songs()
+        #expect(tracks.count == count)
+        #expect(tracks.first?.id == "appleMusic:library:i.song0")
+        #expect(tracks.last?.id == "appleMusic:library:i.song10036")
+        #expect(Set(tracks.map(\.id)).count == count)
+        #expect(fixture.requests.count == 101)
+        #expect(fixture.requests.last?.url?.query == "offset=10000&limit=100")
     }
 
     @Test func unsupportedRowsFailInsteadOfSilentlyDisappearing() async throws {
         var video = librarySong("i.video"); video["type"] = "library-music-videos"
         let fixture = try LibraryFixtureTransport([libraryPage([librarySong("i.one"), video])])
         do { _ = try await AppleMusicLibraryClient(transport: fixture.data).songs(); Issue.record("Silently dropped video") }
-        catch { #expect(error.localizedDescription.contains("非歌曲")) }
+        catch {
+            let context = L10n.string("Apple Music 第 \(2) 首歌曲")
+            #expect(error.localizedDescription == L10n.string("\(context)是当前不支持的非歌曲项目，本次未导入。"))
+        }
     }
 
     @Test func cancelledOrInvalidatedReadCannotFetchAnotherPage() async throws {
@@ -192,7 +226,19 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
         catch {
             let description = error.localizedDescription
             #expect(description.contains(failure.rawValue))
-            #expect(description.contains("个人歌曲第 2 页")); #expect(description.contains("已读取 1 条"))
+            let context = L10n.string("读取\(L10n.string("个人歌曲"))第 \(2) 页（已读取 \(1) 条）")
+            let expected: String
+            switch failure {
+            case .unknown: expected = L10n.string("系统未说明 Apple Music 认证失败的具体原因，请稍后重试（unknown）。")
+            case .permissionDenied: expected = L10n.string("本应用未获 Apple Music 访问许可，请在系统设置检查媒体与 Apple Music 权限（permissionDenied）。")
+            case .userTokenRevoked: expected = L10n.string("当前账户的 Apple Music 授权已失效，请在本应用重新连接（userTokenRevoked）。")
+            case .userNotSignedIn: expected = L10n.string("Apple Music 尚未登录，请先在音乐 App 中登录订阅账户（userNotSignedIn）。")
+            case .privacyAcknowledgementRequired: expected = L10n.string("Apple Music 需要确认隐私提示，请打开音乐 App 完成确认后重试（privacyAcknowledgementRequired）。")
+            case .developerTokenRequestFailed: expected = L10n.string("系统未能获取本应用的 Apple Music 认证，请检查网络及 MusicKit 配置后重试（developerTokenRequestFailed）。")
+            case .userTokenRequestFailed: expected = L10n.string("系统未能获取当前账户的 Apple Music 授权，请检查音乐 App 的登录及网络后重试（userTokenRequestFailed）。")
+            @unknown default: expected = L10n.string("系统返回尚未识别的 Apple Music 认证错误，请稍后重试（unrecognizedMusicTokenError）。")
+            }
+            #expect(description == L10n.string("\(context)：\(expected)"))
             #expect(!description.contains("secretSongID")); #expect(!description.contains("https://"))
         }
         #expect(count == 2) // Do not retry authorization failures automatically.
@@ -223,12 +269,137 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
             do { _ = try await AppleMusicLibraryClient(transport: fixture.data).songs(); Issue.record("Invalid row was accepted") }
             catch {
                 let description = error.localizedDescription
-                #expect(description.contains("第 2 首"))
+                let context = L10n.string("Apple Music 第 \(2) 首歌曲")
+                let expected: String
+                switch problem {
+                case "identity":
+                    let idLength = "private invalid identity".count
+                    expected = L10n.string("\(context)标识不能作为安全的资源路径（曲库类型：\(L10n.string("是"))，长度：\(idLength)），本次未导入。")
+                case "attributes": expected = L10n.string("\(context)缺少歌曲资料（attributes），本次未导入。")
+                default: expected = L10n.string("\(context)缺少歌曲名称（name），本次未导入。")
+                }
+                #expect(description == expected)
                 #expect(!description.contains("private"))
-                if problem == "identity" {
-                    #expect(description.contains("曲库类型：是")); #expect(description.contains("长度："))
-                } else { #expect(description.contains(problem)) }
             }
         }
+    }
+}
+
+@Suite(.serialized) @MainActor struct AppleMusicAlbumTests {
+    @Test func albumPagesIncludeSavedAndFavoriteLibraryAlbumsAndOptionalMetadata() async throws {
+        var sparse = libraryAlbum("opaque-album")
+        sparse["attributes"] = ["name": "Unmatched Library Album"]
+        let fixture = try LibraryFixtureTransport([
+            libraryPage([libraryAlbum("l.saved", count: 3)], next: "/v1/me/library/albums?offset=1&limit=100", total: 3),
+            libraryPage([libraryAlbum("l.favorite", count: 5, favorite: true), sparse], total: 3)
+        ])
+        let albums = try await AppleMusicLibraryClient(transport: fixture.data).albums()
+        #expect(albums.map(\.id) == ["l.saved", "l.favorite", "opaque-album"])
+        #expect(albums[0].name == "Album l.saved")
+        #expect(albums[0].artistName == "Album Artist")
+        #expect(albums[0].artworkURL?.absoluteString == "https://is1-ssl.mzstatic.com/album/640x640.jpg")
+        #expect(albums[0].trackCount == 3)
+        #expect(albums[2].artistName.isEmpty && albums[2].trackCount == nil && albums[2].artworkURL == nil)
+        #expect(fixture.requests.first?.url?.path == "/v1/me/library/albums")
+        #expect(fixture.requests.allSatisfy { $0.httpMethod == "GET" && $0.httpBody == nil && $0.value(forHTTPHeaderField: "Authorization") == nil })
+    }
+
+    @Test func albumTracksKeepPageOrderResourceNamespaceAndMetadataWithAlbumFallback() async throws {
+        var missingMetadata = librarySong("i.last", playable: false)
+        var attributes = missingMetadata["attributes"] as! [String: Any]
+        attributes.removeValue(forKey: "artistName")
+        attributes.removeValue(forKey: "albumName")
+        attributes["artwork"] = ["url": "http://insecure.example.com/cover.jpg"]
+        missingMetadata["attributes"] = attributes
+        let fixture = try LibraryFixtureTransport([
+            libraryPage([librarySong("123"), librarySong("123", type: "songs")], next: "/v1/me/library/albums/l.album/tracks?offset=2&limit=100", total: 3),
+            libraryPage([missingMetadata], total: 3)
+        ])
+        let album = AppleMusicLibraryAlbum(id: "l.album", name: "Album Fallback", artistName: "Album Artist",
+                                           artworkURL: URL(string: "https://example.com/album.jpg"), trackCount: 3)
+        let tracks = try await AppleMusicLibraryClient(transport: fixture.data).tracks(in: album)
+        #expect(tracks.map(\.id) == ["appleMusic:library:123", "appleMusic:123", "appleMusic:library:i.last"])
+        #expect(tracks.map(\.appleMusicResourceKind) == [.librarySong, .catalogSong, .librarySong])
+        #expect(tracks[0].album == "Album" && tracks[0].artist == "Artist")
+        #expect(tracks[0].artworkURL?.absoluteString == "https://is1-ssl.mzstatic.com/image/640x640bb.jpg")
+        #expect(tracks[2].album == "Album Fallback" && tracks[2].artist == "Album Artist")
+        #expect(tracks[2].artworkURL == album.artworkURL && tracks[2].unavailable)
+        #expect(fixture.requests.count == 2)
+        #expect(fixture.requests.allSatisfy { $0.url?.path == "/v1/me/library/albums/l.album/tracks" })
+    }
+
+    @Test func albumListsRejectInvalidMetadataDuplicatesAndTruncation() async throws {
+        var wrongType = libraryAlbum("l.one"); wrongType["type"] = "albums"
+        var noName = libraryAlbum("l.one"); noName["attributes"] = ["name": "  "]
+        let malformed = [wrongType, noName, libraryAlbum("../songs"), libraryAlbum("l.one", count: -1)]
+        for album in malformed {
+            let fixture = try LibraryFixtureTransport([libraryPage([album])])
+            await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(transport: fixture.data).albums() }
+        }
+        let duplicate = try LibraryFixtureTransport([
+            libraryPage([libraryAlbum("l.one")], next: "/v1/me/library/albums?offset=1"),
+            libraryPage([libraryAlbum("l.one")])
+        ])
+        await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(transport: duplicate.data).albums() }
+        let truncated = try LibraryFixtureTransport([libraryPage([libraryAlbum("l.one")], total: 2)])
+        await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(transport: truncated.data).albums() }
+    }
+
+    @Test func albumTracksRejectUnsafeIDsAndPaginationWithoutFetchingForeignResources() async throws {
+        let empty = LibraryFixtureTransport([])
+        for id in ["", "..", "l.one/../l.other", "l.one?offset=20"] {
+            await #expect(throws: MusicError.self) {
+                try await AppleMusicLibraryClient(transport: empty.data).tracks(in: AppleMusicLibraryAlbum(id: id, name: "Album"))
+            }
+        }
+        #expect(empty.requests.isEmpty)
+        for next in ["https://example.com/v1/me/library/albums/l.one/tracks?offset=1",
+                     "/v1/me/library/albums/l.other/tracks?offset=1",
+                     "/v1/me/library/albums/l.one/tracks?offset=2",
+                     "/v1/me/library/albums/l.one/tracks?offset=1&offset=1"] {
+            let fixture = try LibraryFixtureTransport([libraryPage([librarySong("i.one")], next: next)])
+            await #expect(throws: MusicError.self) {
+                try await AppleMusicLibraryClient(transport: fixture.data).tracks(in: AppleMusicLibraryAlbum(id: "l.one", name: "Album"))
+            }
+            #expect(fixture.requests.count == 1)
+        }
+    }
+
+    @Test func albumTrackCountAndPageTotalsPreventPartialImports() async throws {
+        for total in [nil, 2] as [Int?] {
+            let fixture = try LibraryFixtureTransport([libraryPage([librarySong("i.one")], total: total)])
+            let album = AppleMusicLibraryAlbum(id: "l.one", name: "Album", trackCount: 2)
+            await #expect(throws: MusicError.self) { try await AppleMusicLibraryClient(transport: fixture.data).tracks(in: album) }
+        }
+        let duplicate = try LibraryFixtureTransport([
+            libraryPage([librarySong("i.one")], next: "/v1/me/library/albums/l.one/tracks?offset=1"),
+            libraryPage([librarySong("i.one")])
+        ])
+        await #expect(throws: MusicError.self) {
+            try await AppleMusicLibraryClient(transport: duplicate.data).tracks(in: AppleMusicLibraryAlbum(id: "l.one", name: "Album"))
+        }
+    }
+
+    @Test func albumPageErrorsAndSessionInvalidationDoNotReturnPartialSuccess() async throws {
+        let first = try libraryPage([librarySong("i.one")], next: "/v1/me/library/albums/l.one/tracks?offset=1", total: 2)
+        let fixture = LibraryFixtureTransport([first]); fixture.failureAt = 2
+        let album = AppleMusicLibraryAlbum(id: "l.one", name: "Album", trackCount: 2)
+        do {
+            _ = try await AppleMusicLibraryClient(transport: fixture.data).tracks(in: album)
+            Issue.record("Returned incomplete album after a page failure")
+        } catch {
+            let context = L10n.string("读取\(L10n.string("专辑歌曲"))第 \(2) 页（已读取 \(1) 条）")
+            #expect(error.localizedDescription == L10n.string("\(context)：\(L10n.string("网络请求超时，请重试。"))"))
+        }
+        var valid = true
+        var requestCount = 0
+        let invalidated = AppleMusicLibraryClient { _ in requestCount += 1; valid = false; return first }
+        await #expect(throws: CancellationError.self) {
+            try await invalidated.tracks(in: album) { if !valid { throw CancellationError() } }
+        }
+        #expect(requestCount == 1)
+
+        let oversized = AppleMusicLibraryClient { _ in Data(repeating: 32, count: 16 * 1024 * 1024 + 1) }
+        await #expect(throws: MusicError.self) { try await oversized.albums() }
     }
 }

@@ -6,13 +6,13 @@ enum VisualizationMode: String, CaseIterable, Codable, Identifiable, Sendable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .pointCloud: "点云封面"
-        case .spectrumRing: "轨道光场"
-        case .ribbons: "流光绸缎"
-        case .starfield: "深空航行"
-        case .waveform: "音频示波器"
-        case .spectrumBars: "竖条频谱"
-        case .artwork: "专辑封面"
+        case .pointCloud: L10n.string("点云封面")
+        case .spectrumRing: L10n.string("轨道光场")
+        case .ribbons: L10n.string("流光绸缎")
+        case .starfield: L10n.string("深空航行")
+        case .waveform: L10n.string("音频示波器")
+        case .spectrumBars: L10n.string("竖条频谱")
+        case .artwork: L10n.string("专辑封面")
         }
     }
     var symbol: String {

@@ -122,14 +122,20 @@ import Testing
         #expect(requests[4].httpBody == nil)
     }
 
-    @Test(arguments: [(401, "登录已失效"), (403, "自己创建或参与协作"), (503, "HTTP 503")])
-    func errorsAreContextualAndNeverExposeRawServerContent(_ status: Int, _ expected: String) async throws {
+    @Test(arguments: [401, 403, 503])
+    func errorsAreContextualAndNeverExposeRawServerContent(_ status: Int) async throws {
+        let expected: String
+        switch status {
+        case 401: expected = L10n.string("Spotify 登录已失效，请重新连接账号。")
+        case 403: expected = L10n.string("Spotify 拒绝读取此歌单。开发模式仅支持读取自己创建或参与协作的歌单内容；还需有歌单读取授权，并将账号加入应用允许名单。")
+        default: expected = L10n.string("Spotify 未完成请求（HTTP \(String(status))），请稍后重试。")
+        }
         let client = SpotifyAPIClient(transport: { request in reply(request, json: #"{"error":{"message":"secret token private-user@example.com"}}"#, status: status) })
         do {
             _ = try await client.tracks(in: playlist, accessToken: "fixture-private-token")
             Issue.record("HTTP failure unexpectedly succeeded")
         } catch {
-            #expect(error.localizedDescription.contains(expected))
+            #expect(error.localizedDescription == expected)
             #expect(!error.localizedDescription.contains("secret") && !error.localizedDescription.contains("private-"))
         }
     }
@@ -156,7 +162,11 @@ import Testing
         let client = SpotifyAPIClient(transport: { try await stub.respond($0) })
         await #expect(throws: SpotifyAPIError.quotaExceeded(retryAfter: 180)) { try await client.profile(accessToken: "fixture") }
         do { _ = try await client.playlists(accessToken: "fixture"); Issue.record("Quota cooldown ignored") }
-        catch { #expect(error.localizedDescription.contains("共享调用配额")); #expect(!error.localizedDescription.contains("sensitive")) }
+        catch let error as SpotifyAPIError {
+            guard case .quotaExceeded(let delay) = error else { Issue.record("Wrong cooldown error"); return }
+            #expect(error.localizedDescription == L10n.string("Spotify 开发者账号的共享调用配额已用尽，请至少等待 \(Int(min(delay.rounded(.up), 31_536_000))) 秒后重试；切换同一开发者的 Client ID 不会重置配额。"))
+            #expect(!error.localizedDescription.contains("sensitive"))
+        }
         #expect(await stub.requests.count == 1)
     }
 

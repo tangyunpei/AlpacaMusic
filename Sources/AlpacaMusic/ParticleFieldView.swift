@@ -28,7 +28,7 @@ struct ParticleFieldView: View {
         .allowsHitTesting(false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(mode.title)
-        .accessibilityValue(!isPlaying ? "已暂停" : reduceMotion ? "减少动态，画面已静止" : "氛围粒子，随可用音频变化")
+        .accessibilityValue(!isPlaying ? L10n.string("已暂停") : reduceMotion ? L10n.string("减少动态，画面已静止") : L10n.string("氛围粒子，随可用音频变化"))
     }
 }
 
@@ -50,7 +50,7 @@ private struct ParticleFieldSurface: NSViewRepresentable {
         let view = ParticleFieldMetalView(frame: .zero, device: device)
         view.wantsLayer = true
         guard let device else {
-            Task { @MainActor in onNotice("这台设备暂时无法显示粒子视效，音乐可继续播放。") }
+            Task { @MainActor in onNotice(L10n.string("这台设备暂时无法显示粒子视效，音乐可继续播放。")) }
             return view
         }
         do {
@@ -60,7 +60,7 @@ private struct ParticleFieldSurface: NSViewRepresentable {
             renderer.update(mode: mode, settings: settings, isPlaying: isPlaying, isActive: isActive,
                             reduceMotion: reduceMotion, seed: seed, signal: signal)
         } catch {
-            Task { @MainActor in onNotice("粒子视效暂时无法加载，音乐可继续播放。") }
+            Task { @MainActor in onNotice(L10n.string("粒子视效暂时无法加载，音乐可继续播放。")) }
         }
         return view
     }

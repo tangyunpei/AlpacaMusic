@@ -4,7 +4,7 @@ import SwiftUI
 enum LyricPresentationMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case scroll, kinetic
     var id: String { rawValue }
-    var title: String { self == .scroll ? "滚动歌词" : "动态字幕" }
+    var title: String { self == .scroll ? L10n.string("滚动歌词") : L10n.string("动态字幕") }
 }
 
 struct LyricsPresentationView: View {
@@ -24,9 +24,9 @@ struct LyricsPresentationView: View {
     var body: some View {
         Group {
             if status == .loading {
-                LyricsStatusView(symbol: "text.line.2", title: "正在获取歌词", isLoading: true)
+                LyricsStatusView(symbol: "text.line.2", title: L10n.string("正在获取歌词"), isLoading: true)
             } else if let document, document.isInstrumental {
-                LyricsStatusView(symbol: "waveform", title: "纯音乐")
+                LyricsStatusView(symbol: "waveform", title: L10n.string("纯音乐"))
             } else if let document, !document.lines.isEmpty {
                 if mode == .scroll || document.timing == .plain {
                     ScrollLyricsView(document: document, position: position, isPlaying: isPlaying, reduceMotion: reduceMotion, onSeek: onSeek)
@@ -35,22 +35,27 @@ struct LyricsPresentationView: View {
                 }
             } else {
                 VStack(spacing: 22) {
-                    LyricsStatusView(symbol: status == .failed ? "text.badge.xmark" : "text.quote", title: status == .failed ? "歌词加载失败" : "暂无歌词", detail: error ?? "可导入 LRC、SRT 或纯文本歌词。")
+                    LyricsStatusView(symbol: status == .failed ? "text.badge.xmark" : "text.quote", title: status == .failed ? L10n.string("歌词加载失败") : L10n.string("暂无歌词"), detail: error ?? L10n.string("可导入 LRC、SRT 或纯文本歌词。"))
                     HStack(spacing: 12) {
-                        if let onImport { Button("导入歌词", action: onImport).buttonStyle(QuietButtonStyle()) }
-                        if status == .failed, let onRetry { Button("重新获取", action: onRetry).buttonStyle(QuietButtonStyle()) }
+                        if let onImport { Button(L10n.string("导入歌词"), action: onImport).buttonStyle(QuietButtonStyle()) }
+                        if status == .failed, let onRetry { Button(L10n.string("重新获取"), action: onRetry).buttonStyle(QuietButtonStyle()) }
                     }
                 }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topTrailing) {
                 if status == .ready, let document, !document.sourceDescription.isEmpty {
-                    let current = document.activeIndex(at: position).map { document.lines[$0] }
-                    let estimated = current.map { LyricReveal.timeline(for: $0).isEstimated } == true
-                    Text("歌词 · " + document.sourceDescription + (estimated ? " · 字词时间含估算" : ""))
+                    let currentIndex = document.activeIndex(at: position)
+                    let audioAligned = currentIndex.map { document.lines[$0].wordTimingOrigin == .audioEstimate } == true
+                    let estimated = currentIndex.map { index in
+                        LyricReveal.timeline(for: document.lines[index],
+                            context: LyricSingingTiming.context(for: index, in: document.lines)).isEstimated
+                    } == true
+                    Text(audioAligned ? L10n.string("歌词 · \(document.sourceDescription) · 本机人声时间（含估算）")
+                         : estimated ? L10n.string("歌词 · \(document.sourceDescription) · 字词时间含估算") : L10n.string("歌词 · \(document.sourceDescription)"))
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(palette.text.opacity(0.5))
                         .lineLimit(1).padding(.horizontal, 22).padding(.top, 13)
-                        .accessibilityLabel("歌词来源：" + document.sourceDescription + (estimated ? "，部分字词时间根据歌词时间与语句长度估算" : "")).allowsHitTesting(false)
+                        .accessibilityLabel(audioAligned ? L10n.string("歌词来源：\(document.sourceDescription)，使用本机人声识别时间，部分字词仍为估算") : estimated ? L10n.string("歌词来源：\(document.sourceDescription)，部分字词时间根据歌词时间与语句长度估算") : L10n.string("歌词来源：\(document.sourceDescription)")).allowsHitTesting(false)
                 }
             }
     }
@@ -103,10 +108,11 @@ struct ScrollLyricsView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 25) {
-                        ForEach(document.lines) { line in
+                        ForEach(Array(document.lines.enumerated()), id: \.element.id) { index, line in
                             LyricRowView(line: line, active: line.id == activeID, plain: document.timing == .plain,
                                          width: geometry.size.width, reduceMotion: prefersReducedMotion,
-                                         position: position, isPlaying: isPlaying) { start in
+                                         position: position, isPlaying: isPlaying,
+                                         timingContext: LyricSingingTiming.context(for: index, in: document.lines)) { start in
                                 resumeTask?.cancel(); isFollowing = true; latestAnchorID = line.id
                                 onSeek(start); center(proxy, target: line.id)
                             }.id(line.id)
@@ -141,17 +147,17 @@ struct ScrollLyricsView: View {
                         Button {
                             resumeTask?.cancel(); isFollowing = true; center(proxy)
                         } label: {
-                            Label("回到当前歌词", systemImage: "arrow.uturn.backward")
+                            Label(L10n.string("回到当前歌词"), systemImage: "arrow.uturn.backward")
                                 .font(.system(size: 11, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 10)
                                 .background(.ultraThinMaterial, in: .capsule)
                                 .overlay(Capsule().strokeBorder(palette.accent.opacity(0.2)))
                         }.buttonStyle(.plain).foregroundStyle(palette.text).padding(.bottom, 14)
                     } else if document.timing == .plain {
-                        Text("纯文本歌词 · 无时间标记").font(.system(size: 10)).foregroundStyle(palette.secondary).padding(.bottom, 12)
+                        Text(L10n.string("纯文本歌词 · 无时间标记")).font(.system(size: 10)).foregroundStyle(palette.secondary).padding(.bottom, 12)
                     }
                 }
             }
-        }.accessibilityLabel("滚动歌词")
+        }.accessibilityLabel(L10n.string("滚动歌词"))
     }
 
     private func scheduleFollow(_ proxy: ScrollViewProxy) {
@@ -183,6 +189,7 @@ struct LyricRowView: View {
     var reduceMotion: Bool
     var position: Double? = nil
     var isPlaying = false
+    var timingContext: LyricTimingContext = .init()
     var onSeek: (Double) -> Void
     @State private var hover = false
     @State private var anchorDate = Date()
@@ -201,7 +208,7 @@ struct LyricRowView: View {
                         if active, !plain, position != nil {
                             TimelineView(.animation(minimumInterval: 1 / 60, paused: !animates)) { tick in
                                 LyricProgressText(line: line, text: reading, position: visualPosition(tick.date),
-                                                  appearance: .highlight, reduceMotion: reduceMotion)
+                                                  appearance: .highlight, reduceMotion: reduceMotion, timingContext: timingContext)
                             }
                         } else { Text(reading) }
                     }
@@ -234,8 +241,8 @@ struct LyricRowView: View {
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.32), value: active)
         .accessibilityLabel(line.text)
-        .accessibilityValue(active ? "当前歌词" : "")
-        .accessibilityHint(line.start.map { "跳转到 \(Self.time($0))" } ?? "无时间标记")
+        .accessibilityValue(active ? L10n.string("当前歌词") : "")
+        .accessibilityHint(line.start.map { L10n.string("跳转到 \(Self.time($0))") } ?? L10n.string("无时间标记"))
     }
     private func visualPosition(_ date: Date) -> Double {
         guard let position else { return line.start ?? 0 }
@@ -296,7 +303,7 @@ struct KineticLyricFrameView: View {
                 if showsInterlude && frame.activeLineID == nil && frame.fragments.isEmpty {
                     VStack(spacing: 16) {
                         HStack(spacing: 8) { ForEach(0..<3) { _ in Circle().fill(palette.text.opacity(0.35)).frame(width: 4, height: 4) } }
-                        Text(position < (document.lines.first?.start ?? 0) ? "等待第一句" : "间奏")
+                        Text(position < (document.lines.first?.start ?? 0) ? L10n.string("等待第一句") : L10n.string("间奏"))
                             .font(.system(size: 11, weight: .light)).tracking(4).foregroundStyle(palette.text.opacity(0.42))
                     }
                 }
@@ -342,7 +349,7 @@ struct KineticLyricsView: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture { seekCurrentLine() }
-                    .help("从这句播放")
+                    .help(L10n.string("从这句播放"))
                 }
             }
             .onChange(of: position) { old, new in
@@ -368,9 +375,9 @@ struct KineticLyricsView: View {
         // A single stable accessible element announces the actual current line,
         // not only the generic presentation name or decorative duplicate text.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(activeLine.map { "动态字幕，" + $0.text } ?? "动态字幕，间奏")
+        .accessibilityLabel(activeLine.map { L10n.string("动态字幕，\($0.text)") } ?? L10n.string("动态字幕，间奏"))
         .accessibilityValue(activeLine?.translation ?? "")
-        .accessibilityAction(named: "从这句播放") { seekCurrentLine() }
+        .accessibilityAction(named: L10n.string("从这句播放")) { seekCurrentLine() }
     }
 
     private func requiresReadingLayout(_ line: LyricLine, in size: CGSize) -> Bool {
@@ -411,7 +418,8 @@ struct KineticLyricsView: View {
                     let reading = LyricTypography.readingText(line.text, width: min(760, max(120, width - 80)), fontSize: 28)
                     TimelineView(.animation(minimumInterval: 1 / 60, paused: !isPlaying || prefersReducedMotion || scenePhase != .active)) { tick in
                         LyricProgressText(line: line, text: reading, position: visualPosition(tick.date),
-                                          appearance: .reveal, reduceMotion: prefersReducedMotion)
+                                          appearance: .reveal, reduceMotion: prefersReducedMotion,
+                                          timingContext: activeIndex.map { LyricSingingTiming.context(for: $0, in: document.lines) } ?? .init())
                     }
                         .font(.system(size: 28, weight: .medium)).lineSpacing(12).foregroundStyle(palette.text)
                         .fixedSize(horizontal: false, vertical: true)
@@ -420,7 +428,7 @@ struct KineticLyricsView: View {
                     }
                 }.frame(maxWidth: min(760, max(120, width - 80)), alignment: .leading).padding(.vertical, 52).padding(.horizontal, 40)
                     .contentShape(.rect)
-            }.buttonStyle(.plain).accessibilityHint("从这句播放")
+            }.buttonStyle(.plain).accessibilityHint(L10n.string("从这句播放"))
         }.scrollIndicators(.visible)
     }
 }

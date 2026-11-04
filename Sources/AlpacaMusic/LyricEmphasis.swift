@@ -148,12 +148,12 @@ struct LyricAccentState: Equatable, Sendable {
 
     /// Select at most two content units. The choice is stable across redraws,
     /// launches and backward seeks; audio cannot change the selected words.
-    static func choices(texts: [String], line: LyricLine, suppliedWordTiming: Bool, seed: UInt64) -> [Int: LyricAccentChoice] {
+    static func choices(texts: [String], line: LyricLine, suppliedWordTiming: Bool, seed: UInt64, context: LyricTimingContext = .init()) -> [Int: LyricAccentChoice] {
         guard texts.count <= 256, !texts.isEmpty, line.text.utf8.count <= 16_384,
               removingWhitespace(texts.joined()) == removingWhitespace(line.text) else { return [:] }
         let timed = suppliedWordTiming && hasUsableWordTiming(line)
             && texts == line.words.map(\.text)
-        let estimated = timed ? nil : estimatedWindows(texts: texts, line: line)
+        let estimated = timed ? nil : estimatedWindows(texts: texts, line: line, context: context)
         guard timed || estimated != nil else { return [:] }
         let explicitDurations = timed ? line.words.compactMap { word in
             word.end.flatMap { $0 > word.start ? $0 - word.start : nil }
@@ -363,42 +363,10 @@ struct LyricAccentState: Equatable, Sendable {
     /// Pronunciation is estimated over the complete source text, before row
     /// wrapping. Function words consume time too. Source-character offsets keep
     /// repeated words and viewport-dependent fragment boundaries unambiguous.
-    static func estimatedWindows(texts: [String], line: LyricLine) -> [Int: LyricAccentWindow]? {
-        guard usesEstimatedTiming(line), let cue = closedCueWindow(line) else { return nil }
-        let source = Array(line.text)
-        guard !source.isEmpty, source.count <= 1_024 else { return nil }
-        let sourcePositions = source.indices.filter { !source[$0].isWhitespace }
-        guard let allocation = estimatedPronunciation(line.text) else { return nil }
-        let speech = allocation.speech, pauses = allocation.pauses
-        let spokenWeight = speech.reduce(0, +), pauseWeight = pauses.reduce(0, +)
-        guard spokenWeight.isFinite, spokenWeight > 0 else { return nil }
-        // A next line's onset does not reveal the preceding vocal offset. We
-        // distribute the known cue only; punctuation receives at most 14% or
-        // 0.9 seconds, without inventing a tempo or an acoustic pause detector.
-        let pauseSeconds = pauseWeight > 0 ? min(0.9, cue.duration * 0.14,
-                                               cue.duration * pauseWeight / (spokenWeight + pauseWeight)) : 0
-        let speechScale = (cue.duration - pauseSeconds) / spokenWeight
-        let pauseScale = pauseWeight > 0 ? pauseSeconds / pauseWeight : 0
-        var offsets = [0.0]
-        for index in source.indices {
-            offsets.append(offsets[index] + speech[index] * speechScale + pauses[index] * pauseScale)
-        }
-        var result: [Int: LyricAccentWindow] = [:]
-        var sourceOffset = 0
-        for (index, text) in texts.enumerated() {
-            let length = text.filter { !$0.isWhitespace }.count
-            let ending = sourceOffset + length
-            guard ending <= sourcePositions.count else { return nil }
-            let spoken = sourcePositions[sourceOffset..<ending].filter { speech[$0] > 0 }
-            if let first = spoken.first, let last = spoken.last {
-                let onset = min(cue.duration, max(0, offsets[first]))
-                let end = min(cue.duration, max(onset, offsets[last + 1]))
-                if end > onset { result[index] = .init(startOffset: onset, endOffset: end) }
-            }
-            sourceOffset = ending
-        }
-        guard sourceOffset == sourcePositions.count else { return nil }
-        return result
+    static func estimatedWindows(texts: [String], line: LyricLine,
+                                 context: LyricTimingContext = .init()) -> [Int: LyricAccentWindow]? {
+        guard usesEstimatedTiming(line) else { return nil }
+        return LyricSingingTiming.windows(texts: texts, line: line, context: context)
     }
 
     /// Shared visual estimate used by both emphasis and gradual glyph reveal.

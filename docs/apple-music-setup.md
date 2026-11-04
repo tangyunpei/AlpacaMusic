@@ -109,9 +109,12 @@ PROVISIONING_PROFILE='/absolute/path/AlpacaMusic.provisionprofile'
 
 - “导入全部歌曲”读取个人曲库中的歌曲与专辑曲目；显示专辑名和封面，加入本地“音乐库”，不另建一个替代远端歌单的假歌单。
 - 下方“我的歌单”可单独导入；歌单中未加入个人曲库的歌曲也随该歌单导入。
-- 请求逐页读取完整结果。读取途中失败或超过本地 10000 首总量限制时给出错误，不把第一页当作完整导入。再次导入合并新歌曲、更新元数据，保留本地收藏、已有歌单名称及本地追加曲目。
+- 切换到“我的专辑”可读取已加入 Apple Music 资料库的专辑，包括其中已标为喜爱的专辑，逐张导入完整曲目。专辑歌曲保留原始曲序、专辑名和封面，进入本地音乐库，同时显示在侧边栏「专辑库」；点击封面打开曲目，点「播放专辑」按顺序播放，不创建伪装成远端歌单的专辑副本。
+- 请求逐页读取完整结果，不再按 10000 首拒绝读取、保存或下次启动加载。仍检查分页路径、重复项目、分页偏移、返回总数、单页响应大小和取消状态；读取中断或资料不完整时不给出虚假的成功提示。再次导入合并新歌曲、更新元数据，保留本地收藏、已有歌单名称及本地追加曲目。
 - 导入仅保存资料，不下载歌曲音频、不修改 Apple Music 云端曲库或歌单。退出导入窗口会取消尚未提交的操作。
 - 个人曲库歌曲保留 Apple 提供的原始资源编号和资源类型，与公开目录编号分别解析播放；编号不依赖 `i.` 等前缀。缺少播放参数的曲目仍保留并显示不可用，不以其他歌曲替代。
 - 授权使用系统当前 Apple Music 账户；此入口不是独立的 Apple 账号登录器。切换系统媒体账户后应重新连接并检查订阅。
 
 接口来自官方 MusicKit `MusicDataRequest` 的自动授权请求，使用 Apple Music API 的 `/v1/me/library` 只读资源；不手工提取或保存 Music User Token。[Apple 用户授权说明](https://developer.apple.com/documentation/applemusicapi/user-authentication-for-musickit)
+
+专辑入口使用 [`/v1/me/library/albums`](https://developer.apple.com/documentation/applemusicapi/get-all-library-albums) 和专辑的 `tracks` 关系，不将曲库 ID 换成公开目录 ID。仅标为喜爱但未加入资料库的专辑不保证能出现在此接口；若缺少专辑，请先在 Apple Music 加入资料库后刷新。

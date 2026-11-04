@@ -32,9 +32,9 @@ struct PointCloudView: View {
         }
         .clipped()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(track?.title ?? "AlpacaMusic")，封面点云")
-        .accessibilityValue(track?.source.supportsAudioAnalysis == false ? "氛围模式，无实时音频频谱" : isPlaying ? "随可用音频变化" : "已暂停")
-        .accessibilityHint("拖动旋转，滚动缩放，双击归位")
+        .accessibilityLabel(L10n.string("\(track?.title ?? "AlpacaMusic")，封面点云"))
+        .accessibilityValue(track?.source.supportsAudioAnalysis == false ? L10n.string("氛围模式，无实时音频频谱") : isPlaying ? L10n.string("随可用音频变化") : L10n.string("已暂停"))
+        .accessibilityHint(L10n.string("拖动旋转，滚动缩放，双击归位"))
         .onChange(of: Artwork.key(for: track)) { notice = nil }
     }
 }
@@ -60,7 +60,7 @@ private struct MetalSurface: NSViewRepresentable {
         view.layer?.isOpaque = false
         view.layer?.backgroundColor = NSColor.clear.cgColor
         guard let device else {
-            Task { @MainActor in onNotice("这台设备暂时无法显示点云，音乐播放不受影响。") }
+            Task { @MainActor in onNotice(L10n.string("这台设备暂时无法显示点云，音乐播放不受影响。")) }
             return view
         }
         do {
@@ -69,7 +69,7 @@ private struct MetalSurface: NSViewRepresentable {
             context.coordinator.renderer = renderer; view.renderer = renderer
             renderer.update(track: track, settings: settings, signal: signal, isPlaying: isPlaying, isActive: isActive)
         } catch {
-            Task { @MainActor in onNotice("点云暂时无法加载，已显示专辑封面。") }
+            Task { @MainActor in onNotice(L10n.string("点云暂时无法加载，已显示专辑封面。")) }
         }
         return view
     }

@@ -76,7 +76,7 @@ struct PlaybackFailureTests {
         #expect(player.failure?.track == attempted)
         #expect(player.failure?.stage == .preparing)
         #expect(player.error?.contains(MusicSource.qq.title) == true)
-        #expect(player.error?.contains("文件") == false)
+        #expect(player.error == L10n.string("\(MusicSource.qq.title)当前未提供这首歌曲的可播放资源，请在平台确认歌曲是否仍可播放。"))
         #expect(requests.withLock { $0 } == 0)
     }
 
@@ -94,7 +94,7 @@ struct PlaybackFailureTests {
         #expect(player.status == .idle)
         #expect(player.failure?.track.source == source)
         #expect(player.error?.contains(source.title) == true)
-        #expect(player.error?.contains("重新导入") == false)
+        #expect(player.error == L10n.string("\(source.title)当前未提供这首歌曲的可播放资源，请在平台确认歌曲是否仍可播放。"))
     }
 
     @Test func lateFailureFromCancelledTrackCannotReplaceTheNewFailure() async throws {

@@ -35,11 +35,11 @@ actor LRCLIBClient {
         try Task.checkCancellation()
         guard track.duration.isFinite, (1...3600).contains(track.duration),
               [track.title, track.artist, track.album].allSatisfy({ $0.utf8.count <= 2048 }) else {
-            throw MusicError.message("歌曲名、歌手或时长资料不足，无法精确查找歌词。可手动导入歌词文件。")
+            throw MusicError.message(L10n.string("歌曲名、歌手或时长资料不足，无法精确查找歌词。可手动导入歌词文件。"))
         }
         let signature = Signature(title: Self.normalized(track.title), artist: Self.normalized(track.artist), album: Self.normalized(track.album), duration: track.duration)
         guard !signature.title.isEmpty, !signature.artist.isEmpty else {
-            throw MusicError.message("歌曲名、歌手或时长资料不足，无法精确查找歌词。可手动导入歌词文件。")
+            throw MusicError.message(L10n.string("歌曲名、歌手或时长资料不足，无法精确查找歌词。可手动导入歌词文件。"))
         }
         if let value = cache[signature] { return value }
         // A cancelled previous song may still be unwinding its URLSession.
@@ -85,13 +85,13 @@ actor LRCLIBClient {
     private func request(path: String, query: [URLQueryItem]) async throws -> Data? {
         try Task.checkCancellation()
         if blockedIndefinitely || blockedUntil.map({ clock.now < $0 }) == true {
-            throw MusicError.message("LRCLIB 暂时限制查询，请等待服务要求的冷却时间结束后重试。")
+            throw MusicError.message(L10n.string("LRCLIB 暂时限制查询，请等待服务要求的冷却时间结束后重试。"))
         }
         if let nextRequestAt, clock.now < nextRequestAt { try await clock.sleep(until: nextRequestAt) }
         try Task.checkCancellation()
         var components = URLComponents(string: "https://lrclib.net" + path)!
         components.queryItems = query
-        guard let url = components.url else { throw MusicError.message("歌曲资料无法用于歌词查询。") }
+        guard let url = components.url else { throw MusicError.message(L10n.string("歌曲资料无法用于歌词查询。")) }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         request.httpShouldHandleCookies = false
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -103,26 +103,26 @@ actor LRCLIBClient {
         catch is CancellationError { throw CancellationError() }
         catch let error as URLError {
             if error.code == .cancelled { throw CancellationError() }
-            throw MusicError.message(error.code == .timedOut ? "LRCLIB 查询超时，请稍后重试。" : "无法连接 LRCLIB，请检查网络后重试。")
+            throw MusicError.message(error.code == .timedOut ? L10n.string("LRCLIB 查询超时，请稍后重试。") : L10n.string("无法连接 LRCLIB，请检查网络后重试。"))
         } catch let error as MusicError { throw error }
-        catch { throw MusicError.message("无法连接 LRCLIB，请稍后重试。") }
+        catch { throw MusicError.message(L10n.string("无法连接 LRCLIB，请稍后重试。")) }
         try Task.checkCancellation()
         guard response.url?.scheme == "https", response.url?.host == "lrclib.net", response.url?.path() == path,
               response.url?.port == nil || response.url?.port == 443 else {
-            throw MusicError.message("已阻止歌词查询跳转到其他地址。")
+            throw MusicError.message(L10n.string("已阻止歌词查询跳转到其他地址。"))
         }
         if response.statusCode == 429 || response.statusCode == 503 {
             let delay = Self.retryDelay(response.value(forHTTPHeaderField: "Retry-After"))
             if delay > 31_536_000 {
                 blockedIndefinitely = true
-                throw MusicError.message("LRCLIB 要求较长冷却时间，本次会话不再发出歌词查询。")
+                throw MusicError.message(L10n.string("LRCLIB 要求较长冷却时间，本次会话不再发出歌词查询。"))
             }
             blockedUntil = clock.now.advanced(by: .seconds(delay))
-            throw MusicError.message("LRCLIB 暂时繁忙或限制查询，请至少等待 \(Int(delay.rounded(.up))) 秒后重试。")
+            throw MusicError.message(L10n.string("LRCLIB 暂时繁忙或限制查询，请至少等待 \(Int(delay.rounded(.up))) 秒后重试。"))
         }
         if response.statusCode == 404 { return nil }
-        guard response.statusCode == 200 else { throw MusicError.message("LRCLIB 未完成歌词查询（HTTP \(response.statusCode)）。") }
-        guard data.count <= Self.maximumBytes else { throw MusicError.message("LRCLIB 返回的歌词资料过大，无法读取。") }
+        guard response.statusCode == 200 else { throw MusicError.message(L10n.string("LRCLIB 未完成歌词查询（HTTP \(String(response.statusCode))）。")) }
+        guard data.count <= Self.maximumBytes else { throw MusicError.message(L10n.string("LRCLIB 返回的歌词资料过大，无法读取。")) }
         return data
     }
 
@@ -143,7 +143,7 @@ actor LRCLIBClient {
 
     private static func decode<Value: Decodable>(_ data: Data) throws -> Value {
         do { return try JSONDecoder().decode(Value.self, from: data) }
-        catch { throw MusicError.message("LRCLIB 返回的歌词资料无法读取。") }
+        catch { throw MusicError.message(L10n.string("LRCLIB 返回的歌词资料无法读取。")) }
     }
     private static func matches(_ value: Response, signature: Signature) -> Bool {
         normalized(value.trackName) == signature.title && normalized(value.artistName) == signature.artist &&
@@ -209,11 +209,11 @@ actor LRCLIBClient {
         let session = URLSession(configuration: config, delegate: LRCLIBRedirectGuard(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let (bytes, raw) = try await session.bytes(for: request)
-        guard let response = raw as? HTTPURLResponse else { throw MusicError.message("LRCLIB 返回的响应无法读取。") }
-        guard response.expectedContentLength <= maximumBytes else { throw MusicError.message("LRCLIB 返回的歌词资料过大，无法读取。") }
+        guard let response = raw as? HTTPURLResponse else { throw MusicError.message(L10n.string("LRCLIB 返回的响应无法读取。")) }
+        guard response.expectedContentLength <= maximumBytes else { throw MusicError.message(L10n.string("LRCLIB 返回的歌词资料过大，无法读取。")) }
         var data = Data()
         for try await byte in bytes {
-            guard data.count < maximumBytes else { throw MusicError.message("LRCLIB 返回的歌词资料过大，无法读取。") }
+            guard data.count < maximumBytes else { throw MusicError.message(L10n.string("LRCLIB 返回的歌词资料过大，无法读取。")) }
             data.append(byte)
         }
         return (data, response)

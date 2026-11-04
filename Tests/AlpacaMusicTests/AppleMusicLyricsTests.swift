@@ -91,7 +91,7 @@ import Testing
             Issue.record("Manual import must not query online"); throw URLError(.notConnectedToInternet)
         }))
         await controller.load(track: track())
-        #expect(controller.document?.sourceDescription == "手动导入")
+        #expect(controller.document?.sourceDescription == L10n.string("手动导入"))
         #expect(controller.document?.lines.first?.text == "Manual fixture wins")
     }
     @Test func damagedOnlineCacheRefetchesWithoutTouchingManualImports() async throws {
@@ -131,7 +131,7 @@ import Testing
         let controller = LyricsController(client: native(), directory: location, online: LRCLIBClient(transport: { _ in throw URLError(.timedOut) }))
         await controller.load(track: track())
         #expect(controller.status == .failed)
-        #expect(controller.error?.contains("超时") == true)
+        #expect(controller.error == L10n.string("LRCLIB 查询超时，请稍后重试。"))
         #expect(controller.document == nil)
     }
 }

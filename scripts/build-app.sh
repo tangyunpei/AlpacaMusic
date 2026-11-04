@@ -141,6 +141,7 @@ alpaca_bundle_id="$(cat "$alpaca_staging/bundle-id.txt")"
 # Supply the actual SDK version to the linker; do not rewrite a signed Mach-O later.
 alpaca_build_flags=(-c "$configuration" --sdk "$alpaca_sdk_path"
   -Xlinker -platform_version -Xlinker macos -Xlinker 26.0 -Xlinker "$alpaca_sdk_version")
+xcrun python3 scripts/check-localizations.py
 swift build "${alpaca_build_flags[@]}"
 binary_dir="$(swift build "${alpaca_build_flags[@]}" --show-bin-path)"
 alpaca_build_info="$(xcrun vtool -show-build "$binary_dir/AlpacaMusic")"
@@ -154,6 +155,7 @@ if ! print -r -- "$alpaca_build_info" | awk -v sdk="$alpaca_sdk_version" '
 fi
 cp "$binary_dir/AlpacaMusic" "$alpaca_app/Contents/MacOS/AlpacaMusic"
 ditto "$binary_dir/AlpacaMusic_AlpacaMusic.bundle" "$alpaca_app/Contents/Resources/AlpacaMusic_AlpacaMusic.bundle"
+ditto "$PWD/Resources/Localization" "$alpaca_app/Contents/Resources"
 swift scripts/make-icon.swift "$alpaca_staging" "$PWD/Resources/Brand/AppIcon-Bauhaus.png"
 iconutil -c icns "$alpaca_staging/AppIcon.iconset" -o "$alpaca_app/Contents/Resources/AppIcon.icns"
 alpaca_sign_flags=(--force --sign "$alpaca_identity" --identifier "$alpaca_bundle_id")
