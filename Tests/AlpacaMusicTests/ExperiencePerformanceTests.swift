@@ -2,8 +2,52 @@ import Foundation
 import Testing
 @testable import AlpacaMusic
 
+private struct SearchLibrarySnapshot: Encodable {
+    let version = 1
+    var tracks: [Track]
+    var favorites: Set<String> = []
+    var playlists: [MusicPlaylist] = []
+    var sources = SourceConfiguration.defaults
+}
+
+/// A loaded model over a fixture library, so tests skip demo seeding and
+/// avoid adding thousands of tracks one by one.
+@MainActor private func searchModel(_ tracks: [Track]) async throws -> (model: AppModel, cleanup: () -> Void) {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "AlpacaSearch-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try JSONEncoder().encode(SearchLibrarySnapshot(tracks: tracks)).write(to: directory.appending(path: "library-v1.json"))
+    let domain = "AlpacaSearchTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: domain))
+    let model = AppModel(directory: directory, preferences: defaults, ephemeralAccounts: true)
+    await model.library.load()
+    return (model, {
+        model.player.shutdown()
+        defaults.removePersistentDomain(forName: domain)
+        try? FileManager.default.removeItem(at: directory)
+    })
+}
+
 @Suite @MainActor
 struct ExperiencePerformanceTests {
+    @Test func searchSeparatesLibraryAndOnlineResultsAndMarksSavedSongs() async throws {
+        let saved = Track(id: "saved", title: "Zephyr Morning", artist: "Test", album: "Dawn", duration: 5, source: .url)
+        let (model, cleanup) = try await searchModel([saved])
+        defer { cleanup() }
+        model.navigate(.library); model.searchTerm = "Zephyr"
+        let duplicate = Track(id: "remote-duplicate", title: "zephyr morning", artist: "TEST", album: "", duration: 5, source: .qq)
+        let fresh = Track(id: "remote-fresh", title: "Zephyr Light", artist: "Other", album: "", duration: 5, source: .qq)
+        model.remoteResults = [duplicate, fresh]
+        #expect(model.searchLibraryMatches.map(\.id) == [saved.id])
+        #expect(model.searchOnlineResults.map(\.id) == [duplicate.id, fresh.id])
+        #expect(model.searchResultMatchesLibrary(duplicate))
+        #expect(!model.searchResultMatchesLibrary(fresh))
+        model.addToLibrary(fresh)
+        #expect(model.isLibraryTrack(fresh))
+        #expect(model.notice == L10n.string("已加入音乐库"))
+        // An added result stays where it was instead of jumping sections.
+        #expect(model.searchOnlineResults.map(\.id) == [duplicate.id, fresh.id])
+    }
+
     @Test func indexedPlaylistRetainsOrderAndUpdatesAfterEdits() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
