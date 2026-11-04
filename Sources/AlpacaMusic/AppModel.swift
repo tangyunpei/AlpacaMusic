@@ -390,8 +390,14 @@ final class AppModel {
     /// Saves a search result to the library (C3).
     func addToLibrary(_ track: Track) {
         guard !isLibraryTrack(track) else { return }
-        addedFromSearch.insert(track.id)
         library.addTracks([track])
+        // A full library skips the song and sets its own error; only a song
+        // that was actually saved is marked added and reported as such.
+        guard isLibraryTrack(track) else {
+            notify(library.error ?? L10n.string("音乐库最多保存 10000 首歌曲"))
+            return
+        }
+        addedFromSearch.insert(track.id)
         notify(L10n.string("已加入音乐库"))
     }
     func favorite(_ track: Track) { library.addTracks([track]); library.toggleFavorite(track.id) }
