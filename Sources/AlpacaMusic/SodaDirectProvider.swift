@@ -75,8 +75,13 @@ struct SodaDirectProvider: DirectMusicProvider {
     }
 
     func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        try await tracks(in: playlist, cookies: cookies, progress: { _ in })
+    }
+
+    func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie],
+                progress: @MainActor @Sendable (ImportProgress) -> Void) async throws -> [Track] {
         guard playlist.source == .soda else { throw MusicError.message(L10n.string("该歌单不是汽水音乐歌单")) }
-        return try await share.playlist(playlist.id, cookies: cookies).tracks
+        return try await share.playlist(playlist.id, cookies: cookies, progress: progress).tracks
     }
 
     func importShare(_ input: String) async throws -> SodaShareImport { try await share.importShare(input) }

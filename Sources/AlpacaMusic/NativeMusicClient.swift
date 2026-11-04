@@ -95,10 +95,12 @@ actor NativeMusicClient {
         try validate(source, token)
         return result
     }
-    func tracks(in playlist: RemoteMusicPlaylist) async throws -> [Track] {
+    /// `progress` reports songs read so far after each provider page, on the main actor.
+    func tracks(in playlist: RemoteMusicPlaylist,
+                progress: @MainActor @Sendable (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
         let (session, token) = try snapshot(playlist.source)
         do {
-            let result = try await provider(playlist.source).tracks(in: playlist, cookies: session.cookies)
+            let result = try await provider(playlist.source).tracks(in: playlist, cookies: session.cookies, progress: progress)
             try validate(playlist.source, token)
             return result
         } catch {
