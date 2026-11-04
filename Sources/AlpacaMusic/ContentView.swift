@@ -97,6 +97,13 @@ struct ContentView: View {
                         .environment(\.appReducedMotion, model.visual.reduceMotion)
                         .transition(AnyTransition.opacity.combined(with: .offset(y: 6)))
                 }
+                // `isActive` flips only when a run starts or ends; only the card
+                // reads the live status, so progress ticks stay inside it.
+                if model.autoImport.isActive {
+                    AutoImportProgressCard(coordinator: model.autoImport)
+                        .environment(\.appReducedMotion, model.visual.reduceMotion)
+                        .transition(AnyTransition.opacity.combined(with: .offset(y: 6)))
+                }
                 if let notice = model.notice {
                     HStack(spacing: 10) {
                         Image(systemName: "info.circle").foregroundStyle(palette.accent)
@@ -152,6 +159,7 @@ struct ContentView: View {
         .animation(ExperienceMotion.control, value: dismissedPlaybackFailureID)
         .animation(ExperienceMotion.control, value: model.library.persistenceError)
         .animation(reduceMotion || model.visual.reduceMotion ? nil : ExperienceMotion.control, value: model.library.busy)
+        .animation(reduceMotion || model.visual.reduceMotion ? nil : ExperienceMotion.control, value: model.autoImport.isActive)
         .onChange(of: model.library.sources) { _, sources in model.player.sourceConfigurations = sources }
         .onChange(of: model.immersive) { _, enabled in
             withAnimation(.smooth(duration: 0.25)) { columns = enabled ? .detailOnly : .all }
@@ -177,6 +185,20 @@ private struct LocalImportProgressCard: View {
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.accent.opacity(0.14)))
             .frame(maxWidth: 380)
             .accessibilityIdentifier("local-import-progress")
+    }
+}
+
+/// Floating progress for the background import after an account connects.
+private struct AutoImportProgressCard: View {
+    @Environment(\.appPalette) private var palette
+    var coordinator: AutoImportCoordinator
+
+    var body: some View {
+        AutoImportStatusPanel(coordinator: coordinator)
+            .background(palette.raised, in: .rect(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.accent.opacity(0.14)))
+            .frame(maxWidth: 380)
+            .accessibilityIdentifier("auto-import-progress")
     }
 }
 
