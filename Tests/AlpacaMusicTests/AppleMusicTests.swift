@@ -367,6 +367,10 @@ private let configuredMusic = AppleMusicConfiguration(enabledInBuild: true, expe
         let player = PlayerController(sources: SourceService(), defaults: defaults, appleMusic: service); defer { player.shutdown() }
         await player.play(appleTrack("1"), context: [appleTrack("1"), appleTrack("2")])
         adapter.snapshotValue = .init(state: .paused, position: 9.7, hasCurrentEntry: true)
+        // Wait for the 100 ms ticker to observe the pause (a fixed sleep raced it
+        // under parallel test load), then keep polling: a pause near the end must
+        // never advance the queue.
+        try await waitFor { player.status == .paused }
         try await Task.sleep(for: .milliseconds(150)); #expect(player.current?.sourceID == "1"); #expect(player.status == .paused)
         await player.toggle(); adapter.snapshotValue = .init(state: .stopped, position: 10, hasCurrentEntry: false)
         try await waitFor { player.current?.sourceID == "2" && player.status == .playing }
