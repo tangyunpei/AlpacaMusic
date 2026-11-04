@@ -179,6 +179,8 @@ private struct ImportSpinningArc: View {
 /// status glyph; finished rows keep their glyph and reveal a retry arrow on hover.
 struct ImportRowAction: View {
     @Environment(\.appPalette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var systemReduced
+    @Environment(\.appReducedMotion) private var appReduced
     @State private var hovered = false
     var state: ImportRowState
     /// Help and accessibility text, for example "导入「name」".
@@ -208,13 +210,15 @@ struct ImportRowAction: View {
                 .accessibilityValue(state.accessibilityLabel)
             }
         }
-        .animation(ExperienceMotion.control, value: hovered)
+        .animation(systemReduced || appReduced ? nil : ExperienceMotion.control, value: hovered)
     }
 }
 
 /// Live "12 / 40" counter whose digits roll as they change.
 struct ImportCounter: View {
     @Environment(\.appPalette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var systemReduced
+    @Environment(\.appReducedMotion) private var appReduced
     var progress: ImportProgress
     var body: some View {
         HStack(spacing: 0) {
@@ -227,7 +231,7 @@ struct ImportCounter: View {
             }
         }
         .font(.system(size: 10, design: .monospaced)).monospacedDigit()
-        .animation(ExperienceMotion.control, value: progress.completed)
+        .animation(systemReduced || appReduced ? nil : ExperienceMotion.control, value: progress.completed)
     }
 }
 
