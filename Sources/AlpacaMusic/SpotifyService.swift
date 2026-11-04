@@ -109,13 +109,15 @@ final class SpotifyService {
         let api = self.api
         return try await authorized { try await api.playlists(accessToken: $0) }
     }
-    func tracks(in playlist: RemoteMusicPlaylist) async throws -> [Track] {
+    /// `progress` reports items read so far after each page, on the main actor.
+    func tracks(in playlist: RemoteMusicPlaylist,
+                progress: @escaping @MainActor @Sendable (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
         let api = self.api
-        return try await authorized { try await api.tracks(in: playlist, accessToken: $0) }
+        return try await authorized { try await api.tracks(in: playlist, accessToken: $0, progress: progress) }
     }
-    func savedTracks() async throws -> [Track] {
+    func savedTracks(progress: @escaping @MainActor @Sendable (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
         let api = self.api
-        return try await authorized { try await api.savedTracks(accessToken: $0) }
+        return try await authorized { try await api.savedTracks(accessToken: $0, progress: progress) }
     }
     func refreshDevices() async {
         let api = self.api
