@@ -216,6 +216,61 @@ private func libraryPage(_ items: [[String: Any]], next: String? = nil, total: I
         #expect(count == 2) // Do not retry authorization failures automatically.
     }
 
+    @Test func libraryProgressReportsMonotonicCountsEndingAtTheTotal() async throws {
+        let fixture = try LibraryFixtureTransport([
+            libraryPage([librarySong("i.one"), librarySong("i.two")], next: "/v1/me/library/songs?offset=2", total: 5),
+            libraryPage([librarySong("i.three"), librarySong("i.four")], next: "/v1/me/library/songs?offset=4", total: 5),
+            libraryPage([librarySong("i.five")], total: 5)
+        ])
+        var reports: [ImportProgress] = []
+        let tracks = try await AppleMusicLibraryClient(transport: fixture.data).songs(progress: { reports.append($0) })
+        #expect(tracks.count == 5)
+        #expect(reports.map(\.completed) == [0, 2, 4, 5])
+        let increasing = zip(reports, reports.dropFirst()).allSatisfy { earlier, later in earlier.completed < later.completed }
+        #expect(increasing)
+        #expect(reports.first == ImportProgress(completed: 0, total: nil))
+        #expect(reports.last == ImportProgress(completed: 5, total: 5))
+        #expect(reports.last?.fraction == 1)
+    }
+
+    @Test func playlistProgressFallsBackToTrackCountWithoutReportedTotal() async throws {
+        let fixture = try LibraryFixtureTransport([
+            libraryPage([librarySong("i.one")], next: "/v1/me/library/playlists/p.one/tracks?offset=1"),
+            libraryPage([librarySong("i.two"), librarySong("i.three")])
+        ])
+        let playlist = AppleMusicLibraryPlaylist(id: "p.one", name: "Favorites", trackCount: 3)
+        var reports: [ImportProgress] = []
+        let tracks = try await AppleMusicLibraryClient(transport: fixture.data).tracks(in: playlist, progress: { reports.append($0) })
+        #expect(tracks.count == 3)
+        #expect(reports == [ImportProgress(completed: 0, total: 3), ImportProgress(completed: 1, total: 3), ImportProgress(completed: 3, total: 3)])
+    }
+
+    @Test func failedReadStopsProgressBeforeTheFailingPage() async throws {
+        let first = try libraryPage([librarySong("i.one")], next: "/v1/me/library/songs?offset=1", total: 2)
+        let fixture = LibraryFixtureTransport([first]); fixture.failureAt = 2
+        var reports: [ImportProgress] = []
+        do { _ = try await AppleMusicLibraryClient(transport: fixture.data).songs(progress: { reports.append($0) }); Issue.record("Returned truncated library") }
+        catch { #expect(error is MusicError) }
+        #expect(reports.map(\.completed) == [0, 1])
+    }
+
+    @Test func appleMusicErrorsReadAsShortStatusMessagesWithoutRawText() {
+        let statuses = [400, 401, 404, 429, 503, 418]
+        let messages = statuses.map { AppleMusicErrorMessage.describe(status: $0, code: 7) }
+        for (status, message) in zip(statuses, messages) {
+            #expect(message.contains("HTTP \(status)")); #expect(!message.contains("MusicKit"))
+        }
+        #expect(messages[0] != messages[2])
+        #expect(AppleMusicErrorMessage.describe(MusicTokenRequestError.userNotSignedIn) == AppleMusicLibraryClient.tokenFailureMessage(.userNotSignedIn))
+        #expect(AppleMusicErrorMessage.describe(URLError(.timedOut)) == L10n.string("网络请求超时，请重试。"))
+        #expect(AppleMusicErrorMessage.describe(MusicError.message("Authored")) == "Authored")
+        let raw = AppleMusicErrorMessage.describe(NSError(domain: "MusicKit.MusicDataRequest.Error", code: 1))
+        #expect(!raw.isEmpty); #expect(!raw.contains("MusicKit")); #expect(!raw.localizedCaseInsensitiveContains("couldn"))
+        #expect(AppleMusicErrorMessage.readable(CancellationError()) is CancellationError)
+        #expect(AppleMusicErrorMessage.readable(URLError(.cancelled)) is CancellationError)
+        #expect(AppleMusicErrorMessage.readable(NSError(domain: "Other", code: 2)) is MusicError)
+    }
+
     @Test func missingArtistDoesNotDiscardAnIdentifiedSong() async throws {
         var item = librarySong("i.unnamedArtist", playable: false)
         var attributes = item["attributes"] as! [String: Any]; attributes.removeValue(forKey: "artistName")

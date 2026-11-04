@@ -27,28 +27,38 @@ import Testing
     var delaysLibrary = false
     var libraryRequests = 0
     var playError: (any Error)?
+    var searchError: (any Error)?
+    var subscriptionError: (any Error)?
     func requestAuthorization() async -> MusicAuthorization.Status {
         authorizationRequests += 1
         if delaysAuthorization { await withCheckedContinuation { authorizationGate = $0 } }
         return authorization
     }
-    func subscription() async throws -> AppleMusicCapabilities { subscriptionRequests += 1; return subscriptionValue }
+    func subscription() async throws -> AppleMusicCapabilities {
+        subscriptionRequests += 1
+        if let subscriptionError { throw subscriptionError }
+        return subscriptionValue
+    }
     func search(_ query: String) async throws -> [Track] {
         searchRequests += 1
         if delaysSearch { await withCheckedContinuation { searchGate = $0 } }
+        if let searchError { throw searchError }
         return [appleTrack("search")]
     }
-    func librarySongs(validate: @MainActor () throws -> Void) async throws -> [Track] {
+    func librarySongs(validate: @MainActor () throws -> Void, progress: @MainActor (ImportProgress) -> Void) async throws -> [Track] {
         libraryRequests += 1
+        progress(ImportProgress(completed: 0, total: 1))
         if delaysLibrary { await withCheckedContinuation { libraryGate = $0 } }
         try validate()
+        progress(ImportProgress(completed: 1, total: 1))
         return [appleTrack("i.librarySong")]
     }
     func libraryPlaylists(validate: @MainActor () throws -> Void) async throws -> [AppleMusicLibraryPlaylist] {
         try validate(); return [.init(id: "p.library", name: "Library")]
     }
-    func libraryTracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void) async throws -> [Track] {
-        try await librarySongs(validate: validate)
+    func libraryTracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void,
+                       progress: @MainActor (ImportProgress) -> Void) async throws -> [Track] {
+        try await librarySongs(validate: validate, progress: progress)
     }
     func setSession(_ id: UUID?) {
         session = id
@@ -72,6 +82,11 @@ import Testing
 }
 private func appleTrack(_ id: String) -> Track {
     Track(id: "appleMusic:\(id)", title: "Song \(id)", artist: "Artist", album: "Album", duration: 10, source: .appleMusic, sourceID: id)
+}
+/// The bridged form of a Swift-struct MusicKit failure, as users saw it in search.
+private func rawMusicKitFailure() -> NSError { NSError(domain: "MusicKit.MusicDataRequest.Error", code: 1) }
+private func isReadableAppleMusicText(_ text: String) -> Bool {
+    !text.isEmpty && !text.contains("MusicKit") && !text.localizedCaseInsensitiveContains("couldn")
 }
 private let configuredMusic = AppleMusicConfiguration(enabledInBuild: true, expectedTeam: "TESTTEAM", signedTeam: "TESTTEAM", isAdHoc: false, hasUsageDescription: true)
 
@@ -149,6 +164,51 @@ private let configuredMusic = AppleMusicConfiguration(enabledInBuild: true, expe
         let cancelled = Task { try await service.librarySongs() }
         try await waitFor { adapter.libraryGate != nil }; cancelled.cancel(); adapter.libraryGate?.resume()
         await #expect(throws: CancellationError.self) { try await cancelled.value }
+    }
+    @Test func catalogSearchLimitStaysWithinAppleMaximum() {
+        #expect(AppleMusicService.catalogSearchLimit > 0)
+        #expect(AppleMusicService.catalogSearchLimit <= 25)
+    }
+    @Test func rawMusicKitSearchFailureSurfacesReadableMessage() async {
+        let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
+        let adapter = StubAppleMusic(), service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
+        await service.connect(); adapter.searchError = rawMusicKitFailure()
+        do { _ = try await service.search("test"); Issue.record("Failed search returned results") }
+        catch let error as MusicError { #expect(isReadableAppleMusicText(error.localizedDescription)) }
+        catch { Issue.record("Search surfaced an unwrapped error") }
+        adapter.searchError = MusicError.message("Authored search failure")
+        do { _ = try await service.search("test"); Issue.record("Failed search returned results") }
+        catch { #expect(error.localizedDescription == "Authored search failure") }
+        adapter.searchError = CancellationError()
+        await #expect(throws: CancellationError.self) { try await service.search("test") }
+    }
+    @Test func subscriptionFailureStoresReadableErrorOnConnectAndRefresh() async throws {
+        let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
+        let adapter = StubAppleMusic(), service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
+        adapter.subscriptionError = rawMusicKitFailure()
+        await service.connect()
+        #expect(service.isEnabled); #expect(!service.isBusy)
+        let message = try #require(service.error)
+        #expect(isReadableAppleMusicText(message))
+        #expect(service.subscriptionDescription == L10n.string("订阅检查失败"))
+        adapter.subscriptionError = URLError(.timedOut)
+        await service.refresh()
+        #expect(service.error == L10n.string("网络请求超时，请重试。"))
+        adapter.subscriptionError = nil
+        await service.refresh(); #expect(service.error == nil)
+    }
+    @Test func libraryProgressIsForwardedFromTheAdapter() async throws {
+        let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
+        let adapter = StubAppleMusic(), service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
+        await service.connect()
+        var reports: [ImportProgress] = []
+        let songs = try await service.librarySongs(progress: { reports.append($0) })
+        #expect(songs.count == 1)
+        #expect(reports == [ImportProgress(completed: 0, total: 1), ImportProgress(completed: 1, total: 1)])
+        reports = []
+        let playlist = AppleMusicLibraryPlaylist(id: "p.library", name: "Library", trackCount: 1)
+        let tracks = try await service.libraryTracks(in: playlist, progress: { reports.append($0) })
+        #expect(tracks.count == 1); #expect(reports.last == ImportProgress(completed: 1, total: 1))
     }
     @Test func musicKitUsesRealStateAndNeverFabricatesSpectrumOrVolume() async throws {
         let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
