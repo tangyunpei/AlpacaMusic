@@ -296,9 +296,10 @@ private struct SearchLinkRow: View {
     }
 }
 
+/// Matching albums from the album library; a tile opens the album page.
 private struct SearchAlbumRow: View {
     @Bindable var model: AppModel
-    var albums: [SearchAlbumMatch]
+    var albums: [MusicAlbum]
     var body: some View {
         ScrollView(.horizontal) {
             LazyHStack(alignment: .top, spacing: 16) {
@@ -316,18 +317,31 @@ private struct SearchAlbumTile: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     @Environment(\.appReducedMotion) private var appReduced
     @Bindable var model: AppModel
-    var album: SearchAlbumMatch
+    var album: MusicAlbum
     @State private var hovered = false
+    /// The first track with artwork; the album's own artwork wins when it has
+    /// one, carried by a lightweight track if no song is loaded yet.
+    private var coverTrack: Track? {
+        let ids = album.artworkURL == nil ? album.trackIDs : Array(album.trackIDs.prefix(1))
+        let tracks = model.library.tracks(withIDs: ids)
+        let found = tracks.first { $0.artworkData?.isEmpty == false || $0.artworkURL != nil } ?? tracks.first
+        guard let url = album.artworkURL else { return found }
+        var track = found ?? Track(id: album.id, title: album.name, artist: album.artist, album: album.name, duration: 0, source: album.source)
+        track.artworkURL = url
+        track.artworkData = nil
+        return track
+    }
     var body: some View {
-        Button { if let first = album.tracks.first { model.play(first, context: album.tracks) } } label: {
+        let count = album.trackIDs.count
+        Button { model.navigate(.album(album.id)) } label: {
             VStack(alignment: .leading, spacing: 7) {
-                ArtworkView(track: album.tracks.first, radius: 7).frame(width: 96, height: 96)
-                    .overlay(alignment: .bottomTrailing) { playGlyph }
-                Text(album.album).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
+                ArtworkView(track: coverTrack, radius: 7).frame(width: 96, height: 96)
+                    .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(hovered ? palette.accent.opacity(0.45) : palette.line) }
+                Text(album.name).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
                 HStack(spacing: 4) {
                     Text(album.artist).lineLimit(1)
                     Text(verbatim: "·").foregroundStyle(palette.faint)
-                    Text(album.tracks.count, format: .number).monospacedDigit()
+                    Text(count, format: .number).monospacedDigit()
                 }
                 .font(.system(size: 9)).foregroundStyle(palette.secondary)
             }
@@ -335,15 +349,11 @@ private struct SearchAlbumTile: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help(L10n.string("播放 \(album.album)"))
-        .accessibilityLabel(L10n.string("播放 \(album.album)，\(album.artist)"))
+        .help(L10n.string("打开专辑 \(album.name)"))
+        .accessibilityLabel(L10n.string("打开专辑 \(album.name)"))
+        .accessibilityValue([album.artist, album.source.title, L10n.string("\(count) 首歌曲")].filter { !$0.isEmpty }.joined(separator: " · "))
+        .accessibilityIdentifier("search-album-\(album.id)")
         .animation(systemReduced || appReduced ? nil : ExperienceMotion.control, value: hovered)
-    }
-    private var playGlyph: some View {
-        Image(systemName: "play.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.onPrimary)
-            .frame(width: 24, height: 24).background(palette.primary, in: .circle)
-            .padding(6).opacity(hovered ? 1 : 0)
-            .accessibilityHidden(true)
     }
 }
 

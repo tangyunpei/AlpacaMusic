@@ -16,14 +16,6 @@ struct SearchSourceStatus: Identifiable, Equatable, Sendable {
     var id: MusicSource { source }
 }
 
-/// Library tracks grouped by album and artist for search results.
-struct SearchAlbumMatch: Identifiable, Equatable, Sendable {
-    var id: String
-    var album: String
-    var artist: String
-    var tracks: [Track]
-}
-
 @MainActor @Observable
 final class AppModel {
     let library: MusicLibrary
@@ -33,6 +25,8 @@ final class AppModel {
     let spotify: SpotifyService
     let accounts: ConnectedMusicAccounts
     let lyrics: LyricsController
+    /// Imports a newly connected account's collections in the background (C4).
+    let autoImport: AutoImportCoordinator
     var language: AppLanguage {
         didSet {
             preferences.set(language.rawValue, forKey: L10n.preferenceKey)
@@ -112,8 +106,10 @@ final class AppModel {
         appleMusic = AppleMusicService(defaults: preferences)
         spotify = SpotifyService(defaults: preferences, credentials: isolatedAccounts ? MemorySpotifyCredentialStore() : SpotifyCredentialStore())
         player = PlayerController(sources: sourceService, defaults: preferences, appleMusic: appleMusic, spotify: spotify)
+        autoImport = AutoImportCoordinator(library: library, accounts: accounts, appleMusic: appleMusic, spotify: spotify)
         visual = (preferences.data(forKey: "visual-settings").flatMap { try? JSONDecoder().decode(VisualSettings.self, from: $0) } ?? .standard).validated()
         presets = preferences.data(forKey: "visual-presets").flatMap { try? JSONDecoder().decode([VisualPreset].self, from: $0) }?.map { VisualPreset(id: $0.id, name: $0.name, settings: $0.settings.validated()) } ?? []
+        autoImport.onNotice = { [weak self] message in self?.notify(message) }
     }
 
     var activeTrack: Track? { player.current ?? library.tracks.first }
@@ -163,7 +159,7 @@ final class AppModel {
     private struct SearchSections {
         var library: [Track]
         var online: [Track]
-        var albums: [SearchAlbumMatch]
+        var albums: [MusicAlbum]
         var onlineInLibrary: Set<String>
     }
     /// Library tracks matching the current search (source filter applied).
@@ -171,8 +167,9 @@ final class AppModel {
     /// Remote results that are not library tracks. Songs added from this
     /// search stay here, marked as added, instead of jumping sections.
     var searchOnlineResults: [Track] { searchSections.online }
-    /// Library albums whose title or artist matches the current search.
-    var searchAlbumMatches: [SearchAlbumMatch] { searchSections.albums }
+    /// Library album collections (inferred and imported) whose name or
+    /// artist matches the current search, source filter applied.
+    var searchAlbumMatches: [MusicAlbum] { searchSections.albums }
     /// The trimmed search term when it is a single HTTP(S) address.
     var searchLink: URL? { Self.linkAddress(in: searchTerm) }
 
@@ -246,22 +243,23 @@ final class AppModel {
             online.append(track)
             if !index.ids.contains(track.id), index.keys.contains(Self.matchKey(track)) { onlineInLibrary.insert(track.id) }
         }
+        return SearchSections(library: matches, online: online, albums: searchAlbums(term: term, filter: filter, excluding: added), onlineInLibrary: onlineInLibrary)
+    }
+
+    /// Up to 12 album collections from the album library whose name or artist
+    /// contains the term and that hold more than one song not added during this
+    /// search, so singles and just-added songs do not spawn tiles. Placeholder
+    /// names for unknown albums and links are skipped.
+    private func searchAlbums(term: String, filter: MusicSource?, excluding added: Set<String>) -> [MusicAlbum] {
         let unknownAlbum = L10n.string("未知专辑"), linkAlbum = L10n.string("我的链接")
-        var albumOrder: [String] = []
-        var albumTracks: [String: [Track]] = [:]
-        for track in matches {
-            let album = track.album.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !album.isEmpty, album != unknownAlbum, album != linkAlbum,
-                  album.localizedCaseInsensitiveContains(term) || track.artist.localizedCaseInsensitiveContains(term) else { continue }
-            let id = Self.fold(album) + "\u{1F}" + Self.fold(track.artist)
-            if albumTracks[id] == nil { albumOrder.append(id) }
-            albumTracks[id, default: []].append(track)
+        var albums: [MusicAlbum] = []
+        for album in library.albums where filter == nil || album.source == filter {
+            guard albums.count < 12 else { break }
+            guard album.trackIDs.filter({ !added.contains($0) }).count > 1, album.name != unknownAlbum, album.name != linkAlbum,
+                  album.name.localizedCaseInsensitiveContains(term) || album.artist.localizedCaseInsensitiveContains(term) else { continue }
+            albums.append(album)
         }
-        let albums: [SearchAlbumMatch] = albumOrder.compactMap { id in
-            guard let tracks = albumTracks[id], tracks.count > 1, let first = tracks.first else { return nil }
-            return SearchAlbumMatch(id: id, album: first.album, artist: first.artist, tracks: tracks)
-        }
-        return SearchSections(library: matches, online: online, albums: Array(albums.prefix(12)), onlineInLibrary: onlineInLibrary)
+        return albums
     }
 
     var pageTitle: String {
@@ -436,12 +434,14 @@ final class AppModel {
         }
     }
     func disconnectAccount(_ source: MusicSource) async {
+        autoImport.cancel(source)
         if player.current?.source == source { player.pause() }
         clearSearchResults(for: source)
         await accounts.disconnect(source)
         notify(accounts.state(source).error ?? L10n.string("已退出\(source.title)，已导入的歌单保留"))
     }
     func disconnectAppleMusic() {
+        autoImport.cancel(.appleMusic)
         if player.current?.source == .appleMusic { player.pause() }
         appleMusic.disconnect()
         clearSearchResults(for: .appleMusic)

@@ -6,7 +6,7 @@ struct SpotifyConnectionControls: View {
     @State private var showsSetup = false
     @State private var showsLibrary = false
     @State private var showsDevices = false
-    /// Set by a login the user started here; restores never open the importer.
+    /// Set by a login the user started here; restores never auto-import.
     @State private var awaitingLogin = false
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -18,6 +18,7 @@ struct SpotifyConnectionControls: View {
                     Button(L10n.string("播放设备")) { showsDevices = true }.buttonStyle(QuietButtonStyle())
                     Spacer()
                     Button(L10n.string("断开")) {
+                        model.autoImport.cancel(.spotify)
                         Task {
                             await model.player.pauseAndWaitForSpotify()
                             await model.spotify.disconnect()
@@ -53,7 +54,9 @@ struct SpotifyConnectionControls: View {
         .onChange(of: model.spotify.isEnabled) { _, enabled in
             guard enabled, awaitingLogin else { return }
             awaitingLogin = false
-            showsLibrary = true
+            // Imports in the background; the floating card shows progress.
+            model.autoImport.cancel(.spotify)
+            model.autoImport.start(.spotify)
         }
         .onChange(of: model.spotify.isBusy) { _, busy in
             if !busy && !model.spotify.isEnabled { awaitingLogin = false }
@@ -180,6 +183,9 @@ struct SpotifyLibraryImportView: View {
     @State private var task: Task<Void, Never>?
     @State private var operationID = UUID()
     private var isImporting: Bool { importing != nil || batch != nil }
+    /// A background import of this account is running; manual imports would overlap it.
+    private var autoImporting: Bool { model.autoImport.isRunning(.spotify) }
+    private var locked: Bool { isImporting || autoImporting || !model.spotify.isEnabled }
     private var motion: Animation? { systemReduced || appReduced ? nil : ExperienceMotion.panel }
     private var panelTransition: AnyTransition {
         systemReduced || appReduced ? AnyTransition.opacity : AnyTransition.move(edge: .top).combined(with: .opacity)
@@ -188,13 +194,18 @@ struct SpotifyLibraryImportView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             SheetHeading(title: L10n.string("导入 Spotify 曲库"), subtitle: model.spotify.profile?.displayName ?? "") { cancel(); dismiss() }
+            if autoImporting {
+                AutoImportStatusPanel(coordinator: model.autoImport, source: .spotify)
+                    .accessibilityIdentifier("spotify-auto-import-progress")
+                    .transition(panelTransition)
+            }
             savedRow
             if isImporting {
                 activityPanel.transition(panelTransition)
             }
             if let importError {
                 PlatformImportErrorLine(message: importError, retryLabel: L10n.string("再次导入"),
-                                        retryDisabled: isImporting || !model.spotify.isEnabled,
+                                        retryDisabled: locked,
                                         retry: retryAction)
                     .transition(AnyTransition.opacity)
             }
@@ -209,6 +220,7 @@ struct SpotifyLibraryImportView: View {
         }
         .padding(28).frame(width: 550).foregroundStyle(palette.text).background(palette.panel)
         .animation(motion, value: isImporting)
+        .animation(motion, value: autoImporting)
         .animation(motion, value: importError)
         .animation(motion, value: listError)
         .animation(motion, value: loading)
@@ -228,7 +240,7 @@ struct SpotifyLibraryImportView: View {
         return PlatformPlaylistImportRow(title: item.name, artwork: nil, symbol: "heart",
                                          caption: caption(for: item, state: current), state: current,
                                          actionLabel: L10n.string("导入「\(item.name)」"),
-                                         disabled: isImporting || !model.spotify.isEnabled) {
+                                         disabled: locked) {
             startImport(item)
         }
     }
@@ -252,7 +264,7 @@ struct SpotifyLibraryImportView: View {
                 Label(L10n.string("全部导入"), systemImage: "square.and.arrow.down.on.square")
             }
             .buttonStyle(QuietButtonStyle())
-            .disabled(isImporting || loading || !model.spotify.isEnabled)
+            .disabled(locked || loading)
             .accessibilityIdentifier("spotify-import-all")
         }
     }
@@ -315,7 +327,7 @@ struct SpotifyLibraryImportView: View {
         return PlatformPlaylistImportRow(title: playlist.name, artwork: artwork(for: playlist),
                                          caption: caption(for: item, state: current), state: current,
                                          actionLabel: L10n.string("导入「\(playlist.name)」"),
-                                         disabled: isImporting || !model.spotify.isEnabled) {
+                                         disabled: locked) {
             startImport(item)
         }
     }
@@ -390,7 +402,7 @@ struct SpotifyLibraryImportView: View {
     }
 
     private func startImport(_ item: SpotifyImportItem) {
-        guard !isImporting, let account = model.spotify.profile else { return }
+        guard !isImporting, !autoImporting, let account = model.spotify.profile else { return }
         let session = model.spotify.sessionID, operation = UUID(); operationID = operation
         importing = item; importError = nil; lastFailure = nil
         task = Task { @MainActor in
@@ -412,7 +424,7 @@ struct SpotifyLibraryImportView: View {
     /// Liked songs first, then every playlist, one after another. A failing
     /// row is marked and skipped; a changed session or cancel stops the run.
     private func startBatchImport() {
-        guard !isImporting, let account = model.spotify.profile else { return }
+        guard !isImporting, !autoImporting, let account = model.spotify.profile else { return }
         let queue = [SpotifyImportItem(playlist: nil)] + playlists.map { SpotifyImportItem(playlist: $0) }
         guard let first = queue.first else { return }
         let session = model.spotify.sessionID, operation = UUID(); operationID = operation

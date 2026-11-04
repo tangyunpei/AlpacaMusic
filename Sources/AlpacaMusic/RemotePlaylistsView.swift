@@ -56,6 +56,8 @@ struct RemotePlaylistsView: View {
     @State private var partialReceipts: [String: String] = [:]
     private var state: ConnectedMusicState { model.accounts.state(source) }
     private var isImporting: Bool { importing != nil || batch != nil }
+    /// A background import of this account is running; manual imports would overlap it.
+    private var autoImporting: Bool { model.autoImport.isRunning(source) }
     private var showsSkeleton: Bool { state.busy && !state.playlistsLoaded }
     private var motion: Animation? { systemReduced || appReduced ? nil : ExperienceMotion.panel }
     private var panelTransition: AnyTransition {
@@ -65,6 +67,11 @@ struct RemotePlaylistsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             SheetHeading(title: L10n.string("导入歌单"), subtitle: "\(source.title) · \(state.profile?.displayName ?? L10n.string("尚未连接"))") { clearPendingImport(); dismiss() }
+            if autoImporting {
+                AutoImportStatusPanel(coordinator: model.autoImport, source: source)
+                    .accessibilityIdentifier("playlist-auto-import-progress")
+                    .transition(panelTransition)
+            }
             header
             if isImporting {
                 activityPanel.transition(panelTransition)
@@ -74,6 +81,7 @@ struct RemotePlaylistsView: View {
         }
         .padding(28).frame(width: 580).background(palette.panel).foregroundStyle(palette.text)
         .animation(motion, value: isImporting)
+        .animation(motion, value: autoImporting)
         .animation(motion, value: importFailure != nil)
         .animation(motion, value: partialImport != nil)
         .animation(motion, value: state.error)
@@ -105,7 +113,7 @@ struct RemotePlaylistsView: View {
                 Label(L10n.string("全部导入"), systemImage: "square.and.arrow.down.on.square")
             }
             .buttonStyle(QuietButtonStyle())
-            .disabled(isImporting || state.busy || state.playlists.isEmpty || state.profile == nil)
+            .disabled(isImporting || autoImporting || state.busy || state.playlists.isEmpty || state.profile == nil)
             .accessibilityIdentifier("playlist-import-all")
         }
     }
@@ -158,7 +166,7 @@ struct RemotePlaylistsView: View {
         return PlatformImportErrorLine(message: L10n.string("「\(failure.playlist.name)」导入失败：\(failure.message)"),
                                        detail: detail,
                                        retryLabel: L10n.string("重试「\(failure.playlist.name)」"),
-                                       retryDisabled: isImporting || state.busy || state.profile == nil,
+                                       retryDisabled: isImporting || autoImporting || state.busy || state.profile == nil,
                                        retry: { startImport(failure.playlist) })
             .accessibilityIdentifier("playlist-import-error")
     }
@@ -166,7 +174,7 @@ struct RemotePlaylistsView: View {
     /// One compact line: playlist, a short summary and the two recovery actions.
     /// The provider's full explanation stays in the tooltip and selectable text.
     private func partialPanel(_ candidate: PartialPlaylistCandidate) -> some View {
-        let locked = isImporting || state.busy || state.profile?.id != candidate.accountID
+        let locked = isImporting || autoImporting || state.busy || state.profile?.id != candidate.accountID
         let summary = candidate.saveError ?? (candidate.saved ? candidate.receipt : L10n.string("\(candidate.partial.failedCount) 首未能读取"))
         let parts: [String?] = [
             L10n.string("共 \(candidate.partial.totalCount) 首，可读取 \(candidate.partial.tracks.count) 首，\(candidate.partial.failedCount) 首未能读取。"),
@@ -228,7 +236,7 @@ struct RemotePlaylistsView: View {
         return PlatformPlaylistImportRow(title: playlist.name, artwork: artwork(for: playlist),
                                          caption: caption(for: playlist, state: current),
                                          state: current, actionLabel: L10n.string("导入「\(playlist.name)」"),
-                                         disabled: isImporting || state.busy || state.profile == nil) {
+                                         disabled: isImporting || autoImporting || state.busy || state.profile == nil) {
             startImport(playlist)
         }
     }
@@ -299,7 +307,7 @@ struct RemotePlaylistsView: View {
     // MARK: Importing
 
     private func startImport(_ playlist: RemoteMusicPlaylist) {
-        guard let accountID = state.profile?.id, !state.busy, !isImporting else { return }
+        guard let accountID = state.profile?.id, !state.busy, !isImporting, !autoImporting else { return }
         let token = UUID(); importToken = token
         importing = playlist; savingCount = nil; importFailure = nil; partialImport = nil
         importTask = Task { @MainActor in
@@ -312,7 +320,7 @@ struct RemotePlaylistsView: View {
     /// marked and skipped; an incomplete one keeps its readable tracks. A
     /// changed account or cancel stops the run.
     private func startBatchImport() {
-        guard let accountID = state.profile?.id, !state.busy, !isImporting, let first = state.playlists.first else { return }
+        guard let accountID = state.profile?.id, !state.busy, !isImporting, !autoImporting, let first = state.playlists.first else { return }
         let queue = state.playlists
         let token = UUID(); importToken = token
         importFailure = nil; partialImport = nil; savingCount = nil
@@ -436,7 +444,7 @@ struct RemotePlaylistsView: View {
     }
 
     private func savePartial(_ candidate: PartialPlaylistCandidate) {
-        guard !isImporting, !candidate.saved, !candidate.partial.tracks.isEmpty,
+        guard !isImporting, !autoImporting, !candidate.saved, !candidate.partial.tracks.isEmpty,
               !state.busy, state.profile?.id == candidate.accountID else { return }
         let token = UUID(); importToken = token
         importing = candidate.playlist; savingCount = candidate.partial.tracks.count; importFailure = nil

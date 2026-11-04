@@ -1148,3 +1148,12 @@
 "等待导入" = "Waiting to import";
 "说明" = "Info";
 "部分导入" = "Partially imported";
+"%@ · 已自动导入 %lld 项" = "%@ · Auto-imported %lld";
+"%@ · 已自动导入 %lld 项，%lld 项失败" = "%@ · Auto-imported %lld, %lld failed";
+"%@ · 连接已变化，自动导入已停止" = "%@ · Connection changed; auto-import stopped";
+"%@ · 正在读取资料库…" = "%@ · Reading library…";
+"刷新专辑" = "Refresh albums";
+"获取专辑失败：%@" = "Could not load albums: %@";
+"已导入 %lld 张专辑" = "Imported %lld albums";
+"已导入 %lld 张专辑，%lld 个失败" = "Imported %lld albums, %lld failed";
+"导入的专辑会出现在专辑库中，平台上的收藏不会被修改。" = "Imported albums appear in Albums. Nothing changes on the platform.";

@@ -11,8 +11,9 @@ struct SourcesView: View {
     @State private var login: PlatformSheet?
     @State private var playlists: PlatformSheet?
     @State private var albums: PlatformSheet?
-    /// A login that just succeeded; its playlists open once the login sheet is gone.
-    @State private var pendingImport: MusicSource?
+    /// The login attempt whose success started an auto-import; cancelling that
+    /// attempt reverts the account, so its import stops too.
+    @State private var autoImportAttempt: UUID?
     @State private var sodaShare = false
     @State private var advanced = false
     private var enabledCount: Int { 1 + DirectMusicAccess.visibleSources.filter { source in model.accounts.state(source).profile != nil || model.library.sources.contains { $0.kind == source && $0.enabled && !$0.endpoint.isEmpty } }.count + (model.appleMusic.isEnabled ? 1 : 0) + (model.spotify.isEnabled ? 1 : 0) }
@@ -98,16 +99,16 @@ struct SourcesView: View {
             }.font(.system(size: 11)).foregroundStyle(palette.secondary)
         }
         .sheet(item: $editing) { config in SourceEditor(model: model, initial: config).modifier(PanelEntrance(appReduced: model.visual.reduceMotion)) }
-        .sheet(item: $login, onDismiss: { openPendingImport() }) { item in
+        .sheet(item: $login) { item in
             Group {
                 if item.source == .soda {
                     SodaLoginView(onConnect: { try await connect(item, cookies: $0) },
                                   onCancel: { cancelLogin(item) },
-                                  onComplete: { Task { await model.accounts.completeConnection(item.source, attemptID: item.id) } })
+                                  onComplete: { completeLogin(item) })
                 } else {
                     QRLoginView(source: item.source, onConnect: { try await connect(item, cookies: $0) },
                                     onCancel: { cancelLogin(item) },
-                                    onComplete: { Task { await model.accounts.completeConnection(item.source, attemptID: item.id) } })
+                                    onComplete: { completeLogin(item) })
                 }
             }.modifier(PanelEntrance(appReduced: model.visual.reduceMotion))
         }
@@ -117,29 +118,29 @@ struct SourcesView: View {
     }
     private func connect(_ item: PlatformSheet, cookies: [MusicSessionCookie]) async throws {
         let previous = model.accounts.state(item.source).profile?.id
-        do {
-            try await model.accounts.connect(item.source, cookies: cookies, attemptID: item.id)
-        } catch {
-            pendingImport = nil
-            throw error
-        }
+        // Re-authenticating invalidates a running import; stop it quietly first.
+        model.autoImport.cancel(item.source)
+        try await model.accounts.connect(item.source, cookies: cookies, attemptID: item.id)
+        // A login closed while the connection committed is about to be reverted.
+        try Task.checkCancellation()
         if previous != model.accounts.state(item.source).profile?.id, model.player.current?.source == item.source { model.player.pause() }
-        // Only a login made here opens the importer; launch-time restores never do.
-        pendingImport = item.source
         model.notify(L10n.string("已连接\(item.source.title)，可以搜索歌曲或导入歌单"))
+        // Only a login made here imports; launch-time restores never do. A run
+        // for the previous connection is replaced by one for this account.
+        model.autoImport.cancel(item.source)
+        model.autoImport.start(item.source)
+        autoImportAttempt = item.id
     }
     private func cancelLogin(_ item: PlatformSheet) {
-        pendingImport = nil
+        if autoImportAttempt == item.id {
+            autoImportAttempt = nil
+            model.autoImport.cancel(item.source)
+        }
         Task { await model.accounts.cancelConnection(item.source, attemptID: item.id) }
     }
-    /// Runs after the login sheet has fully dismissed, so the playlists sheet
-    /// never competes with it.
-    private func openPendingImport() {
-        guard let source = pendingImport else { return }
-        pendingImport = nil
-        let state = model.accounts.state(source)
-        guard state.profile != nil, !state.busy, playlists == nil else { return }
-        playlists = PlatformSheet(source: source)
+    private func completeLogin(_ item: PlatformSheet) {
+        if autoImportAttempt == item.id { autoImportAttempt = nil }
+        Task { await model.accounts.completeConnection(item.source, attemptID: item.id) }
     }
     private func sourceCard<Actions: View>(source: MusicSource, status: String, detail: String, @ContentBuilder actions: () -> Actions) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -167,7 +168,7 @@ struct AppleMusicConnectionControls: View {
                     Button(L10n.string("停用")) { model.disconnectAppleMusic() }.buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(palette.secondary)
                 }
             } else {
-                Button { Task { await connectAndImport() } } label: {
+                Button { Task { await connectAndAutoImport() } } label: {
                     HStack(spacing: 8) { if model.appleMusic.isBusy { ProgressView().controlSize(.mini) }; Text(L10n.string("连接 Apple Music")).frame(maxWidth: .infinity) }
                 }.buttonStyle(QuietButtonStyle()).disabled(!model.appleMusic.isConfigured || model.appleMusic.isBusy).opacity(model.appleMusic.isConfigured ? 1 : 0.45)
             }
@@ -180,12 +181,15 @@ struct AppleMusicConnectionControls: View {
         .sheet(isPresented: $showsLibrary) { AppleMusicLibraryImportView(model: model).modifier(PanelEntrance(appReduced: model.visual.reduceMotion)) }
     }
     /// A user-initiated connection that ends enabled, authorized (an
-    /// unauthorized result disables the service) and error-free opens the importer.
-    private func connectAndImport() async {
+    /// unauthorized result disables the service) and error-free imports the
+    /// library in the background, with progress in the app's floating card.
+    private func connectAndAutoImport() async {
         await model.appleMusic.connect()
         let music = model.appleMusic
-        guard music.isEnabled, !music.isBusy, music.error == nil, !showsLibrary else { return }
-        showsLibrary = true
+        guard music.isEnabled, !music.isBusy, music.error == nil else { return }
+        // A stale run from a lapsed session would make start a no-op.
+        model.autoImport.cancel(.appleMusic)
+        model.autoImport.start(.appleMusic)
     }
 }
 
