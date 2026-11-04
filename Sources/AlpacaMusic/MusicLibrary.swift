@@ -79,11 +79,14 @@ private actor LibraryStorage {
     private(set) var sources: [SourceConfiguration] = SourceConfiguration.defaults
     private(set) var ready = false
     private(set) var busy = false
+    /// Non-nil exactly while `importURLs(_:)` runs; drives the import progress card.
+    private(set) var localImport: ImportProgress?
     var error: String?
     private(set) var persistenceError: String?
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private let storage: LibraryStorage
     @ObservationIgnored private let importer = MetadataImporter()
+    @ObservationIgnored private var localImportTask: Task<ImportResult, Never>?
     @ObservationIgnored private var revision: UInt64 = 0
     @ObservationIgnored private var saveTask: Task<Result<Void, MusicError>, Never>?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
@@ -164,12 +167,29 @@ private actor LibraryStorage {
     func importURLs(_ urls: [URL]) async -> ImportResult {
         guard !busy else { return ImportResult(errors: [L10n.string("已有导入任务正在进行，请稍后再试")] ) }
         busy = true
-        defer { busy = false }
-        let result = await importer.importURLs(urls)
+        localImport = ImportProgress(completed: 0, total: nil)
+        defer { busy = false; localImport = nil; localImportTask = nil }
+        let report: @MainActor @Sendable (ImportProgress) -> Void = { [weak self] value in
+            guard let self, self.localImport != nil else { return }
+            self.localImport = value
+        }
+        let importer = self.importer
+        // A child task keeps the import cancellable from the UI while still
+        // following cancellation of the caller.
+        let task = Task { await importer.importURLs(urls, progress: report) }
+        localImportTask = task
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         addTracks(result.tracks)
         if !result.errors.isEmpty { error = result.errors.prefix(4).joined(separator: "\n") }
         return result
     }
+
+    /// Stops reading further files; tracks already read are still added.
+    func cancelLocalImport() { localImportTask?.cancel() }
 
     func addTracks(_ additions: [Track]) {
         if !ready { startupMutations.append(.add(additions)) }

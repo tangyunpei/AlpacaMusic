@@ -88,11 +88,19 @@ struct ContentView: View {
                         }.buttonStyle(QuietButtonStyle()).disabled(retryingPersistence)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(14).background(palette.raised, in: .rect(cornerRadius: 9))
                 }
+                // `busy` toggles together with `localImport`; only the card reads
+                // the per-file progress so ticks do not re-render the app shell.
+                if model.library.busy {
+                    LocalImportProgressCard(library: model.library)
+                        .environment(\.appReducedMotion, model.visual.reduceMotion)
+                        .transition(AnyTransition.opacity.combined(with: .offset(y: 6)))
+                }
                 if let notice = model.notice {
                     HStack(spacing: 10) {
                         Image(systemName: "info.circle").foregroundStyle(palette.accent)
-                        Text(notice).font(.system(size: 11)).lineLimit(3)
+                        Text(notice).font(.system(size: 11)).lineLimit(3).help(notice)
                         Button { model.notice = nil } label: { Image(systemName: "xmark").font(.system(size: 10)) }.buttonStyle(.plain)
+                            .help(L10n.string("关闭提示")).accessibilityLabel(L10n.string("关闭提示"))
                     }.padding(14).background(palette.raised, in: .rect(cornerRadius: 9))
                         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(palette.accent.opacity(0.14)))
                 }
@@ -141,6 +149,7 @@ struct ContentView: View {
         .animation(ExperienceMotion.control, value: model.player.failure?.id)
         .animation(ExperienceMotion.control, value: dismissedPlaybackFailureID)
         .animation(ExperienceMotion.control, value: model.library.persistenceError)
+        .animation(reduceMotion || model.visual.reduceMotion ? nil : ExperienceMotion.control, value: model.library.busy)
         .onChange(of: model.library.sources) { _, sources in model.player.sourceConfigurations = sources }
         .onChange(of: model.immersive) { _, enabled in
             withAnimation(.smooth(duration: 0.25)) { columns = enabled ? .detailOnly : .all }
@@ -151,6 +160,21 @@ struct ContentView: View {
             else { model.navigate(model.destination) }
         }
         .transaction { if reduceMotion || model.visual.reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
+    }
+}
+
+/// Floating progress for local file and folder imports.
+private struct LocalImportProgressCard: View {
+    @Environment(\.appPalette) private var palette
+    var library: MusicLibrary
+
+    var body: some View {
+        ImportProgressPanel(title: L10n.string("正在导入本地音乐"), progress: library.localImport ?? ImportProgress(),
+                            symbol: "square.and.arrow.down", onCancel: { library.cancelLocalImport() })
+            .background(palette.raised, in: .rect(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.accent.opacity(0.14)))
+            .frame(maxWidth: 380)
+            .accessibilityIdentifier("local-import-progress")
     }
 }
 
@@ -180,7 +204,7 @@ struct SidebarView: View {
             }
             Spacer(minLength: 15)
             Button { model.beginImport(folder: false) } label: { Label(L10n.string("导入音乐"), systemImage: "plus").frame(maxWidth: .infinity) }
-                .buttonStyle(QuietButtonStyle()).padding(.horizontal, 17).padding(.bottom, 20)
+                .buttonStyle(QuietButtonStyle()).disabled(model.library.busy).padding(.horizontal, 17).padding(.bottom, 20)
         }.background(palette.panel.opacity(0.35))
     }
     private func nav(_ name: String, _ icon: String, _ destination: Destination) -> some View {
@@ -208,7 +232,7 @@ struct AppHeader: View {
                 else { Text("⌘ K").font(.system(size: 9)).foregroundStyle(palette.faint) }
             }.padding(.horizontal, 11).frame(width: 270, height: 33).background(palette.panel, in: .rect(cornerRadius: 7)).overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(palette.line))
             Button { searchFocused = true } label: { EmptyView() }.keyboardShortcut("k", modifiers: .command).hidden().frame(width: 0)
-            Menu { Button(L10n.string("选择音频文件…")) { model.beginImport(folder: false) }; Button(L10n.string("导入文件夹…")) { model.beginImport(folder: true) }; Divider(); Button(L10n.string("添加音频链接…")) { model.sheet = .url } } label: { Label(L10n.string("导入"), systemImage: "plus").font(.system(size: 11)) }.menuStyle(.borderlessButton).fixedSize().foregroundStyle(palette.accent)
+            Menu { Group { Button(L10n.string("选择音频文件…")) { model.beginImport(folder: false) }; Button(L10n.string("导入文件夹…")) { model.beginImport(folder: true) } }.disabled(model.library.busy); Divider(); Button(L10n.string("添加音频链接…")) { model.sheet = .url } } label: { Label(L10n.string("导入"), systemImage: "plus").font(.system(size: 11)) }.menuStyle(.borderlessButton).fixedSize().foregroundStyle(palette.accent)
         }.padding(.horizontal, 34).frame(height: 57).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
     }
 }
@@ -233,6 +257,7 @@ struct HomeView: View {
                 ProgressView(L10n.string("正在加载音乐…")).controlSize(.small).frame(maxWidth: .infinity).padding(30)
             } else if model.library.tracks.isEmpty {
                 EmptyState(symbol: "music.note", title: L10n.string("音乐库为空")) { model.beginImport(folder: false) }
+                    .disabled(model.library.busy)
             }
             if model.library.tracks.contains(where: { $0.source != .demo }) {
                 VStack(alignment: .leading, spacing: 12) { Text(L10n.string("最近添加")).font(.system(size: 15, weight: .medium)); TrackList(model: model, tracks: Array(model.library.tracks.filter { $0.source != .demo }.suffix(3).reversed()), compact: true) }
