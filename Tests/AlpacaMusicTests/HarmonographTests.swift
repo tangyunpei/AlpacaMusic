@@ -135,9 +135,12 @@ import Testing
 
     @Test func identicalInputsProduceIdenticalHistories() {
         var first = HarmonographHistory(), second = HarmonographHistory()
-        let frames = (0..<24).map { index in
-            audio(bass: (0..<256).map { sin(Double($0 + index) * 0.07) * 0.6 },
-                  mid: (0..<256).map { cos(Double($0 * 2 + index) * 0.05) * 0.4 })
+        // Explicit types keep the nested closures cheap for the type checker.
+        var frames: [VisualizationAudio] = []
+        for index in 0..<24 {
+            let bass: [Double] = (0..<256).map { (sample: Int) -> Double in sin(Double(sample + index) * 0.07) * 0.6 }
+            let mid: [Double] = (0..<256).map { (sample: Int) -> Double in cos(Double(sample * 2 + index) * 0.05) * 0.4 }
+            frames.append(audio(bass: bass, mid: mid))
         }
         for (index, input) in frames.enumerated() {
             let dt = index == 0 ? 0 : 1.0 / 60
