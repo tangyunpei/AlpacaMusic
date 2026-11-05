@@ -332,7 +332,8 @@ private struct MenuBarLyricsOverlayRoot: View {
     }
 
     /// The display in use when every display has its own menu bar, otherwise
-    /// the one display that has the menu bar.
+    /// the one display that has the menu bar. `NSScreen.main` is the display
+    /// with keyboard focus, also while another app is frontmost.
     private static func lyricsScreen() -> NSScreen? {
         if NSScreen.screensHaveSeparateSpaces { return NSScreen.main ?? NSScreen.screens.first }
         return NSScreen.screens.first
@@ -358,6 +359,8 @@ private struct MenuBarLyricsOverlayRoot: View {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
+        // Like the status items it sits under, it stays when the app is hidden.
+        panel.canHide = false
         panel.isExcludedFromWindowsMenu = true
         panel.animationBehavior = .none
         panel.appearance = NSAppearance(named: .darkAqua)
