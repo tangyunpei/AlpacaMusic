@@ -294,6 +294,36 @@ import Testing
         #expect(unavailable.state == .waiting)
     }
 
+    /// The clock's smoothing decays towards zero without reaching it. Measured
+    /// silence after music must still settle into the static silent composition
+    /// within the decay plus one full recession, instead of scrolling the tail.
+    @Test @MainActor func silenceAfterMusicSettlesDespiteTheSmoothingTail() {
+        let engine = SpectralHorizonEngine()
+        let binWidth = 44_100.0 / 2_048
+        var spectrum = [Float](repeating: 0, count: 1_024)
+        spectrum[46] = 1
+        let music = AudioLevels(spectrum: spectrum, available: true, sampleRate: 44_100, spectrumBinWidth: binWidth)
+        let quiet = AudioLevels(spectrum: [Float](repeating: 0, count: 1_024), available: true, sampleRate: 44_100,
+                                spectrumBinWidth: binWidth)
+        let start = Date(timeIntervalSinceReferenceDate: 2_000)
+        var frame = 0
+        func step(_ levels: AudioLevels) -> SpectralHorizonHistory {
+            frame += 1
+            return engine.frame(at: start.addingTimeInterval(Double(frame) / 60), trackID: "a", animated: true,
+                                levels: levels, playing: true, captureStaticSignal: false)
+        }
+        var history = SpectralHorizonHistory()
+        for _ in 0..<60 { history = step(music) }
+        #expect(history.state == .signal)
+        // About 0.8 s for the smoothed spectrum to fall below the floor, then
+        // 4 s for the flat rows to push the measured ones past the horizon.
+        for _ in 0..<(7 * 60) { history = step(quiet) }
+        #expect(history.state == .silent)
+        let settled = history
+        for _ in 0..<120 { history = step(quiet) }
+        #expect(history == settled)
+    }
+
     /// The production renderer must not animate absent audio as time passes;
     /// only measured spectra change the landscape.
     @Test @MainActor func renderedLandscapeDependsOnMeasuredSpectraNotTime() throws {

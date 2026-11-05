@@ -23,6 +23,11 @@ struct SpectralHorizonHistory: Equatable, Sendable {
     static let captureInterval = 1.0 / 10
     static let lowestFrequency = 30.0
     static let highestFrequency = 16_000.0
+    /// Levels within this distance of the fixed-dB spectrum's -80 dBFS floor
+    /// count as silence. The visualization clock's smoothing decays towards
+    /// zero without reaching it, so an exact-zero test would keep scrolling a
+    /// fading tail for tens of seconds after the music stops.
+    static let silenceFloor = 0.000_1
     /// Largest number of FFT bins inspected per column; keeps huge malformed
     /// spectra from making a capture unbounded.
     private static let binsPerColumnLimit = 256
@@ -111,13 +116,14 @@ struct SpectralHorizonHistory: Equatable, Sendable {
             let upper = lowestFrequency * pow(ratio, Double(index + 1) / Double(columnCount))
             raw[index] = bandMagnitude(spectrum: audio.spectrum, binWidth: binWidth, lower: lower, upper: upper)
         }
-        // Gentle spatial smoothing; zero stays exactly zero.
+        // Gentle spatial smoothing; zero and the decaying tail below the
+        // silence floor stay exactly zero.
         var levels = [Double](repeating: 0, count: columnCount)
         for index in 0..<columnCount {
             let left = raw[max(0, index - 1)]
             let right = raw[min(columnCount - 1, index + 1)]
-            let blended = left * 0.2 + raw[index] * 0.6 + right * 0.2
-            levels[index] = pow(min(1, max(0, blended)), 1.55)
+            let blended = min(1, max(0, left * 0.2 + raw[index] * 0.6 + right * 0.2))
+            levels[index] = blended < silenceFloor ? 0 : pow(blended, 1.55)
         }
         let format = Format(sampleRate: rate, binWidth: binWidth, spectrumCount: audio.spectrum.count)
         return Columns(format: format, levels: levels)
