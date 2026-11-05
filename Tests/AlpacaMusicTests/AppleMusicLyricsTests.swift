@@ -54,6 +54,24 @@ import Testing
         #expect(try await exact.lookup(track())?.sourceDescription == "LRCLIB")
     }
 
+    /// The name-order match is only a fallback: when one entry matches the
+    /// artist exactly and another only in reversed order, the exact one wins
+    /// instead of the two becoming a tie that matches nothing.
+    @Test func anExactArtistStillWinsOverTheOtherNameOrder() async throws {
+        let entries: [[String: Any]] = [
+            ["trackName": "給千億顆星選中的二人", "artistName": "Ian 陳卓賢", "albumName": "給千億顆星選中的二人",
+             "duration": 244.7, "instrumental": false, "syncedLyrics": "[00:01.00]Exact artist"],
+            ["trackName": "給千億顆星選中的二人", "artistName": "陳卓賢 Ian", "albumName": "給千億顆星選中的二人",
+             "duration": 245.0, "instrumental": false, "syncedLyrics": "[00:01.00]Reversed artist"]
+        ]
+        let client = LRCLIBClient(transport: Self.searchOnly(entries))
+        let song = Track(id: "appleMusic:library:ian", title: "给千亿颗星选中的二人", artist: "Ian 陈卓贤",
+                         album: "给千亿颗星选中的二人 - Single", duration: 244.687, source: .appleMusic,
+                         sourceID: "ian", appleMusicResourceKind: .librarySong)
+        let found = try await client.lookup(song)
+        #expect(found?.lines.first?.text == "Exact artist")
+    }
+
     @Test func automaticLookupRestoresSyncedLyricsAfterSwitchAndRestartWithoutNetwork() async throws {
         let location = directory(); defer { try? FileManager.default.removeItem(at: location) }
         let calls = Mutex(0)
