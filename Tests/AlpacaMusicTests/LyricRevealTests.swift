@@ -21,6 +21,21 @@ import Testing
         #expect(first.opacity(at: 2.2, reduceMotion: true) == 1)
     }
 
+    @Test func punctuationInsideMeasuredWordsIsNotAnEstimate() throws {
+        let line = LyricLine(id: 3, text: "（你，好）", start: 1, end: 4, words: [
+            .init(id: 0, text: "（你，", start: 1, end: 2),
+            .init(id: 1, text: "好）", start: 2, end: 3)
+        ])
+        let timeline = LyricReveal.timeline(for: line)
+        #expect(timeline.isTimed && !timeline.isEstimated)
+        #expect(timeline.units.map(\.text).joined() == line.text)
+        let first = try #require(timeline.units.first { $0.text == "你" })
+        let second = try #require(timeline.units.first { $0.text == "好" })
+        #expect(first.start == 1 && first.end == 2)
+        #expect(second.start == 2 && second.end == 3)
+        #expect(timeline.units.allSatisfy { $0.start >= 1 && $0.end <= 3 })
+    }
+
     @Test func providerWordsSubdivideInsideWindowsWithoutFillingGaps() throws {
         let line = LyricLine(id: 2, text: "hello 世界", start: 4, end: 11, words: [
             .init(id: 0, text: "hello ", start: 4.4, end: 6.4),

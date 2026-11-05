@@ -174,7 +174,9 @@ struct LyricRevealTimeline: Equatable, Sendable {
             // Simultaneous/zero-duration tokens appear together without NaNs or
             // losing their supplied onset. Explicit pauses stay unallocated.
             guard end >= word.start else { return nil }
-            let spokenCharacters = word.text.filter { !$0.isWhitespace }.count
+            // Punctuation inside a measured word has no vocal timing to estimate.
+            let spokenCharacters = LyricEmphasis.estimatedPronunciation(word.text)?.speech.filter { $0 > 0 }.count
+                ?? word.text.filter { !$0.isWhitespace }.count
             if spokenCharacters > 1 || (word.end == nil && next == nil && line.end == nil) { estimated = true }
             units += subdivide(word.text, start: word.start, end: end, context: context)
         }
