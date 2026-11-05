@@ -2,11 +2,11 @@
 
 ## English
 
-Source builds support **English** and **Simplified Chinese**, with **Follow System** as the default. Open **Settings → Language** to switch immediately. The selection is saved; playback, lyrics, input fields, queue, and visualizations keep their state.
+AlpacaMusic supports **English** and **Simplified Chinese**, with **Follow System** as the default. Open **Settings → Language** to switch immediately. The selection is saved; playback, lyrics, input fields, queue, and visualizations keep their state.
 
 App-authored navigation, menus, controls, accessibility descriptions, visual settings, login/import flows, and diagnostics use the same language resources. Track titles, lyrics, usernames, playlist names, and custom preset names remain as received or entered. A transient message that was already generated may keep its event language; subsequent messages use the current selection. Official login pages and system permission panels use their own language settings. Both system permission descriptions are bundled in English and Simplified Chinese.
 
-The existing **0.1.5 release DMG** predates this update. Build the updated source to obtain these changes.
+These changes are included in the **0.1.11 release** and newer source builds.
 
 For contributors:
 
@@ -19,11 +19,11 @@ This follows Apple's [localized package resources](https://developer.apple.com/d
 
 ## 简体中文
 
-源码构建已支持**简体中文**和**英文**，默认**跟随系统**。在**设置 → 语言**中可即时切换，选择会保存；播放、歌词、输入框、队列和视觉效果保留当前状态。
+AlpacaMusic 支持**简体中文**和**英文**，默认**跟随系统**。在**设置 → 语言**中可即时切换，选择会保存；播放、歌词、输入框、队列和视觉效果保留当前状态。
 
 应用自带的导航、菜单、控件、无障碍描述、视觉设置、登录与导入流程及诊断提示使用统一语言资源。歌名、歌词、用户名、歌单名称和自定义预设名称保持原样。已生成的临时提示可能保留产生时的语言，后续提示使用当前选择。官方登录网页和系统权限窗口使用各自的语言设置；两项系统权限说明已打包中英文版本。
 
-现有 **0.1.5 Release DMG** 尚未包含本次更新，需构建更新后的源码。
+**0.1.11 发布版本**及后续源码构建已包含这些更新。
 
 开发者注意：
 
