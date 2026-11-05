@@ -59,6 +59,8 @@ open build/AlpacaMusic.app
 
 The build targets the current Mac architecture. Local signing is read from the ignored `signing.local.plist`; without it, the build uses ad-hoc signing. Apple Music needs the [MusicKit signing setup](docs/apple-music-setup.md). Distribution requires appropriate Developer ID signing, notarization, and device validation.
 
+Run `./scripts/make-dmg.sh` to build the app and create a DMG. The script prints its path under `build/release.*/`. Use `--skip-build` to package the existing app. Set `ENABLE_MUSICKIT=1` for an Apple Music build, and set `NOTARY_PROFILE` to submit and staple the DMG using an existing Apple notary profile.
+
 ### Automatic build version
 
 Each successful release build increments the third component of `CFBundleShortVersionString` and the separate `CFBundleVersion`; edit the first two version components manually. Debug builds (`CONFIGURATION=debug`), tests, and API checks do not increment them. Failed builds do not consume a version; interrupted publication preserves recovery files.
@@ -160,6 +162,8 @@ open build/AlpacaMusic.app
 ```
 
 构建生成当前 Mac 架构的应用。签名读取已被忽略的本机 `signing.local.plist`；未配置时使用 ad-hoc。Apple Music 需要[配置 MusicKit 与签名](docs/apple-music-setup.md)。对外分发还需正确的 Developer ID 签名、公证及设备验证。
+
+运行 `./scripts/make-dmg.sh` 构建并打包 DMG，脚本会输出 `build/release.*/` 下的文件路径。用 `--skip-build` 打包现有应用。构建 Apple Music 版本时设置 `ENABLE_MUSICKIT=1`，需要提交公证并附加票据时通过 `NOTARY_PROFILE` 指定已有的 Apple 公证配置。
 
 ### 自动构建版本
 
