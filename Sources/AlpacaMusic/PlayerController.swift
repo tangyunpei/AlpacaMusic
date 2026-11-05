@@ -676,6 +676,12 @@ final class PlayerController {
         var levels = analyzer.levels(); levels.energy *= Float(volume); levels.beat *= Float(volume)
         return levels
     }
+    /// Test hooks for real playback: run the analyzer now instead of waiting
+    /// for its timer, whether the current item carries the analysis tap, and
+    /// how many frames that tap has delivered.
+    func analyzeAudioNow() { analyzer.analyzeNow() }
+    var currentItemHasAudioTap: Bool { media.currentItem?.audioMix != nil }
+    var audioTapFrames: UInt64 { analyzer.capturedTapFrames() }
     private func persistPreferences() {
         if let data = try? JSONEncoder().encode(Preferences(volume: volume, muted: muted, shuffle: shuffle, repeatMode: repeatMode)) { defaults.set(data, forKey: Self.preferencesKey) }
     }
