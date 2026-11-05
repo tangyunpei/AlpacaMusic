@@ -6,7 +6,7 @@ struct AlpacaMusicApp: App {
     @State private var model = AppModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     var body: some Scene {
-        Window("AlpacaMusic", id: "main") {
+        Window("AlpacaMusic", id: PlayerWindowID.main) {
             ContentView(model: model)
                 .environment(\.locale, model.language.locale)
                 .frame(minWidth: 1040, minHeight: 720)
@@ -21,11 +21,11 @@ struct AlpacaMusicApp: App {
                 Button(L10n.string("关于 AlpacaMusic")) { AboutPanel.show() }
             }
             CommandGroup(after: .newItem) {
-                Button(L10n.string("导入音乐文件…"), systemImage: "plus") { model.beginImport(folder: false) }
-                    .keyboardShortcut("o", modifiers: .command)
-                Button(L10n.string("导入音乐文件夹…"), systemImage: "folder.badge.plus") { model.beginImport(folder: true) }
-                    .keyboardShortcut("o", modifiers: [.command, .shift])
-                Button(L10n.string("添加音频链接…"), systemImage: "link") { model.sheet = .url }
+                MainWindowCommandButton(title: L10n.string("导入音乐文件…"), systemImage: "plus",
+                                        shortcut: KeyboardShortcut("o", modifiers: .command)) { model.beginImport(folder: false) }
+                MainWindowCommandButton(title: L10n.string("导入音乐文件夹…"), systemImage: "folder.badge.plus",
+                                        shortcut: KeyboardShortcut("o", modifiers: [.command, .shift])) { model.beginImport(folder: true) }
+                MainWindowCommandButton(title: L10n.string("添加音频链接…"), systemImage: "link") { model.sheet = .url }
             }
             CommandMenu(L10n.string("播放")) {
                 Button(model.player.status == .playing ? L10n.string("暂停") : L10n.string("播放")) { Task { await model.toggle() } }
@@ -38,13 +38,35 @@ struct AlpacaMusicApp: App {
                 Button(L10n.string("静音 / 取消静音")) { model.player.toggleMute() }.keyboardShortcut("m", modifiers: [.command, .shift]).disabled(!model.player.supportsVolumeControl)
             }
             CommandGroup(after: .toolbar) {
-                Button(L10n.string("歌词")) { model.revealLyrics() }.keyboardShortcut("l", modifiers: [.command, .shift])
-                Button(L10n.string("沉浸模式")) { withAnimation(.smooth(duration: 0.25)) { model.immersive.toggle() } }
-                    .keyboardShortcut("i", modifiers: [.command, .shift])
-                Button(L10n.string("播放队列")) { withAnimation(.smooth(duration: 0.22)) { model.queueOpen.toggle() } }
-                    .keyboardShortcut("q", modifiers: [.command, .shift])
+                MainWindowCommandButton(title: L10n.string("歌词"),
+                                        shortcut: KeyboardShortcut("l", modifiers: [.command, .shift])) { model.revealLyrics() }
+                MainWindowCommandButton(title: L10n.string("沉浸模式"),
+                                        shortcut: KeyboardShortcut("i", modifiers: [.command, .shift])) { withAnimation(.smooth(duration: 0.25)) { model.immersive.toggle() } }
+                MainWindowCommandButton(title: L10n.string("播放队列"),
+                                        shortcut: KeyboardShortcut("q", modifiers: [.command, .shift])) { withAnimation(.smooth(duration: 0.22)) { model.queueOpen.toggle() } }
             }
+            MiniPlayerCommands()
         }
+        Window(L10n.string("迷你播放器"), id: PlayerWindowID.miniPlayer) {
+            MiniPlayerView(model: model)
+                .environment(\.locale, model.language.locale)
+                .appTheme(.listeningRoom)
+                .preferredColorScheme(.dark)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.topTrailing)
+        .windowLevel(.floating)
+        .windowBackgroundDragBehavior(.enabled)
+        .restorationBehavior(.disabled)
+        MenuBarExtra(isInserted: $model.showsMenuBarPlayer) {
+            MenuBarPlayerView(model: model)
+                .environment(\.locale, model.language.locale)
+                .preferredColorScheme(.dark)
+        } label: {
+            MenuBarPlayerLabel(model: model)
+        }
+        .menuBarExtraStyle(.window)
         Settings {
             ScrollView { VisualSettingsView(model: model).padding(28) }.frame(width: 590, height: 680)
                 .environment(\.locale, model.language.locale)
@@ -81,6 +103,11 @@ struct AlpacaMusicApp: App {
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
     private var terminating = false
+    /// While the menu bar player is shown, closing the last window keeps the
+    /// app (and playback) running there; otherwise closing it quits as before.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        model?.showsMenuBarPlayer != true
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         guard !terminating else { return .terminateLater }

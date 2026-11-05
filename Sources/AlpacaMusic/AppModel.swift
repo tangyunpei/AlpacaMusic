@@ -44,6 +44,11 @@ final class AppModel {
     var sodaPublicSearch: Bool {
         didSet { preferences.set(sodaPublicSearch, forKey: "soda-public-search") }
     }
+    /// Shows the status bar player; while it is shown, closing the last
+    /// window keeps the app (and playback) running from the menu bar.
+    var showsMenuBarPlayer: Bool {
+        didSet { preferences.set(showsMenuBarPlayer, forKey: "menu-bar-player") }
+    }
     var sourceFilter: MusicSource? = nil
     var queueOpen = false
     var immersive = false
@@ -91,6 +96,7 @@ final class AppModel {
         preferences = suppliedDefaults ?? ProcessInfo.processInfo.environment["ALPACA_PREFERENCES_DOMAIN"].flatMap(UserDefaults.init(suiteName:)) ?? .standard
         language = L10n.preference(in: preferences)
         sodaPublicSearch = preferences.object(forKey: "soda-public-search") as? Bool ?? true
+        showsMenuBarPlayer = preferences.object(forKey: "menu-bar-player") as? Bool ?? true
         library = MusicLibrary(directory: directory)
         let isolatedAccounts = ephemeralAccounts ?? (ProcessInfo.processInfo.environment["ALPACA_EPHEMERAL_ACCOUNTS"] == "1")
         let native = NativeMusicClient(credentials: isolatedAccounts ? MemoryMusicCredentialStore() : MusicCredentialStore())

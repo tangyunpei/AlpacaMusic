@@ -1157,3 +1157,12 @@
 "已导入 %lld 张专辑" = "Imported %lld albums";
 "已导入 %lld 张专辑，%lld 个失败" = "Imported %lld albums, %lld failed";
 "导入的专辑会出现在专辑库中，平台上的收藏不会被修改。" = "Imported albums appear in Albums. Nothing changes on the platform.";
+"谐波图" = "Harmonograph";
+"声谱地平线" = "Spectral Horizon";
+"包豪斯构成" = "Bauhaus Composition";
+"在菜单栏显示播放器" = "Show Player in Menu Bar";
+"在菜单栏显示当前歌曲与播放控制。" = "Show the current song and playback controls in the menu bar.";
+"迷你播放器" = "Mini Player";
+"打开主窗口" = "Open Main Window";
+"打开 AlpacaMusic" = "Open AlpacaMusic";
+"退出 AlpacaMusic" = "Quit AlpacaMusic";
