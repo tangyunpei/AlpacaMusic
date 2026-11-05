@@ -98,7 +98,7 @@ private struct MenuBarTransportItems {
         }
         let presentation: MenuBarTransportPresentation = withObservationTracking {
             MenuBarTransportPresentation(model: model)
-        } onChange: {
+        } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observe(token) }
         }
         apply(presentation)

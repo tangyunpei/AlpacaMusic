@@ -268,7 +268,7 @@ private struct MenuBarLyricsOverlayRoot: View {
         }
         let shows: Bool = withObservationTracking {
             model.showsMenuBarLyrics
-        } onChange: {
+        } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observe(token) }
         }
         apply(shows, model: model)

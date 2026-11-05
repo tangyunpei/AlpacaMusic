@@ -374,13 +374,21 @@ import Testing
         for _ in 0..<60 { unavailable.step(dt: 1.0 / 60, audio: Self.fabricatedAudio()) }
 
         let ambient = try pixels(layout, time: 7, drive: .zero)
-        #expect(try pixels(layout, time: 7, drive: .zero) == ambient)
-        #expect(try pixels(layout, time: 7, drive: unavailable.drive) == ambient)
+        #expect(Self.samePixels(try pixels(layout, time: 7, drive: .zero), ambient))
+        #expect(Self.samePixels(try pixels(layout, time: 7, drive: unavailable.drive), ambient))
 
         var real = BauhausMotion()
         for _ in 0..<30 { real.step(dt: 1.0 / 60, audio: Self.loudAudio()) }
-        #expect(try pixels(layout, time: 7, drive: real.drive) != ambient)
-        #expect(try pixels(layout, time: 7, drive: .zero, glow: false) != ambient)
-        #expect(try pixels(BauhausLayout(seed: 0xBA0), time: 7, drive: .zero) != ambient)
+        #expect(!Self.samePixels(try pixels(layout, time: 7, drive: real.drive), ambient))
+        #expect(!Self.samePixels(try pixels(layout, time: 7, drive: .zero, glow: false), ambient))
+        #expect(!Self.samePixels(try pixels(BauhausLayout(seed: 0xBA0), time: 7, drive: .zero), ambient))
+    }
+
+    /// Two renders of the same frame agree to within one step per channel.
+    /// After a few renders, SwiftUI's blur in the glow layer can round a
+    /// handful of channels one step differently (macOS 27.2 SDK). Any real
+    /// change in the frame moves thousands of channels by more than that.
+    private static func samePixels(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+        a.count == b.count && zip(a, b).allSatisfy { (x: UInt8, y: UInt8) -> Bool in abs(Int(x) - Int(y)) <= 1 }
     }
 }

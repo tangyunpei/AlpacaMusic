@@ -78,7 +78,7 @@ enum LyricsSyncPlan {
         guard running, token == generation, let player, let lyrics else { return }
         let snapshot: LyricsSyncSnapshot = withObservationTracking {
             Self.makeSnapshot(of: player)
-        } onChange: {
+        } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observe(token) }
         }
         let actions: [LyricsSyncAction] = LyricsSyncPlan.actions(from: last, to: snapshot)
