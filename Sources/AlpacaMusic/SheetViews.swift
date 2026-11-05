@@ -107,7 +107,10 @@ struct VisualSettingsView: View {
                 .accessibilityLabel(L10n.string("语言"))
                 .accessibilityIdentifier("app-language-picker")
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+            toggle(L10n.string("在菜单栏显示播放器"), $model.showsMenuBarPlayer)
+                .help(L10n.string("在菜单栏显示当前歌曲与播放控制。"))
+                .accessibilityIdentifier("menu-bar-player-toggle")
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
                 ForEach(VisualizationMode.allCases) { mode in
                     Button { model.visualMode = mode } label: {
                         VStack(spacing: 10) {
@@ -158,7 +161,12 @@ struct VisualSettingsView: View {
                 HStack(spacing: 11) { TextField(L10n.string("预设名称"), text: $presetName).textFieldStyle(.roundedBorder).font(.system(size: 11)).accessibilityLabel(L10n.string("自定义预设名称")); Button { model.savePreset(String(presetName.prefix(30))); presetName = "" } label: { Label(L10n.string("保存预设"), systemImage: "plus") }.buttonStyle(QuietButtonStyle()).disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
             }
             Divider().opacity(0.35)
-            HStack(spacing: 26) { toggle(L10n.string("减少动态效果"), $model.visual.reduceMotion); toggle(L10n.string("低电量模式节能"), $model.visual.batterySaver) }
+            HStack(spacing: 26) {
+                toggle(L10n.string("减少动态效果"), $model.visual.reduceMotion)
+                toggle(L10n.string("低电量模式节能"), $model.visual.batterySaver)
+                // The point cloud shows this toggle with its own controls above.
+                if model.visualMode != .pointCloud && model.visualMode.isAudioReactive { toggle(L10n.string("柔和辉光"), $model.visual.glow) }
+            }
             if osReduced { Text(L10n.string("已遵循系统的“减少动态效果”设置。")).font(.system(size: 10)).foregroundStyle(palette.secondary).frame(maxWidth: .infinity, alignment: .leading) }
         }.tint(palette.accent).animation(ExperienceMotion.control, value: model.visualMode)
     }

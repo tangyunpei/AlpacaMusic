@@ -1,7 +1,7 @@
 import Foundation
 
 enum VisualizationMode: String, CaseIterable, Codable, Identifiable, Sendable {
-    case pointCloud, spectrumRing, ribbons, starfield, waveform, spectrumBars, artwork
+    case pointCloud, spectrumRing, ribbons, starfield, waveform, spectrumBars, harmonograph, spectralHorizon, bauhaus, artwork
 
     var id: String { rawValue }
     var title: String {
@@ -12,6 +12,9 @@ enum VisualizationMode: String, CaseIterable, Codable, Identifiable, Sendable {
         case .starfield: L10n.string("深空航行")
         case .waveform: L10n.string("音频示波器")
         case .spectrumBars: L10n.string("竖条频谱")
+        case .harmonograph: L10n.string("谐波图")
+        case .spectralHorizon: L10n.string("声谱地平线")
+        case .bauhaus: L10n.string("包豪斯构成")
         case .artwork: L10n.string("专辑封面")
         }
     }
@@ -23,11 +26,20 @@ enum VisualizationMode: String, CaseIterable, Codable, Identifiable, Sendable {
         case .starfield: "sparkles"
         case .waveform: "waveform.path"
         case .spectrumBars: "chart.bar.xaxis"
+        case .harmonograph: "infinity"
+        case .spectralHorizon: "mountain.2"
+        case .bauhaus: "square.on.circle"
         case .artwork: "square.on.square"
         }
     }
     var isAudioReactive: Bool { self != .artwork }
-    var isSignalDisplay: Bool { self == .waveform || self == .spectrumBars }
+    /// Signal displays plot measured audio and stay still without new samples.
+    var isSignalDisplay: Bool {
+        switch self {
+        case .waveform, .spectrumBars, .harmonograph, .spectralHorizon: true
+        case .pointCloud, .spectrumRing, .ribbons, .starfield, .bauhaus, .artwork: false
+        }
+    }
 }
 
 /// Unavailable audio never becomes synthesized energy or a fabricated spectrum.

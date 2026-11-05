@@ -66,10 +66,64 @@ struct MusicVisualizationView: View {
                 .accessibilityValue(!isPlaying ? L10n.string("已暂停") : reduceMotion ? L10n.string("减少动态，画面已静止") : track?.source.supportsAudioAnalysis == false ? L10n.string("当前播放通道尚无实时音频采样，显示静候画面") : mode == .spectrumBars ? L10n.string("显示可用的真实音频频谱") : L10n.string("显示可用的真实音频波形"))
                 .onChange(of: animate) { _, _ in clock.resetFrameDate() }
                 .onChange(of: track?.id) { _, _ in clock.resetSignal() }
+            case .harmonograph, .spectralHorizon:
+                ZStack {
+                    composedStage
+                    if showsStatus || isPlaying { periodicStatus(whenAudioMissing: !showsStatus) }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(L10n.string("\(mode.title)，\(track?.title ?? "AlpacaMusic")"))
+                .accessibilityValue(composedSignalAccessibilityValue)
+            case .bauhaus:
+                ZStack {
+                    composedStage
+                    if showsStatus { periodicStatus(whenAudioMissing: false) }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(L10n.string("\(mode.title)，\(track?.title ?? "AlpacaMusic")"))
+                .accessibilityValue(!isPlaying ? L10n.string("已暂停") : reduceMotion ? L10n.string("减少动态，画面已静止") : track?.source.supportsAudioAnalysis == false ? L10n.string("氛围模式，当前播放通道尚无实时音频采样") : L10n.string("氛围运动，随可用音频变化"))
             }
         }
         .clipped()
         .onChange(of: mode) { _, _ in clock.resetSpectrumBars() }
+    }
+
+    /// The composed stages own their clocks and history. This view only routes
+    /// a source-gated signal and adds the shared status and accessibility.
+    @ViewBuilder private var composedStage: some View {
+        switch mode {
+        case .harmonograph:
+            HarmonographStage(isPlaying: isPlaying, isActive: scenePhase == .active, reduceMotion: reduceMotion,
+                              lowPower: lowPower, glow: settings.glow, seed: Artwork.seed(for: track), trackID: track?.id,
+                              signal: { track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels() })
+        case .spectralHorizon:
+            SpectralHorizonStage(isPlaying: isPlaying, isActive: scenePhase == .active, reduceMotion: reduceMotion,
+                                 lowPower: lowPower, glow: settings.glow, seed: Artwork.seed(for: track), trackID: track?.id,
+                                 signal: { track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels() })
+        case .bauhaus:
+            BauhausCompositionStage(isPlaying: isPlaying, isActive: scenePhase == .active, reduceMotion: reduceMotion,
+                                    lowPower: lowPower, glow: settings.glow, seed: Artwork.seed(for: track), trackID: track?.id,
+                                    signal: { track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels() })
+        default:
+            EmptyView()
+        }
+    }
+
+    private var composedSignalAccessibilityValue: String {
+        if !isPlaying { return L10n.string("已暂停") }
+        if reduceMotion { return L10n.string("减少动态，画面已静止") }
+        if track?.source.supportsAudioAnalysis == false { return L10n.string("当前播放通道尚无实时音频采样，显示静候画面") }
+        return mode == .spectralHorizon ? L10n.string("显示可用的真实音频频谱") : L10n.string("显示可用的真实音频波形")
+    }
+
+    /// Stages keep their measured frames private, so the status reads the
+    /// same gated signal at a low rate instead of every animation frame.
+    /// `whenAudioMissing` shows the label only while playback lacks audio.
+    private func periodicStatus(whenAudioMissing: Bool) -> some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+            let audioAvailable = isPlaying && track?.source.supportsAudioAnalysis != false && signal().available
+            if !whenAudioMissing || !audioAvailable { statusLabel(audioAvailable: audioAvailable) }
+        }
     }
 
     private var albumAtmosphere: some View {
@@ -102,9 +156,11 @@ struct MusicVisualizationView: View {
             ? (track?.source.supportsAudioAnalysis == false ? L10n.string("\(track?.source.title ?? L10n.string("当前音源")) · 尚无实时音频采样") : L10n.string("等待音频采样"))
             : (track?.source.supportsAudioAnalysis == false ? L10n.string("氛围模式 · 无实时频谱") : L10n.string("氛围模式"))
         let label = !isPlaying ? L10n.string("已暂停") : reduceMotion ? L10n.string("减少动态") : audioAvailable ? L10n.string("实时音频") : unavailable
+        // The Bauhaus composition is printed on light paper; keep the label legible.
+        let ink: Color = mode == .bauhaus ? AppPalette.bauhaus.text : Color.white
         return HStack(spacing: 6) {
-            Circle().fill(audioAvailable && isPlaying ? AppPalette.listeningRoom.highlight : .white.opacity(0.3)).frame(width: 3, height: 3)
-            Text(label).font(.system(size: 9, weight: .medium)).tracking(0.6).foregroundStyle(.white.opacity(0.42))
+            Circle().fill(audioAvailable && isPlaying ? AppPalette.listeningRoom.highlight : ink.opacity(0.3)).frame(width: 3, height: 3)
+            Text(label).font(.system(size: 9, weight: .medium)).tracking(0.6).foregroundStyle(ink.opacity(mode == .bauhaus ? 0.58 : 0.42))
         }.padding(22).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading).allowsHitTesting(false)
     }
 }

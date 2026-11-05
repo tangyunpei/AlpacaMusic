@@ -18,7 +18,8 @@ Created by [byalpaca](https://byalpaca.dev). **macOS 26 or later.** Windows is n
 
 - Local files, folders, HTTP/HTTPS audio links, favorites, playlists, search, and a mixed-source queue.
 - An Albums cover grid with album details, ordered track lists, and whole-album playback. Existing songs with album metadata appear automatically.
-- Album-art point clouds, orbital particles, flowing ribbons, oscilloscopes, and a continuous spectrum display. Audio-reactive effects use real samples when available.
+- Album-art point clouds, orbital particles, flowing ribbons, oscilloscopes, a continuous spectrum display, a harmonograph traced from the waveform, a spectral horizon of layered spectrum ridges, and a Bauhaus composition of shapes that respond to the music. Audio-reactive effects use real samples when available.
+- A compact mini player window and a menu bar player for controlling playback without the main window; the menu bar player can be hidden in Settings.
 - Scrolling lyrics and animated captions with selective word and character emphasis: character-by-character Chinese and word-by-word English, Spanish, and similar languages. Platform YRC/QRC word timing is preferred; readable audio can be analyzed ahead on-device with voice detection and recording-specific timing caches. Uncertain lines remain estimated. See [lyric alignment](docs/lyric-audio-alignment.md).
 - English and Simplified Chinese UI, following the system by default. Switch languages instantly in Settings without interrupting playback.
 - Saved library and playback position; three original demo tracks to try without an online account.
@@ -118,7 +119,8 @@ macOS 原生音乐播放器，统一管理本地与在线曲库，提供沉浸�
 
 - 本地文件、文件夹、HTTP/HTTPS 音频链接，以及收藏、歌单、搜索和混合来源队列。
 - 专辑封面网格、专辑详情、按曲序排列的歌曲和整张播放；已有歌曲的专辑资料会自动归入专辑库。
-- 封面点云、轨道粒子、流光绸缎、示波器和连续竖条频谱；有可用采样时以真实音频驱动。
+- 封面点云、轨道粒子、流光绸缎、示波器、连续竖条频谱、由波形描绘的谐波图、层叠频谱山脊组成的声谱地平线，以及随音乐变化的包豪斯构成；有可用采样时以真实音频驱动。
+- 精简的迷你播放器窗口和菜单栏播放器，无需打开主窗口即可控制播放；菜单栏播放器可在设置中隐藏。
 - 滚动歌词、动态字幕和局部强调：中文逐字，英语、西语等逐词出现；缺少逐词时间时使用估算。
 - 保存曲库和播放位置；内置三首原创试听，无需在线账号即可体验。
 
