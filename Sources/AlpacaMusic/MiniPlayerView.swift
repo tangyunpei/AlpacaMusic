@@ -57,88 +57,365 @@ enum MiniPlayerTiming {
     }
 }
 
-/// The compact floating player: artwork, title, transport and a scrubbable
-/// progress line over a softly blurred copy of the current artwork.
+/// The mini player's layouts, smallest first: the cover alone with play /
+/// pause, a lyric strip, and a card with the full controls.
+enum MiniPlayerStyle: String, CaseIterable, Identifiable, Sendable {
+    case artwork, lyrics, card
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .artwork: L10n.string("封面")
+        case .lyrics: L10n.string("歌词")
+        case .card: L10n.string("卡片")
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .artwork: "photo"
+        case .lyrics: "quote.bubble"
+        case .card: "rectangle"
+        }
+    }
+    /// The exact content size; the window follows it.
+    var size: CGSize {
+        switch self {
+        case .artwork: CGSize(width: 156, height: 156)
+        case .lyrics: CGSize(width: 480, height: 84)
+        case .card: CGSize(width: 400, height: 236)
+        }
+    }
+    /// The following layout, wrapping from the card back to the artwork.
+    var next: MiniPlayerStyle {
+        switch self {
+        case .artwork: .lyrics
+        case .lyrics: .card
+        case .card: .artwork
+        }
+    }
+}
+
+/// The floating player in the chosen style. A style menu and an expand
+/// button appear on hover, and the context menu offers the same choices.
 struct MiniPlayerView: View {
     @Environment(\.appPalette) private var palette
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     @Bindable var model: AppModel
+    @State private var hovering = false
 
     private var reduced: Bool { systemReduced || model.visual.reduceMotion }
 
     var body: some View {
-        content
-            .padding(.horizontal, 16).padding(.vertical, 12)
-            .frame(width: 360, height: 104)
-            .background { PlayerSurfaceBackdrop(track: model.player.current).ignoresSafeArea() }
-            .foregroundStyle(palette.text)
-            .animation(reduced ? nil : ExperienceMotion.panel, value: model.player.current?.id)
-            .transaction { if reduced { $0.animation = nil; $0.disablesAnimations = true } }
+        let reduceMotion = reduced
+        surface(model.miniPlayerStyle, reduceMotion: reduceMotion)
+            .onHover { hovering = $0 }
+            .contextMenu {
+                stylePicker
+                Divider()
+                Button(L10n.string("打开主窗口")) { showMainWindow() }
+            }
+            .animation(reduceMotion ? nil : ExperienceMotion.control, value: hovering)
+            .animation(reduceMotion ? nil : ExperienceMotion.panel, value: model.player.current?.id)
+            .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("mini-player")
     }
 
-    @ViewBuilder private var content: some View {
-        if let track = model.player.current {
-            HStack(spacing: 14) {
-                artworkButton(track)
-                VStack(alignment: .leading, spacing: 0) {
-                    header(track)
-                    Spacer(minLength: 4)
-                    HStack(spacing: 6) {
-                        CompactTransport(model: model, playSize: 28)
-                        Spacer(minLength: 4)
-                        PlayerTimeReadout(model: model)
-                    }
-                    ScrubBar(model: model).padding(.top, 5)
+    /// The layout at its style's exact size over the blurred artwork. Only
+    /// the layouts cross-fade; the frame, and so the window, changes at once.
+    private func surface(_ style: MiniPlayerStyle, reduceMotion: Bool) -> some View {
+        let size = style.size
+        return ZStack {
+            switch style {
+            case .artwork: MiniArtworkLayout(model: model, hovering: hovering).transition(AnyTransition.opacity)
+            case .lyrics: MiniLyricsLayout(model: model).transition(AnyTransition.opacity)
+            case .card: MiniCardLayout(model: model).transition(AnyTransition.opacity)
+            }
+        }
+        .animation(reduceMotion ? nil : ExperienceMotion.panel, value: style)
+        .frame(width: size.width, height: size.height)
+        .clipped()
+        .overlay(alignment: .topTrailing) { windowControls }
+        .background { PlayerSurfaceBackdrop(track: model.player.current).ignoresSafeArea() }
+        .foregroundStyle(palette.text)
+    }
+
+    /// The style menu and the expand button. They fade out rather than
+    /// leave, so VoiceOver still reaches them without a pointer.
+    private var windowControls: some View {
+        HStack(spacing: 0) {
+            Menu { stylePicker } label: {
+                Image(systemName: "rectangle.3.group")
+                    .font(.system(size: 10, weight: .medium))
+                    .frame(width: 22, height: 22)
+                    .contentShape(.rect)
+                    .foregroundStyle(palette.text.opacity(0.82))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(L10n.string("迷你播放器样式"))
+            .accessibilityLabel(L10n.string("迷你播放器样式"))
+            SurfaceIconButton(symbol: "arrow.up.left.and.arrow.down.right", label: L10n.string("打开主窗口"), size: 22) { showMainWindow() }
+        }
+        .padding(4)
+        .opacity(hovering ? 1 : 0)
+    }
+
+    private var stylePicker: some View {
+        Picker(L10n.string("迷你播放器样式"), selection: $model.miniPlayerStyle) {
+            ForEach(MiniPlayerStyle.allCases) { style in
+                Label(style.title, systemImage: style.symbol).tag(style)
+            }
+        }
+        .pickerStyle(.inline)
+    }
+
+    private func showMainWindow() {
+        PlayerWindows.switchWindow(to: PlayerWindowID.main, from: PlayerWindowID.miniPlayer,
+                                   open: openWindow, dismiss: dismissWindow)
+    }
+}
+
+/// The cover alone with play / pause on it; previous, next and progress
+/// appear on hover. The cover is not a button, so it still drags the window.
+private struct MiniArtworkLayout: View {
+    @Bindable var model: AppModel
+    var hovering: Bool
+
+    var body: some View {
+        let size = MiniPlayerStyle.artwork.size
+        let track = model.player.current
+        let progress = MiniPlayerTiming.fraction(position: model.player.position, duration: model.player.duration)
+        let shade: [Color] = [Color.black.opacity(0.36), Color.black.opacity(0.08), Color.black.opacity(0.36)]
+        ZStack {
+            ArtworkView(track: track, radius: 0, highResolution: true)
+                .frame(width: size.width, height: size.height)
+                .clipped()
+            LinearGradient(colors: shade, startPoint: .top, endPoint: .bottom)
+                .opacity(hovering ? 1 : 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            HStack(spacing: 12) {
+                if track != nil {
+                    CoverRoundButton(symbol: "backward.fill", label: L10n.string("上一首")) { Task { await model.player.previous() } }
+                        .opacity(hovering ? 1 : 0)
+                }
+                CoverPlayButton(model: model)
+                if track != nil {
+                    CoverRoundButton(symbol: "forward.fill", label: L10n.string("下一首")) { Task { await model.player.next() } }
+                        .opacity(hovering ? 1 : 0)
                 }
             }
-        } else {
-            emptyContent
+        }
+        .overlay(alignment: .bottom) {
+            if track != nil { ProgressLine(fraction: progress, height: 2).opacity(hovering ? 1 : 0) }
+        }
+        .frame(width: size.width, height: size.height)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mini-player-artwork")
+    }
+}
+
+/// The lyric strip: artwork, the current and next lines, transport and a
+/// thin progress line along the bottom edge.
+private struct MiniLyricsLayout: View {
+    @Environment(\.appPalette) private var palette
+    @Bindable var model: AppModel
+
+    var body: some View {
+        let size = MiniPlayerStyle.lyrics.size
+        let track = model.player.current
+        let progress = MiniPlayerTiming.fraction(position: model.player.position, duration: model.player.duration)
+        HStack(spacing: 14) {
+            MiniArtworkButton(track: track, side: 56, radius: 8)
+            Group {
+                if track != nil {
+                    CompactLyricLines(model: model, primarySize: 15, secondarySize: 11, showsNextLine: true,
+                                      alignment: .leading, fallback: .trackInfo)
+                } else {
+                    Text(L10n.string("未选择歌曲")).font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(palette.secondary).lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if track != nil || !model.library.tracks.isEmpty {
+                CompactTransport(model: model, playSize: 26)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(width: size.width, height: size.height)
+        .overlay(alignment: .bottom) {
+            if track != nil { ProgressLine(fraction: progress, height: 2) }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mini-player-lyrics")
+    }
+}
+
+/// The card: large artwork, title, the current lyric, a scrub bar and the
+/// full transport with shuffle and repeat.
+private struct MiniCardLayout: View {
+    @Environment(\.appPalette) private var palette
+    @Bindable var model: AppModel
+
+    var body: some View {
+        let size = MiniPlayerStyle.card.size
+        HStack(spacing: 18) {
+            MiniArtworkButton(track: model.player.current, side: 132, radius: 10, highResolution: true)
+            Group {
+                if let track = model.player.current { details(track) } else { empty }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 18)
+        .frame(width: size.width, height: size.height)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mini-player-card")
+    }
+
+    private func details(_ track: Track) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(track.title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
+                Text(verbatim: "\(track.artist) · \(track.sourcePlaybackTitle)")
+                    .font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1)
+            }
+            // A fixed height keeps the card still while lyrics come and go.
+            CompactLyricLines(model: model, primarySize: 13, secondarySize: 10, showsNextLine: true,
+                              alignment: .leading, fallback: .hidden)
+                .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36, alignment: .leading)
+                .padding(.vertical, 10)
+            HStack(spacing: 8) {
+                ScrubBar(model: model)
+                PlayerTimeReadout(model: model)
+            }
+            controls.padding(.top, 8)
         }
     }
 
-    private func artworkButton(_ track: Track) -> some View {
-        Button { showMainWindow() } label: {
-            ArtworkView(track: track, radius: 9).frame(width: 72, height: 72)
+    private var controls: some View {
+        HStack(spacing: 0) {
+            SurfaceIconButton(symbol: "shuffle", label: L10n.string("随机播放"), active: model.player.shuffle) { model.player.toggleShuffle() }
+            Spacer(minLength: 0)
+            CompactTransport(model: model, playSize: 32)
+            Spacer(minLength: 0)
+            SurfaceIconButton(symbol: repeatSymbol, label: repeatLabel, active: model.player.repeatMode != .off) { model.player.cycleRepeat() }
+        }
+    }
+
+    private var repeatSymbol: String { model.player.repeatMode == .one ? "repeat.1" : "repeat" }
+    private var repeatLabel: String {
+        let mode: String
+        switch model.player.repeatMode {
+        case .off: mode = L10n.string("不循环")
+        case .all: mode = L10n.string("列表循环")
+        case .one: mode = L10n.string("单曲循环")
+        }
+        return L10n.string("循环模式：\(mode)")
+    }
+
+    private var empty: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L10n.string("未选择歌曲")).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
+            if !model.library.tracks.isEmpty { CompactTransport(model: model, playSize: 32) }
+        }
+    }
+}
+
+/// The artwork as a button back to the main window. VoiceOver uses the
+/// expand button instead, which does the same.
+private struct MiniArtworkButton: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
+    var track: Track?
+    var side: CGFloat
+    var radius: CGFloat
+    var highResolution = false
+
+    var body: some View {
+        Button {
+            PlayerWindows.switchWindow(to: PlayerWindowID.main, from: PlayerWindowID.miniPlayer,
+                                       open: openWindow, dismiss: dismissWindow)
+        } label: {
+            ArtworkView(track: track, radius: radius, highResolution: highResolution)
+                .frame(width: side, height: side)
                 .shadow(color: Color.black.opacity(0.35), radius: 8, y: 3)
         }
         .buttonStyle(.plain)
         .help(L10n.string("打开主窗口"))
         .accessibilityHidden(true)
     }
+}
 
-    private func header(_ track: Track) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(track.title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
-                Text(verbatim: "\(track.artist) · \(track.sourcePlaybackTitle)")
-                    .font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            SurfaceIconButton(symbol: "arrow.up.left.and.arrow.down.right", label: L10n.string("打开主窗口"), size: 22) { showMainWindow() }
-        }
-    }
+/// The always-visible play / pause button on the cover, with the same
+/// action as `CompactTransport`.
+private struct CoverPlayButton: View {
+    @Bindable var model: AppModel
 
-    private var emptyContent: some View {
-        HStack(spacing: 14) {
-            ArtworkView(track: nil, radius: 9).frame(width: 72, height: 72)
-            VStack(alignment: .leading, spacing: 9) {
-                Text(L10n.string("未选择歌曲")).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
-                HStack(spacing: 8) {
-                    if !model.library.tracks.isEmpty { CompactTransport(model: model, playSize: 28) }
-                    SurfaceIconButton(symbol: "arrow.up.left.and.arrow.down.right", label: L10n.string("打开主窗口"), size: 26) { showMainWindow() }
+    private var isPlaying: Bool { model.player.status == .playing }
+    private var canPlay: Bool { model.player.current != nil || !model.library.tracks.isEmpty }
+    private var label: String { isPlaying ? L10n.string("暂停") : L10n.string("播放") }
+    /// Optically centers the play triangle in its circle.
+    private var glyphOffset: CGFloat { isPlaying ? 0 : 1.5 }
+
+    var body: some View {
+        Button { Task { await model.toggle() } } label: {
+            Group {
+                if model.player.status == .loading {
+                    ProgressView().controlSize(.mini).tint(Color.white)
+                } else {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .offset(x: glyphOffset)
                 }
             }
-            Spacer(minLength: 0)
+            .foregroundStyle(Color.white)
+            .frame(width: 46, height: 46)
+            .background { CoverButtonDisc() }
+            .contentShape(.circle)
+            .shadow(color: Color.black.opacity(0.3), radius: 10, y: 3)
         }
+        .buttonStyle(.plain)
+        .opacity(canPlay ? 1 : 0.5)
+        .help(label)
+        .accessibilityLabel(label)
+        .disabled(!canPlay)
     }
+}
 
-    private func showMainWindow() {
-        PlayerWindows.switchWindow(to: PlayerWindowID.main, from: PlayerWindowID.miniPlayer,
-                                   open: openWindow, dismiss: dismissWindow)
+/// A small frosted circular button on the cover.
+private struct CoverRoundButton: View {
+    var symbol: String
+    var label: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.white)
+                .frame(width: 26, height: 26)
+                .background { CoverButtonDisc() }
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
+/// Frosted glass with a light dark tint, legible on any cover.
+private struct CoverButtonDisc: View {
+    var body: some View {
+        ZStack {
+            Circle().fill(.ultraThinMaterial)
+            Circle().fill(Color.black.opacity(0.18))
+            Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5)
+        }
+        .accessibilityHidden(true)
     }
 }
 

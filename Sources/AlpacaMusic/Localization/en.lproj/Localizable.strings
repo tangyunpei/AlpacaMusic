@@ -1166,3 +1166,11 @@
 "打开主窗口" = "Open Main Window";
 "打开 AlpacaMusic" = "Open AlpacaMusic";
 "退出 AlpacaMusic" = "Quit AlpacaMusic";
+"封面" = "Artwork";
+"卡片" = "Card";
+"迷你播放器样式" = "Mini Player Style";
+"在菜单栏显示播放控制" = "Show Playback Controls in Menu Bar";
+"在菜单栏显示上一首、播放和下一首按钮。" = "Shows previous, play and next buttons in the menu bar.";
+"在菜单栏下方显示歌词" = "Show Lyrics Below Menu Bar";
+"播放时在菜单栏下方显示当前歌词。" = "Shows the current lyric just below the menu bar while music plays.";
+"菜单栏歌词" = "Menu Bar Lyrics";

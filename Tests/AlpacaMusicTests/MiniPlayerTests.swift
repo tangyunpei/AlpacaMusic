@@ -78,7 +78,7 @@ struct MiniPlayerTests {
         #expect(defaults.object(forKey: "menu-bar-player") as? Bool == true)
     }
 
-    @Test func lastWindowClosePolicyFollowsMenuBarPlayer() throws {
+    @Test func lastWindowClosePolicyFollowsMenuBarPresence() throws {
         let domain = "AlpacaMiniPlayerTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: domain))
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
@@ -89,12 +89,87 @@ struct MiniPlayerTests {
         let application = NSApplication.shared
         let model = AppModel(directory: directory, preferences: defaults, ephemeralAccounts: true)
         defer { model.player.shutdown() }
+        // The model is set directly rather than attached, so no status items
+        // or panels are created.
         let delegate = AppDelegate()
-        // Before the model is attached, closing the last window quits as before.
+        // Before a model is connected, closing the last window quits as before.
         #expect(delegate.applicationShouldTerminateAfterLastWindowClosed(application))
         delegate.model = model
+        #expect(model.showsMenuBarPlayer)
+        #expect(model.showsMenuBarControls)
+        #expect(model.showsMenuBarLyrics)
         #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(application))
         model.showsMenuBarPlayer = false
+        #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(application))
+        model.showsMenuBarControls = false
+        #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(application))
+        model.showsMenuBarLyrics = false
         #expect(delegate.applicationShouldTerminateAfterLastWindowClosed(application))
+    }
+
+    @Test func miniPlayerStylesRunFromTheCoverToTheCard() {
+        let expected: [MiniPlayerStyle] = [.artwork, .lyrics, .card]
+        #expect(MiniPlayerStyle.allCases == expected)
+    }
+
+    @Test func nextStyleCyclesThroughEveryStyle() {
+        #expect(MiniPlayerStyle.artwork.next == .lyrics)
+        #expect(MiniPlayerStyle.lyrics.next == .card)
+        #expect(MiniPlayerStyle.card.next == .artwork)
+        for style in MiniPlayerStyle.allCases {
+            let third: MiniPlayerStyle = style.next.next.next
+            #expect(style.next != style)
+            #expect(third == style)
+        }
+    }
+
+    @Test func styleSizesGrowFromASquareCoverToTheCard() {
+        let artwork: CGSize = MiniPlayerStyle.artwork.size
+        let lyrics: CGSize = MiniPlayerStyle.lyrics.size
+        let card: CGSize = MiniPlayerStyle.card.size
+        let expectedArtwork = CGSize(width: 156, height: 156)
+        let expectedLyrics = CGSize(width: 480, height: 84)
+        let expectedCard = CGSize(width: 400, height: 236)
+        #expect(artwork == expectedArtwork)
+        #expect(lyrics == expectedLyrics)
+        #expect(card == expectedCard)
+
+        let artworkArea: CGFloat = artwork.width * artwork.height
+        let lyricsArea: CGFloat = lyrics.width * lyrics.height
+        let cardArea: CGFloat = card.width * card.height
+        // The cover is a square and the smallest window.
+        #expect(artwork.width == artwork.height)
+        #expect(artworkArea < lyricsArea)
+        #expect(artworkArea < cardArea)
+        // The lyric strip is the widest and shorter than the card.
+        #expect(lyrics.width > card.width)
+        #expect(lyrics.width > artwork.width)
+        #expect(lyrics.height < card.height)
+        // The card is the largest.
+        #expect(cardArea > lyricsArea)
+    }
+
+    @Test func styleTitlesAndSymbolsAreDistinct() {
+        let titles: [String] = MiniPlayerStyle.allCases.map { (style: MiniPlayerStyle) -> String in style.title }
+        let symbols: [String] = MiniPlayerStyle.allCases.map { (style: MiniPlayerStyle) -> String in style.symbol }
+        let titlesFilled: Bool = titles.allSatisfy { (title: String) -> Bool in !title.isEmpty }
+        let expectedSymbols: [String] = ["photo", "quote.bubble", "rectangle"]
+        #expect(titlesFilled)
+        #expect(Set(titles).count == titles.count)
+        #expect(Set(symbols).count == symbols.count)
+        #expect(symbols == expectedSymbols)
+    }
+
+    @Test func styleRawValuesAreStable() {
+        let rawValues: [String] = MiniPlayerStyle.allCases.map { (style: MiniPlayerStyle) -> String in style.rawValue }
+        let identifiers: [String] = MiniPlayerStyle.allCases.map { (style: MiniPlayerStyle) -> String in style.id }
+        let expected: [String] = ["artwork", "lyrics", "card"]
+        #expect(rawValues == expected)
+        #expect(identifiers == expected)
+        let parsed: [MiniPlayerStyle?] = expected.map { (raw: String) -> MiniPlayerStyle? in MiniPlayerStyle(rawValue: raw) }
+        let styles: [MiniPlayerStyle?] = [MiniPlayerStyle.artwork, MiniPlayerStyle.lyrics, MiniPlayerStyle.card]
+        let unknown: MiniPlayerStyle? = MiniPlayerStyle(rawValue: "poster")
+        #expect(parsed == styles)
+        #expect(unknown == nil)
     }
 }

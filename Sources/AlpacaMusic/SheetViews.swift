@@ -110,6 +110,24 @@ struct VisualSettingsView: View {
             toggle(L10n.string("在菜单栏显示播放器"), $model.showsMenuBarPlayer)
                 .help(L10n.string("在菜单栏显示当前歌曲与播放控制。"))
                 .accessibilityIdentifier("menu-bar-player-toggle")
+            toggle(L10n.string("在菜单栏显示播放控制"), $model.showsMenuBarControls)
+                .help(L10n.string("在菜单栏显示上一首、播放和下一首按钮。"))
+                .accessibilityIdentifier("menu-bar-controls-toggle")
+            toggle(L10n.string("在菜单栏下方显示歌词"), $model.showsMenuBarLyrics)
+                .help(L10n.string("播放时在菜单栏下方显示当前歌词。"))
+                .accessibilityIdentifier("menu-bar-lyrics-toggle")
+            HStack(spacing: 16) {
+                Text(L10n.string("迷你播放器样式")).font(.system(size: 11)).foregroundStyle(palette.secondary)
+                Spacer(minLength: 8)
+                Picker(L10n.string("迷你播放器样式"), selection: $model.miniPlayerStyle) {
+                    ForEach(MiniPlayerStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .labelsHidden().pickerStyle(.segmented).frame(maxWidth: 240)
+                .accessibilityLabel(L10n.string("迷你播放器样式"))
+                .accessibilityIdentifier("mini-player-style-picker")
+            }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
                 ForEach(VisualizationMode.allCases) { mode in
                     Button { model.visualMode = mode } label: {

@@ -99,6 +99,9 @@ private struct MenuBarPlayerPanel: View {
                                            open: openWindow, dismiss: dismissWindow)
                 NSApp.activate()
             }
+            MenuPanelRow(title: L10n.string("菜单栏歌词"), symbol: "quote.bubble", checked: model.showsMenuBarLyrics) {
+                model.showsMenuBarLyrics.toggle()
+            }
             MenuPanelRow(title: L10n.string("打开 AlpacaMusic"), symbol: "macwindow") {
                 openWindow(id: PlayerWindowID.main)
                 NSApp.activate()
@@ -110,11 +113,13 @@ private struct MenuBarPlayerPanel: View {
     }
 }
 
-/// A compact, menu-like text button with a hover highlight.
+/// A compact, menu-like text button with a hover highlight. A row that
+/// toggles a setting passes `checked` and shows a checkmark while it is on.
 private struct MenuPanelRow: View {
     @Environment(\.appPalette) private var palette
     var title: String
     var symbol: String
+    var checked: Bool? = nil
     var action: () -> Void
     @State private var hovering = false
     var body: some View {
@@ -124,6 +129,11 @@ private struct MenuPanelRow: View {
                     .foregroundStyle(palette.secondary)
                 Text(title).font(.system(size: 12)).foregroundStyle(palette.text).lineLimit(1)
                 Spacer(minLength: 0)
+                if checked == true {
+                    Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                        .accessibilityHidden(true)
+                }
             }
             .padding(.horizontal, 8)
             .frame(height: 26)
@@ -131,6 +141,7 @@ private struct MenuPanelRow: View {
             .background(hovering ? palette.text.opacity(0.08) : Color.clear, in: .rect(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(checked == true ? [.isSelected] : [])
         .onHover { hovering = $0 }
     }
 }

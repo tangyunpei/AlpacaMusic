@@ -144,14 +144,6 @@ struct ContentView: View {
             case .failure(let error): model.notify(error.localizedDescription)
             }
         }
-        .task(id: model.player.current.map { LyricsIdentity.key(for: $0) }) { await model.lyrics.load(track: model.player.current) }
-        .onChange(of: model.player.lyricAudioSource, initial: true) { _, source in
-            model.lyrics.setAudioSource(source, position: model.player.position)
-        }
-        .onChange(of: model.player.position) { _, position in model.lyrics.updateAlignmentPosition(position) }
-        .onChange(of: model.player.lyricSeekRevision) { _, _ in
-            model.lyrics.updateAlignmentPosition(model.player.position, didSeek: true)
-        }
         .animation(ExperienceMotion.panel, value: model.queueOpen)
         .animation(ExperienceMotion.panel, value: model.immersive)
         .animation(ExperienceMotion.control, value: model.notice)

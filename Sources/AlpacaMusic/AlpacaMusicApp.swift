@@ -12,7 +12,7 @@ struct AlpacaMusicApp: App {
                 .frame(minWidth: 1040, minHeight: 720)
                 .appTheme(model.immersive ? .listeningRoom : .bauhaus)
                 .preferredColorScheme(model.immersive ? .dark : .light)
-                .task { delegate.model = model; await model.load() }
+                .task { delegate.attach(model); await model.load() }
         }
         .defaultSize(width: 1440, height: 940)
         .windowStyle(.hiddenTitleBar)
@@ -103,16 +103,33 @@ struct AlpacaMusicApp: App {
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
     private var terminating = false
-    /// While the menu bar player is shown, closing the last window keeps the
+    private var transportController: MenuBarTransportController?
+    private var lyricsOverlayController: MenuBarLyricsOverlayController?
+    /// Connects the model; the first time it also starts the menu bar
+    /// playback controls and the lyrics shown below the menu bar.
+    func attach(_ model: AppModel) {
+        self.model = model
+        guard transportController == nil else { return }
+        let transport = MenuBarTransportController(model: model)
+        let overlay = MenuBarLyricsOverlayController(model: model)
+        transportController = transport
+        lyricsOverlayController = overlay
+        transport.start()
+        overlay.start()
+    }
+    /// While any menu bar item is shown, closing the last window keeps the
     /// app (and playback) running there; otherwise closing it quits as before.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        model?.showsMenuBarPlayer != true
+        model?.hasMenuBarPresence != true
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         guard !terminating else { return .terminateLater }
         terminating = true
         model.player.pause()
+        transportController?.stop()
+        lyricsOverlayController?.stop()
+        model.stopLyricsSync()
         Task {
             await model.library.flushPersistence()
             await model.lyrics.shutdown()
