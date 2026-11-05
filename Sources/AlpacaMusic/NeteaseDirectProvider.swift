@@ -196,8 +196,10 @@ struct NeteaseDirectProvider: DirectMusicProvider {
         do {
             let response: NELyricsResponse = try await request("song/lyric/v1", payload: ["id": id, "cp": false, "lv": 0, "tv": 0, "rv": 0, "kv": 0, "yv": 0, "ytv": 0, "yrv": 0], cookies: cookies, phase: L10n.string("读取歌词"), timeout: 8)
             try Task.checkCancellation()
+            // `ytlrc` shares the YRC sentence clock; `tlyric` follows the LRC one.
+            let wordTranslation = response.ytlrc?.lyric.flatMap { $0.isEmpty ? nil : $0 } ?? response.tlyric?.lyric
             if let text = response.yrc?.lyric,
-               let document = PlatformWordLyrics.parse(text, format: .yrc, translation: response.ytlyric?.lyric ?? response.tlyric?.lyric) {
+               let document = PlatformWordLyrics.parse(text, format: .yrc, translation: wordTranslation) {
                 return .init(text: response.lrc?.lyric ?? "", translation: response.tlyric?.lyric, document: document)
             }
             if let payload = try lyricPayload(response) { return payload }
@@ -331,7 +333,7 @@ private struct NELyricsResponse: Decodable {
     var lrc: Text?
     var tlyric: Text?
     var yrc: Text?
-    var ytlyric: Text?
+    var ytlrc: Text?
     struct Text: Decodable { var lyric: String? }
 }
 private struct NEProfileResponse: Decodable {

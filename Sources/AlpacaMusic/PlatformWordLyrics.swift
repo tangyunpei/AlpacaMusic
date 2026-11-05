@@ -11,7 +11,11 @@ enum PlatformWordLyrics {
         let rows = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n").components(separatedBy: "\n")
         guard rows.count <= LyricsParser.maximumLines else { return nil }
         guard let sentence = try? NSRegularExpression(pattern: #"^\[(\d+),(\d+)\]"#),
-              let token = try? NSRegularExpression(pattern: format == .yrc ? #"\((\d+),(\d+),(\d+)\)"# : #"\((\d+),(\d+)\)"#) else { return nil }
+              let token = try? NSRegularExpression(pattern: format == .yrc ? #"\((\d+),(\d+),(\d+)\)"# : #"\((\d+),(\d+)\)"#),
+              // A YRC token the strict pattern refused (signed, fractional or
+              // non-numeric fields) must not be shown as lyric text. Words in
+              // ordinary parentheses, such as "(oh,oh,oh)", carry no digit.
+              let refused = try? NSRegularExpression(pattern: #"\((?=[^()]*[0-9])[^()\s,]*,[^()\s,]*,[^()\s,]*\)"#) else { return nil }
         var lines: [LyricLine] = [], totalWords = 0
         for raw in rows {
             let row = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -32,13 +36,18 @@ enum PlatformWordLyrics {
                 if body.trimmingCharacters(in: .whitespaces).isEmpty { continue }
                 return nil
             }
-            var words: [LyricWord] = []
+            var words: [LyricWord] = [], previousOnset = start
+            // NetEase gives punctuation, brackets and censored letters no vocal
+            // duration. Their text joins the word it is written against, so each
+            // emitted word keeps a measured, positive window and its own onset.
+            var pending = "", pendingOnset = start
             for (index, item) in matches.enumerated() {
                 guard let full = Range(item.range, in: body),
                       let onset = milliseconds(item, at: 1, in: body),
                       let length = milliseconds(item, at: 2, in: body),
-                      length > 0, onset >= start, onset + length <= start + duration + 1,
-                      words.last.map({ seconds(onset) >= $0.start }) ?? true else { return nil }
+                      length > 0 || format == .yrc,
+                      onset >= previousOnset, onset + length <= start + duration + 1 else { return nil }
+                previousOnset = onset
                 let value: String
                 switch format {
                 case .yrc:
@@ -51,7 +60,28 @@ enum PlatformWordLyrics {
                     if index == matches.count - 1, !body[full.upperBound...].trimmingCharacters(in: .whitespaces).isEmpty { return nil }
                 }
                 guard !value.isEmpty else { return nil }
-                words.append(.init(id: index, text: value, start: seconds(onset), end: seconds(onset + length)))
+                if format == .yrc, refused.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil { return nil }
+                if length == 0 {
+                    // Closing marks stay with the previous word ("stay, ", "LAROI）").
+                    // Opening marks, and anything after a space, lead into the next
+                    // one ("（The ", "be ****ed "). A run that started forward stays so.
+                    if let last = words.last, pending.isEmpty, !opensNextWord(value), last.text.last?.isWhitespace != true {
+                        words[words.count - 1].text += value
+                    } else {
+                        if pending.isEmpty { pendingOnset = onset }
+                        pending += value
+                    }
+                    continue
+                }
+                words.append(.init(id: words.count, text: pending + value, start: seconds(onset), end: seconds(onset + length)))
+                pending = ""
+            }
+            if !pending.isEmpty {
+                if words.isEmpty {
+                    // Only zero-length tokens: the measured sentence is the window.
+                    guard pendingOnset < start + duration else { return nil }
+                    words.append(.init(id: 0, text: pending, start: seconds(pendingOnset), end: seconds(start + duration)))
+                } else { words[words.count - 1].text += pending }
             }
             totalWords += words.count
             guard totalWords <= 100_000, duration > 0,
@@ -124,6 +154,11 @@ enum PlatformWordLyrics {
     }
 
     private static func seconds(_ milliseconds: Int) -> Double { Double(milliseconds) / 1_000 }
+
+    private static func opensNextWord(_ text: String) -> Bool {
+        guard let scalar = text.unicodeScalars.first(where: { !$0.properties.isWhitespace }) else { return false }
+        return [.openPunctuation, .initialPunctuation].contains(scalar.properties.generalCategory)
+    }
 }
 
 private final class QRCDocumentReader: NSObject, XMLParserDelegate {
