@@ -202,10 +202,11 @@ enum LyricsParser {
 
     /// NetEase's lyric v1 route sends credits as one JSON object per row,
     /// e.g. `{"t":1000,"c":[{"tx":"作曲: "},{"tx":"GRP"}]}`: `t` is
-    /// milliseconds from the start of the song and the text is every `tx`
-    /// joined. The older route sent the same credits as timed LRC lines.
+    /// milliseconds from the start of the song (sometimes negative, before
+    /// it) and the text is every `tx` joined. The older route sent the same
+    /// credits as timed LRC lines, with negative times at 00:00.00.
     private struct CreditRow: Decodable {
-        struct Part: Decodable { let tx: String }
+        struct Part: Decodable { let tx: String? }
         let t: Double
         let c: [Part]
     }
@@ -215,8 +216,8 @@ enum LyricsParser {
     private static func creditRow(_ row: String) -> (start: Double, text: String)? {
         guard row.first == "{", row.last == "}", row.utf8.count <= 32_768,
               let value = try? JSONDecoder().decode(CreditRow.self, from: Data(row.utf8)),
-              value.t.isFinite, (0...86_400_000).contains(value.t) else { return nil }
-        let text: String = value.c.map(\.tx).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+              value.t.isFinite, abs(value.t) <= 86_400_000 else { return nil }
+        let text: String = value.c.compactMap(\.tx).joined().trimmingCharacters(in: .whitespacesAndNewlines)
         return (value.t / 1_000, text)
     }
 

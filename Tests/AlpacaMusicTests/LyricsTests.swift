@@ -37,9 +37,24 @@ struct LyricsParserTests {
         #expect(document.lines[1].translation == "你为什么离去")
     }
 
+    /// Some songs put credits before the start (negative `t`); the older
+    /// route showed them at 00:00.00, where they join a line at the same
+    /// time. A piece without text (say, only an image) is skipped.
+    @Test func creditRowsBeforeTheStartClampToZero() throws {
+        let text = """
+        {"t":-1000,"c":[{"tx":"作词: "},{"tx":"陈雪凝"}]}
+        {"t":-500,"c":[{"tx":"作曲: "},{"li":"http://p1.music.126.net/x.jpg"},{"tx":"陈雪凝"}]}
+        [00:00.00]编曲：Dadz
+        [00:00.880]若不是你
+        """
+        let document = try LyricsParser.parse(text)
+        #expect(document.lines.map(\.text) == ["作词: 陈雪凝\n作曲: 陈雪凝\n编曲：Dadz", "若不是你"])
+        #expect(document.lines.map(\.start) == [0, 0.88])
+    }
+
     @Test func jsonThatIsNotACreditRowStaysAsText() throws {
-        for row in [#"{"t":"0","c":[{"tx":"x"}]}"#, #"{"t":0,"c":"x"}"#, #"{"t":-5,"c":[{"tx":"x"}]}"#,
-                    #"{"t":0,"c":[{"text":"x"}]}"#, "{not json}"] {
+        for row in [#"{"t":"0","c":[{"tx":"x"}]}"#, #"{"t":0,"c":"x"}"#, #"{"t":1e12,"c":[{"tx":"x"}]}"#,
+                    #"{"c":[{"tx":"x"}]}"#, "{not json}"] {
             let document = try LyricsParser.parse(row + "\n[00:01.00]Sung")
             #expect(document.lines.first?.text == row)
             #expect(document.lines.first?.start == nil)
