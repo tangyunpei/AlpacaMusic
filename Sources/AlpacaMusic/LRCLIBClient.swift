@@ -73,10 +73,17 @@ actor LRCLIBClient {
             ]) else { continue }
             let values: [Response] = try Self.decode(data)
             guard values.count <= 100 else { return nil }
-            switch Self.select(values, signature: signature) {
-            case .missing: continue
+            switch Self.select(values, signature: signature, anyNameOrder: false) {
             case .ambiguous: return nil
             case .found(let value): return try document(value, signature: signature)
+            case .missing:
+                // Only when nothing matches the artist exactly, accept it in
+                // another name order. A relaxed tie never overrides a strict
+                // result, and a relaxed miss or tie moves on as before.
+                if case .found(let value) = Self.select(values, signature: signature, anyNameOrder: true) {
+                    return try document(value, signature: signature)
+                }
+                continue
             }
         }
         return nil
@@ -145,15 +152,26 @@ actor LRCLIBClient {
         do { return try JSONDecoder().decode(Value.self, from: data) }
         catch { throw MusicError.message(L10n.string("LRCLIB 返回的歌词资料无法读取。")) }
     }
-    private static func matches(_ value: Response, signature: Signature) -> Bool {
-        normalized(value.trackName) == signature.title && normalized(value.artistName) == signature.artist &&
-        value.duration.isFinite && abs(value.duration - signature.duration) <= 2
+    private static func matches(_ value: Response, signature: Signature, anyNameOrder: Bool = false) -> Bool {
+        let artist: Bool = anyNameOrder ? sameArtist(value.artistName, signature.artist)
+            : normalized(value.artistName) == signature.artist
+        return normalized(value.trackName) == signature.title && artist &&
+            value.duration.isFinite && abs(value.duration - signature.duration) <= 2
+    }
+    /// The same artist credited in either name order, such as LRCLIB's
+    /// "Takase Toya" for Apple Music's "Toya Takase": the same words, each
+    /// the same number of times. `artist` is already normalized.
+    private static func sameArtist(_ candidate: String, _ artist: String) -> Bool {
+        let other: String = normalized(candidate)
+        if other == artist { return true }
+        let words: [Substring] = artist.split(separator: " ").sorted()
+        return words.count > 1 && other.split(separator: " ").sorted() == words
     }
     private static func hasLyrics(_ value: Response) -> Bool {
         value.instrumental || [value.syncedLyrics, value.plainLyrics].contains { $0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
     }
-    private static func select(_ values: [Response], signature: Signature) -> Match {
-        let candidates = values.filter { matches($0, signature: signature) && hasLyrics($0) }
+    private static func select(_ values: [Response], signature: Signature, anyNameOrder: Bool) -> Match {
+        let candidates = values.filter { matches($0, signature: signature, anyNameOrder: anyNameOrder) && hasLyrics($0) }
         let exactAlbum = candidates.filter { !signature.album.isEmpty && normalized($0.albumName) == signature.album }
         if exactAlbum.count == 1 { return .found(exactAlbum[0]) }
         if exactAlbum.count > 1 { return .ambiguous }

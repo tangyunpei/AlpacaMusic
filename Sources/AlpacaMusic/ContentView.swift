@@ -144,14 +144,6 @@ struct ContentView: View {
             case .failure(let error): model.notify(error.localizedDescription)
             }
         }
-        .task(id: model.player.current.map { LyricsIdentity.key(for: $0) }) { await model.lyrics.load(track: model.player.current) }
-        .onChange(of: model.player.lyricAudioSource, initial: true) { _, source in
-            model.lyrics.setAudioSource(source, position: model.player.position)
-        }
-        .onChange(of: model.player.position) { _, position in model.lyrics.updateAlignmentPosition(position) }
-        .onChange(of: model.player.lyricSeekRevision) { _, _ in
-            model.lyrics.updateAlignmentPosition(model.player.position, didSeek: true)
-        }
         .animation(ExperienceMotion.panel, value: model.queueOpen)
         .animation(ExperienceMotion.panel, value: model.immersive)
         .animation(ExperienceMotion.control, value: model.notice)
@@ -337,7 +329,11 @@ private struct HeroVisualStage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(palette.background)
         .overlay(alignment: .topTrailing) {
-            ToolButton(symbol: "slider.horizontal.3", label: L10n.string("调整视觉效果")) { model.sheet = .visual }.padding(15)
+            // The Bauhaus composition is printed on light paper; give the
+            // room-coloured control a dark backing so it stays visible.
+            ToolButton(symbol: "slider.horizontal.3", label: L10n.string("调整视觉效果")) { model.sheet = .visual }
+                .background(model.visualMode == .bauhaus ? palette.background.opacity(0.78) : Color.clear, in: .rect(cornerRadius: 7))
+                .padding(15)
         }
     }
 }
@@ -378,7 +374,10 @@ struct ImmersiveView: View {
                 palette.background
                 RadialGradient(colors: [palette.raised.opacity(0.65), palette.background], center: .center, startRadius: 40, endRadius: 800)
                 if !model.lyricsVisible {
-                    ListeningScene(model: model).padding(.vertical, 56)
+                    // Keep the light Bauhaus paper clear of the room's light-on-dark chrome.
+                    ListeningScene(model: model)
+                        .padding(.top, model.visualMode == .bauhaus ? 68 : 56)
+                        .padding(.bottom, model.visualMode == .bauhaus ? 116 : 56)
                 } else if model.lyricPresentation == .scroll {
                     HStack(spacing: 30) {
                         VStack(spacing: 12) {
@@ -548,7 +547,7 @@ struct KineticBackdrop: ViewModifier {
     func body(content: Content) -> some View {
         GeometryReader { geometry in
             content
-                .opacity(mode == .pointCloud ? 0.28 : mode == .artwork ? 0.30 : 0.72)
+                .opacity(mode == .pointCloud ? 0.28 : mode == .artwork || mode == .bauhaus ? 0.30 : 0.72)
                 .overlay {
                     RadialGradient(colors: [.black.opacity(0.38), .black.opacity(0.10), .clear],
                                    center: .center, startRadius: 0,

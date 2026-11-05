@@ -115,6 +115,18 @@ import Testing
         #expect(try JSONEncoder().encode(restored) == Data("\"spectrumRing\"".utf8))
     }
 
+    @Test func visualizationModeOrderAndClassificationMatchTheContract() throws {
+        #expect(VisualizationMode.allCases.map(\.rawValue) == ["pointCloud", "spectrumRing", "ribbons", "starfield", "waveform",
+                                                                "spectrumBars", "harmonograph", "spectralHorizon", "bauhaus", "artwork"])
+        #expect(VisualizationMode.allCases.filter(\.isSignalDisplay) == [.waveform, .spectrumBars, .harmonograph, .spectralHorizon])
+        #expect(VisualizationMode.allCases.filter { !$0.isAudioReactive } == [.artwork])
+        for mode in [VisualizationMode.harmonograph, .spectralHorizon, .bauhaus] {
+            let encoded = try JSONEncoder().encode(mode)
+            #expect(encoded == Data("\"\(mode.rawValue)\"".utf8))
+            #expect(try JSONDecoder().decode(VisualizationMode.self, from: encoded) == mode)
+        }
+    }
+
 
     @Test func openingAPlayingScopeWithReducedMotionShowsOneRealSnapshot() {
         let clock = VisualizationClock(), date = Date(timeIntervalSince1970: 0)

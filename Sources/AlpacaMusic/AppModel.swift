@@ -44,10 +44,35 @@ final class AppModel {
     var sodaPublicSearch: Bool {
         didSet { preferences.set(sodaPublicSearch, forKey: "soda-public-search") }
     }
+    /// Shows the status bar player; while it is shown, closing the last
+    /// window keeps the app (and playback) running from the menu bar.
+    var showsMenuBarPlayer: Bool {
+        didSet { preferences.set(showsMenuBarPlayer, forKey: "menu-bar-player") }
+    }
+    /// Shows previous, play and next buttons in the menu bar.
+    var showsMenuBarControls: Bool {
+        didSet { preferences.set(showsMenuBarControls, forKey: "menu-bar-controls") }
+    }
+    /// Shows the current lyric just below the menu bar while music plays.
+    var showsMenuBarLyrics: Bool {
+        didSet { preferences.set(showsMenuBarLyrics, forKey: "menu-bar-lyrics") }
+    }
+    /// The mini player's layout: artwork, lyric strip or card.
+    var miniPlayerStyle: MiniPlayerStyle {
+        didSet { preferences.set(miniPlayerStyle.rawValue, forKey: "mini-player-style") }
+    }
+    /// True while any menu bar item is shown; closing the last window then
+    /// keeps the app (and playback) running.
+    var hasMenuBarPresence: Bool { showsMenuBarPlayer || showsMenuBarControls || showsMenuBarLyrics }
     var sourceFilter: MusicSource? = nil
     var queueOpen = false
-    var immersive = false
+    var immersive = false {
+        didSet { if !immersive { immersiveOpenedForLyrics = false } }
+    }
     var lyricsVisible = true
+    /// True while the immersive view is open only because the lyrics button
+    /// opened it, so closing the lyrics returns to the library.
+    @ObservationIgnored private var immersiveOpenedForLyrics = false
     var automaticLyricAudioAlignment: Bool {
         didSet {
             preferences.set(automaticLyricAudioAlignment, forKey: "lyrics-audio-alignment")
@@ -85,12 +110,17 @@ final class AppModel {
     @ObservationIgnored private var searchSectionCache: (key: VisibleTrackKey, sections: SearchSections)?
     @ObservationIgnored private var libraryIndexCache: (revision: UInt64, ids: Set<String>, keys: Set<String>)?
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
+    @ObservationIgnored private var lyricsSync: LyricsSync?
 
     init(directory suppliedDirectory: URL? = nil, preferences suppliedDefaults: UserDefaults? = nil, ephemeralAccounts: Bool? = nil) {
         let directory = suppliedDirectory ?? ProcessInfo.processInfo.environment["ALPACA_DATA_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         preferences = suppliedDefaults ?? ProcessInfo.processInfo.environment["ALPACA_PREFERENCES_DOMAIN"].flatMap(UserDefaults.init(suiteName:)) ?? .standard
         language = L10n.preference(in: preferences)
         sodaPublicSearch = preferences.object(forKey: "soda-public-search") as? Bool ?? true
+        showsMenuBarPlayer = preferences.object(forKey: "menu-bar-player") as? Bool ?? true
+        showsMenuBarControls = preferences.object(forKey: "menu-bar-controls") as? Bool ?? true
+        showsMenuBarLyrics = preferences.object(forKey: "menu-bar-lyrics") as? Bool ?? true
+        miniPlayerStyle = preferences.string(forKey: "mini-player-style").flatMap(MiniPlayerStyle.init(rawValue:)) ?? .lyrics
         library = MusicLibrary(directory: directory)
         let isolatedAccounts = ephemeralAccounts ?? (ProcessInfo.processInfo.environment["ALPACA_EPHEMERAL_ACCOUNTS"] == "1")
         let native = NativeMusicClient(credentials: isolatedAccounts ? MemoryMusicCredentialStore() : MusicCredentialStore())
@@ -272,6 +302,7 @@ final class AppModel {
         await library.load()
         player.sourceConfigurations = library.sources
         player.restoreQueue(library.tracks)
+        startLyricsSync()
         if let error = library.error { notify(error) }
         async let accountRestore: Void = accounts.restore()
         async let spotifyRestore: Void = spotify.restore()
@@ -279,6 +310,14 @@ final class AppModel {
         await accountRestore
         await spotifyRestore
     }
+    /// Keeps lyrics loaded and aligned with playback whichever windows are
+    /// open; calling it again while it runs does nothing.
+    func startLyricsSync() {
+        if lyricsSync == nil { lyricsSync = LyricsSync(player: player, lyrics: lyrics) }
+        lyricsSync?.start()
+    }
+    /// Stops lyric loading and alignment, for example while quitting.
+    func stopLyricsSync() { lyricsSync?.stop() }
     func navigate(_ target: Destination) {
         stopSearch(); searchStatuses = []; addedFromSearch = []
         query = ""; searchTerm = ""; remoteResults = []; searchErrors = []; sourceFilter = nil
@@ -288,7 +327,18 @@ final class AppModel {
         guard let track = player.current else { notify(L10n.string("先选择一首歌曲，再为它导入歌词。")); return }
         lyricImportTarget = track; showLyricsImporter = true
     }
-    func revealLyrics() { lyricsVisible = true; immersive = true }
+    func revealLyrics() {
+        if !immersive { immersiveOpenedForLyrics = true }
+        lyricsVisible = true; immersive = true
+    }
+    /// The player bar's lyrics button. It opens the lyrics, and closes them
+    /// to where the listener was: the library when the button opened the
+    /// immersive view, otherwise the immersive visuals.
+    func toggleLyrics() {
+        guard immersive, lyricsVisible else { revealLyrics(); return }
+        if immersiveOpenedForLyrics { immersive = false } else { lyricsVisible = false }
+        immersiveOpenedForLyrics = false
+    }
     /// The single entry point for the local file importer; a running import
     /// keeps it closed instead of failing after the user picks files.
     func beginImport(folder: Bool) {

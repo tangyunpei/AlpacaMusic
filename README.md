@@ -18,7 +18,8 @@ Created by [byalpaca](https://byalpaca.dev). **macOS 26 or later.** Windows is n
 
 - Local files, folders, HTTP/HTTPS audio links, favorites, playlists, search, and a mixed-source queue.
 - An Albums cover grid with album details, ordered track lists, and whole-album playback. Existing songs with album metadata appear automatically.
-- Album-art point clouds, orbital particles, flowing ribbons, oscilloscopes, and a continuous spectrum display. Audio-reactive effects use real samples when available.
+- Album-art point clouds, orbital particles, flowing ribbons, oscilloscopes, a continuous spectrum display, a harmonograph traced from the waveform, a spectral horizon of layered spectrum ridges, and a Bauhaus composition of shapes that respond to the music. Audio-reactive effects use real samples when available.
+- A mini player in three sizes (artwork with a play button, a lyric strip, and a larger card), a menu bar player, and previous/play/next buttons in the menu bar for controlling playback without the main window. While music plays, the current lyric appears just below the menu bar. Each menu bar item can be turned off in Settings.
 - Scrolling lyrics and animated captions with selective word and character emphasis: character-by-character Chinese and word-by-word English, Spanish, and similar languages. Platform YRC/QRC word timing is preferred; readable audio can be analyzed ahead on-device with voice detection and recording-specific timing caches. Uncertain lines remain estimated. See [lyric alignment](docs/lyric-audio-alignment.md).
 - English and Simplified Chinese UI, following the system by default. Switch languages instantly in Settings without interrupting playback.
 - Saved library and playback position; three original demo tracks to try without an online account.
@@ -57,6 +58,8 @@ open build/AlpacaMusic.app
 ```
 
 The build targets the current Mac architecture. Local signing is read from the ignored `signing.local.plist`; without it, the build uses ad-hoc signing. Apple Music needs the [MusicKit signing setup](docs/apple-music-setup.md). Distribution requires appropriate Developer ID signing, notarization, and device validation.
+
+Run `./scripts/make-dmg.sh` to build the app and create a DMG. The script prints its path under `build/release.*/`. Use `--skip-build` to package the existing app. Set `ENABLE_MUSICKIT=1` for an Apple Music build, and set `NOTARY_PROFILE` to submit and staple the DMG using an existing Apple notary profile.
 
 ### Automatic build version
 
@@ -118,7 +121,8 @@ macOS 原生音乐播放器，统一管理本地与在线曲库，提供沉浸�
 
 - 本地文件、文件夹、HTTP/HTTPS 音频链接，以及收藏、歌单、搜索和混合来源队列。
 - 专辑封面网格、专辑详情、按曲序排列的歌曲和整张播放；已有歌曲的专辑资料会自动归入专辑库。
-- 封面点云、轨道粒子、流光绸缎、示波器和连续竖条频谱；有可用采样时以真实音频驱动。
+- 封面点云、轨道粒子、流光绸缎、示波器、连续竖条频谱、由波形描绘的谐波图、层叠频谱山脊组成的声谱地平线，以及随音乐变化的包豪斯构成；有可用采样时以真实音频驱动。
+- 三种尺寸的迷你播放器（带播放按钮的封面、歌词条和较大的卡片）、菜单栏播放器，以及菜单栏中的上一首、播放和下一首按钮，无需打开主窗口即可控制播放；播放时当前歌词显示在菜单栏正下方。菜单栏中的各项均可在设置中关闭。
 - 滚动歌词、动态字幕和局部强调：中文逐字，英语、西语等逐词出现；缺少逐词时间时使用估算。
 - 保存曲库和播放位置；内置三首原创试听，无需在线账号即可体验。
 
@@ -158,6 +162,8 @@ open build/AlpacaMusic.app
 ```
 
 构建生成当前 Mac 架构的应用。签名读取已被忽略的本机 `signing.local.plist`；未配置时使用 ad-hoc。Apple Music 需要[配置 MusicKit 与签名](docs/apple-music-setup.md)。对外分发还需正确的 Developer ID 签名、公证及设备验证。
+
+运行 `./scripts/make-dmg.sh` 构建并打包 DMG，脚本会输出 `build/release.*/` 下的文件路径。用 `--skip-build` 打包现有应用。构建 Apple Music 版本时设置 `ENABLE_MUSICKIT=1`，需要提交公证并附加票据时通过 `NOTARY_PROFILE` 指定已有的 Apple 公证配置。
 
 ### 自动构建版本
 

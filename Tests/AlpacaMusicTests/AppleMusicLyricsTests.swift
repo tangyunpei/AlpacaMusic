@@ -15,6 +15,63 @@ import Testing
             "instrumental": false, "syncedLyrics": "[00:01]An original test phrase\n[00:03]A second test phrase"])
         return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
     }
+    /// LRCLIB: `/api/get` finds nothing, `/api/search` returns `results`.
+    nonisolated private static func searchOnly(_ results: [[String: Any]]) -> LRCLIBClient.Transport {
+        let body: Data = (try? JSONSerialization.data(withJSONObject: results)) ?? Data("[]".utf8)
+        return { request in
+            let url = try #require(request.url)
+            if url.path() == "/api/get" {
+                return (Data(#"{"name":"TrackNotFound"}"#.utf8), HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+            }
+            return (body, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+    }
+    nonisolated private static func entry(artist: String, duration: Double) -> [String: Any] {
+        ["trackName": "I can't stop loving you (feat. Emi Noda)", "artistName": artist, "albumName": "The 2nd of Undecimber",
+         "duration": duration, "instrumental": false, "syncedLyrics": "[00:01.00]A sung line"]
+    }
+    private func takase(duration: Double = 217.306) -> Track {
+        .init(id: "appleMusic:library:takase", title: "I Can't Stop Loving You (feat. Emi Noda)", artist: "Toya Takase",
+              album: "The 2nd of Undecimber", duration: duration, source: .appleMusic, sourceID: "takase", appleMusicResourceKind: .librarySong)
+    }
+
+    /// LRCLIB credits some artists family name first ("Takase Toya" for
+    /// Apple Music's "Toya Takase"). The same words in another order match;
+    /// a different artist, title or duration still does not.
+    @Test func anArtistInTheOtherNameOrderStillMatches() async throws {
+        let reversed = LRCLIBClient(transport: Self.searchOnly([Self.entry(artist: "Takase Toya", duration: 217)]))
+        let found = try await reversed.lookup(takase())
+        #expect(found?.lines.first?.text == "A sung line")
+
+        let different = LRCLIBClient(transport: Self.searchOnly([Self.entry(artist: "Takase Toyama", duration: 217)]))
+        #expect(try await different.lookup(takase()) == nil)
+
+        let longer = LRCLIBClient(transport: Self.searchOnly([Self.entry(artist: "Takase Toya", duration: 188)]))
+        #expect(try await longer.lookup(takase(duration: 181.133)) == nil)
+
+        // An exact match still comes from /api/get.
+        let exact = LRCLIBClient(transport: { request in try Self.response(request) })
+        #expect(try await exact.lookup(track())?.sourceDescription == "LRCLIB")
+    }
+
+    /// The name-order match is only a fallback: when one entry matches the
+    /// artist exactly and another only in reversed order, the exact one wins
+    /// instead of the two becoming a tie that matches nothing.
+    @Test func anExactArtistStillWinsOverTheOtherNameOrder() async throws {
+        let entries: [[String: Any]] = [
+            ["trackName": "給千億顆星選中的二人", "artistName": "Ian 陳卓賢", "albumName": "給千億顆星選中的二人",
+             "duration": 244.7, "instrumental": false, "syncedLyrics": "[00:01.00]Exact artist"],
+            ["trackName": "給千億顆星選中的二人", "artistName": "陳卓賢 Ian", "albumName": "給千億顆星選中的二人",
+             "duration": 245.0, "instrumental": false, "syncedLyrics": "[00:01.00]Reversed artist"]
+        ]
+        let client = LRCLIBClient(transport: Self.searchOnly(entries))
+        let song = Track(id: "appleMusic:library:ian", title: "给千亿颗星选中的二人", artist: "Ian 陈卓贤",
+                         album: "给千亿颗星选中的二人 - Single", duration: 244.687, source: .appleMusic,
+                         sourceID: "ian", appleMusicResourceKind: .librarySong)
+        let found = try await client.lookup(song)
+        #expect(found?.lines.first?.text == "Exact artist")
+    }
+
     @Test func automaticLookupRestoresSyncedLyricsAfterSwitchAndRestartWithoutNetwork() async throws {
         let location = directory(); defer { try? FileManager.default.removeItem(at: location) }
         let calls = Mutex(0)

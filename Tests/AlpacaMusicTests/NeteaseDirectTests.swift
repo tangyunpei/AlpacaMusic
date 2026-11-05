@@ -36,6 +36,30 @@ import Testing
         #expect(String(decoding: request.httpBody ?? Data(), as: UTF8.self).hasPrefix("params="))
     }
 
+    @Test func yrcTranslationUsesTheYrcTimedField() async throws {
+        // lyric/v1 sends the YRC-timed translation as `ytlrc`; `tlyric` keeps
+        // the LRC clock, which can sit more than the 50 ms match window away.
+        let fixture = NEFixture([.init(path: "/eapi/song/lyric/v1", json: try json([
+            "code": 200, "lrc": ["lyric": "[00:01.310]青山"],
+            "yrc": ["lyric": "[1460,2000](1460,500,0)青(1960,1000,0)山"],
+            "tlyric": ["lyric": "[00:01.310]LRC-timed translation"],
+            "ytlrc": ["lyric": "[00:01.460]Blue hills"]
+        ]))])
+        let payload = try #require(try await provider(fixture).lyrics(playbackTrack, cookies: cookies))
+        #expect(payload.document?.lines.first?.translation == "Blue hills")
+    }
+
+    @Test func emptyYrcTranslationFallsBackToTlyric() async throws {
+        let fixture = NEFixture([.init(path: "/eapi/song/lyric/v1", json: try json([
+            "code": 200, "lrc": ["lyric": "[00:01]青山"],
+            "yrc": ["lyric": "[1000,2000](1000,500,0)青(1500,1000,0)山"],
+            "tlyric": ["lyric": "[00:01]Blue hills"],
+            "ytlrc": ["lyric": ""]
+        ]))])
+        let payload = try #require(try await provider(fixture).lyrics(playbackTrack, cookies: cookies))
+        #expect(payload.document?.lines.first?.translation == "Blue hills")
+    }
+
     @Test func malformedYrcDoesNotDiscardValidLrcFromSameResponse() async throws {
         let fixture = NEFixture([.init(path: "/eapi/song/lyric/v1", json: try json([
             "code": 200, "lrc": ["lyric": "[00:01]Fixture fallback"],
