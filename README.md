@@ -29,7 +29,7 @@ Created by [byalpaca](https://byalpaca.dev) (Junpei Tang). **macOS 26 or later.*
 2. Use **Import** or drag in local music. Open **Sources** to connect an online account.
 3. Choose a song, then open lyrics, immersive mode, or the queue from the player controls.
 
-See [account connections](docs/account-connections.md) for login and playlist import details. Source builds support English and Simplified Chinese; **Settings → Language** selects **Follow System**, **简体中文**, or **English**. System permission prompts and official embedded login pages follow their own language settings. Advanced technical guides are mainly in Chinese. The existing 0.1.5 release package predates this localization update. See [localization](docs/localization.md).
+See [account connections](docs/account-connections.md) for login and playlist import details. AlpacaMusic supports English and Simplified Chinese; **Settings → Language** selects **Follow System**, **简体中文**, or **English**. System permission prompts and official embedded login pages follow their own language settings. Advanced technical guides are mainly in Chinese. See [localization](docs/localization.md).
 
 ### Online sources
 
@@ -130,7 +130,7 @@ macOS 原生音乐播放器，统一管理本地与在线曲库，提供沉浸�
 
 登录和导入歌单的详细步骤见[账号连接说明](docs/account-connections.md)。进阶技术文档目前以中文为主。
 
-源码构建已支持简体中文和英文，默认跟随系统，可在 **设置 → 语言** 中即时切换。系统权限提示和官方登录网页使用各自的语言设置。现有 **0.1.5 Release 安装包**尚未包含这次更新。详见[多语言说明](docs/localization.md)。
+AlpacaMusic 支持简体中文和英文，默认跟随系统，可在 **设置 → 语言** 中即时切换。系统权限提示和官方登录网页使用各自的语言设置。详见[多语言说明](docs/localization.md)。
 
 ### 在线音源
 
