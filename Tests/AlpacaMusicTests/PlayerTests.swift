@@ -50,26 +50,29 @@ struct PlayerQueueTests {
 }
 struct AudioAnalyzerTests {
     @Test func detectsActualFrequencyAndSilenceExpires() async throws {
-        let analyzer = AudioAnalyzer()
+        let clock = ManualAnalyzerClock(), analyzer = AudioAnalyzer.manual(clock)
         let rate = 44100.0, bin = 4, frequency = rate / 2048 * Double(bin)
         let samples = (0..<4096).map { Float(sin(2 * Double.pi * frequency * Double($0) / rate) * 0.35) }
         analyzer.ingest(samples: samples, sampleRate: rate)
-        try await Task.sleep(for: .milliseconds(180))
+        analyzer.analyzeNow()
         let levels = analyzer.levels()
         #expect(levels.available)
         #expect(levels.energy > 0)
         #expect(levels.spectrum.count == 1024)
         let peak = levels.spectrum.enumerated().max { $0.element < $1.element }?.offset
         #expect(peak == bin)
-        try await Task.sleep(for: .milliseconds(500))
+        clock.advance(by: AudioAnalyzer.expiry)
         #expect(!analyzer.levels().available)
         #expect(analyzer.levels().energy == 0)
     }
     @Test func resetDiscardsOldAudioAndInvalidSamples() async throws {
-        let analyzer = AudioAnalyzer(); analyzer.ingest(samples: [Float](repeating: .nan, count: 2048), sampleRate: 44100)
-        try await Task.sleep(for: .milliseconds(100)); let levels = analyzer.levels()
+        let analyzer = AudioAnalyzer.manual(ManualAnalyzerClock()); analyzer.ingest(samples: [Float](repeating: .nan, count: 2048), sampleRate: 44100)
+        analyzer.analyzeNow(); let levels = analyzer.levels()
+        #expect(levels.available && levels.spectrum.count == 1024)
         #expect(levels.energy == 0); #expect(levels.spectrum.allSatisfy { $0.isFinite })
-        analyzer.reset(); #expect(!analyzer.levels().available)
+        // Half a window of fresh input makes levels() read what is published.
+        analyzer.reset(); analyzer.ingest(samples: [Float](repeating: 0, count: 1024), sampleRate: 44100)
+        #expect(!analyzer.levels().available)
     }
 }
 struct OriginalAudioTests {
@@ -151,9 +154,14 @@ private final class AudioHTTPFixture: @unchecked Sendable {
     }
 }
 
+/// Real AVPlayer playback. On a loaded CI runner these tests take 20-40 s
+/// and the player can need several seconds to start, so each wait allows up
+/// to 20 s and returns as soon as its condition holds. The analysis waits run
+/// the analyzer themselves: they depend on AVPlayer and its audio tap, not on
+/// how soon the utility worker gets scheduled.
 @Suite(.serialized)
 @MainActor struct NativePlaybackTests {
-    private func waitFor(_ predicate: @MainActor () -> Bool, seconds: Double = 8) async throws -> Bool {
+    private func waitFor(_ predicate: @MainActor () -> Bool, seconds: Double = 20) async throws -> Bool {
         let until = Date().addingTimeInterval(seconds)
         while Date() < until { if predicate() { return true }; try await Task.sleep(for: .milliseconds(100)) }
         return predicate()
@@ -168,11 +176,12 @@ private final class AudioHTTPFixture: @unchecked Sendable {
         player.setVolume(0.001) // An audible-engine test at 0.1% volume, only until PCM is observed.
         await player.play(track)
         let played = try await waitFor {
+            player.analyzeAudioNow()
             let levels = player.readLevels()
             return player.status == .playing && player.position > 0.15 && levels.available && levels.spectrum.contains { $0 > 0 }
                 && levels.waveform.count == 1024 && levels.waveform.contains { $0 != 0 }
         }
-        #expect(played, "AVPlayer status=\(player.status), error=\(player.error ?? "none"), position=\(player.position)")
+        #expect(played, "AVPlayer status=\(player.status), error=\(player.error ?? "none"), position=\(player.position), tap=\(player.currentItemHasAudioTap), tapFrames=\(player.audioTapFrames)")
         #expect(player.readLevels().spectrum.contains { $0 > 0 })
         let analyzed = player.readLevels(), waveform = analyzed.waveform
         #expect(waveform.contains { $0 > 0 }); #expect(waveform.contains { $0 < 0 }); #expect(waveform.allSatisfy { $0.isFinite })
@@ -196,11 +205,12 @@ private final class AudioHTTPFixture: @unchecked Sendable {
         let track = Track(id: "http-original", title: "HTTP test", artist: "Alpaca Sessions", album: "Test", duration: 28, source: .url, url: url)
         await player.play(track)
         let played = try await waitFor {
+            player.analyzeAudioNow()
             let levels = player.readLevels()
             return player.status == .playing && player.position > 0.15 && levels.available && levels.spectrum.contains { $0 > 0 }
                 && levels.waveform.count == 1024 && levels.waveform.contains { $0 != 0 }
         }
-        #expect(played, "HTTP AVPlayer status=\(player.status), error=\(player.error ?? "none")")
+        #expect(played, "HTTP AVPlayer status=\(player.status), error=\(player.error ?? "none"), position=\(player.position), tap=\(player.currentItemHasAudioTap), tapFrames=\(player.audioTapFrames)")
         let analyzed = player.readLevels(), waveform = analyzed.waveform
         #expect(waveform.contains { $0 > 0 }); #expect(waveform.contains { $0 < 0 }); #expect(waveform.allSatisfy { $0.isFinite })
         #expect([analyzed.bassWaveform, analyzed.midWaveform, analyzed.trebleWaveform].allSatisfy { $0.count == 1024 && $0.allSatisfy { $0.isFinite } })

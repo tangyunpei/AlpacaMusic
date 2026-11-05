@@ -56,9 +56,10 @@ jobs:
           if int(sdk.split(".")[0]) < 27:
               raise SystemExit("CI requires macOS SDK 27 or newer.")
           PY
-      # Single-input PCM expires after 500 ms. Run these suites before the
-      # concurrent rendering suites, so cold Metal compilation cannot starve
-      # the analyzer worker on a shared runner. Both steps cover the full suite.
+      # These suites drive the analyzer by hand (a manual clock and on-demand
+      # analysis), so a starved worker on a shared runner no longer affects
+      # them; they keep their own step so their results are easy to find.
+      # Both steps together cover the full suite.
       - name: Test audio analysis with fresh PCM
         run: swift test --filter 'AudioAnalyzerTests|AudioWaveformTests' -Xswiftc -emit-localized-strings
       - name: Run remaining Swift tests without account credentials
