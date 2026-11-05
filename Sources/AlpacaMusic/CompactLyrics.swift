@@ -233,12 +233,15 @@ private struct CompactLyricFrame: View {
 
     private func currentRows(_ line: LyricLine, index: Int, next: LyricLine?) -> some View {
         let context: LyricTimingContext = LyricSingingTiming.context(for: index, in: document.lines)
+        let text: String = CompactLyricText.singleLine(line.text)
+        let progress: Double = CompactLyricScroll.progress(of: line, text: text, at: time, context: context,
+                                                           reduceMotion: style.reduced)
         return VStack(alignment: style.alignment, spacing: style.rowSpacing) {
-            LyricProgressText(line: line, text: CompactLyricText.singleLine(line.text), position: time,
-                              appearance: .highlight, reduceMotion: style.reduced, timingContext: context)
-                .font(.system(size: style.primarySize, weight: .semibold))
-                .lineLimit(1)
-                .truncationMode(.tail)
+            CompactScrollingLine(progress: progress, alignment: style.alignment) {
+                LyricProgressText(line: line, text: text, position: time,
+                                  appearance: .highlight, reduceMotion: style.reduced, timingContext: context)
+                    .font(.system(size: style.primarySize, weight: .semibold))
+            }
             if style.showsNextLine { nextRow(next) }
         }
     }
@@ -293,6 +296,101 @@ private struct CompactLyricTrackInfo: View {
                     CompactLyricBlankRow(size: style.secondarySize)
                 }
             }
+        }
+    }
+}
+
+/// Where a line wider than its row sits: it starts at the leading edge,
+/// keeps the sung position in the middle of the row, and stops once its end
+/// reaches the trailing edge.
+enum CompactLyricScroll {
+    /// The sung share of `text`, from the same per-character reveal as the
+    /// karaoke ink, so it follows word timings. Without character timing the
+    /// line advances evenly through its start and end.
+    @MainActor static func progress(of line: LyricLine, text: String, at time: Double,
+                         context: LyricTimingContext, reduceMotion: Bool) -> Double {
+        guard time.isFinite else { return 0 }
+        let timeline: LyricRevealTimeline = LyricReveal.timeline(for: line, context: context)
+        if timeline.isTimed, let units = timeline.fragments([text]).first, !units.isEmpty, units.count == text.count {
+            let sung: Double = units.reduce(0) { (total: Double, unit: LyricRevealUnit) -> Double in
+                total + unit.opacity(at: time, reduceMotion: reduceMotion)
+            }
+            return min(1, max(0, sung / Double(units.count)))
+        }
+        guard let start = line.start, let end = line.end, start.isFinite, end.isFinite, end > start else { return 0 }
+        return min(1, max(0, (time - start) / (end - start)))
+    }
+
+    /// How far a line of `textWidth` shifts toward the leading edge in a row
+    /// of `rowWidth`; zero when it fits.
+    static func offset(progress: Double, textWidth: CGFloat, rowWidth: CGFloat) -> CGFloat {
+        guard textWidth.isFinite, rowWidth.isFinite, rowWidth > 0, textWidth > rowWidth else { return 0 }
+        let sung: CGFloat = CGFloat(progress.isFinite ? min(1, max(0, progress)) : 0)
+        let centered: CGFloat = sung * textWidth - rowWidth / 2
+        return min(textWidth - rowWidth, max(0, centered))
+    }
+}
+
+/// A one-line row that never truncates. A line wider than the row slides so
+/// the sung position stays in the middle, with soft edges where text is
+/// hidden; a line that fits keeps the row's alignment.
+private struct CompactScrollingLine<Content: View>: View {
+    let progress: Double
+    let alignment: HorizontalAlignment
+    let content: Content
+    @State private var textWidth: CGFloat = 0
+    @State private var rowWidth: CGFloat = 0
+    private let fade: CGFloat = 14
+
+    init(progress: Double, alignment: HorizontalAlignment, @ViewBuilder content: () -> Content) {
+        self.progress = progress
+        self.alignment = alignment
+        self.content = content()
+    }
+
+    var body: some View {
+        let overflows: Bool = rowWidth > 0 && textWidth > rowWidth + 0.5
+        let offset: CGFloat = CompactLyricScroll.offset(progress: progress, textWidth: textWidth, rowWidth: rowWidth)
+        let furthest: CGFloat = max(0, textWidth - rowWidth)
+        let rowAlignment = Alignment(horizontal: alignment, vertical: .center)
+        // The hidden copy gives the row one line of height and the full width.
+        content
+            .lineLimit(1)
+            .hidden()
+            .accessibilityHidden(true)
+            .frame(maxWidth: .infinity, alignment: rowAlignment)
+            .onGeometryChange(for: CGFloat.self) { (proxy: GeometryProxy) -> CGFloat in
+                proxy.size.width
+            } action: { (width: CGFloat) in
+                rowWidth = width
+            }
+            .overlay(alignment: overflows ? .leading : rowAlignment) {
+                content
+                    .fixedSize(horizontal: true, vertical: false)
+                    .onGeometryChange(for: CGFloat.self) { (proxy: GeometryProxy) -> CGFloat in
+                        proxy.size.width
+                    } action: { (width: CGFloat) in
+                        textWidth = width
+                    }
+                    .offset(x: overflows ? -offset : 0)
+            }
+            .clipped()
+            .mask { edges(overflows: overflows, leading: offset > 0.5, trailing: offset < furthest - 0.5) }
+    }
+
+    @ViewBuilder private func edges(overflows: Bool, leading: Bool, trailing: Bool) -> some View {
+        if overflows {
+            HStack(spacing: 0) {
+                LinearGradient(colors: [Color.black.opacity(leading ? 0 : 1), Color.black],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(width: fade)
+                Color.black
+                LinearGradient(colors: [Color.black, Color.black.opacity(trailing ? 0 : 1)],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(width: fade)
+            }
+        } else {
+            Color.black
         }
     }
 }

@@ -473,7 +473,7 @@ struct PlayerBar: View {
                     Label(model.player.current?.source == .spotify ? L10n.string("使用 Spotify 音量") : L10n.string("使用系统音量"), systemImage: "speaker.wave.2").font(.system(size: 10)).fixedSize(horizontal: false, vertical: true).foregroundStyle(palette.secondary).help(model.player.current?.source == .spotify ? L10n.string("在 Spotify 官方播放设备上调节音量") : L10n.string("Apple Music 音量由系统控制"))
                 }
                 Divider().frame(height: 19).padding(.horizontal, 7)
-                ToolButton(symbol: "quote.bubble", label: L10n.string("歌词"), active: model.immersive && model.lyricsVisible) { model.revealLyrics() }
+                ToolButton(symbol: "quote.bubble", label: L10n.string("歌词"), active: model.immersive && model.lyricsVisible) { withAnimation(.smooth(duration: 0.25)) { model.toggleLyrics() } }
                 ToolButton(symbol: "arrow.up.left.and.arrow.down.right", label: L10n.string("沉浸模式"), active: model.immersive) { withAnimation(.smooth(duration: 0.25)) { model.immersive.toggle() } }
                 ToolButton(symbol: "music.note.list", label: L10n.string("播放队列"), active: model.queueOpen) { withAnimation(.smooth(duration: 0.22)) { model.queueOpen.toggle() } }
                 ToolButton(symbol: "pip.enter", label: L10n.string("迷你播放器")) {

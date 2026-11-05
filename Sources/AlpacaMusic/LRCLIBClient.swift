@@ -146,8 +146,17 @@ actor LRCLIBClient {
         catch { throw MusicError.message(L10n.string("LRCLIB 返回的歌词资料无法读取。")) }
     }
     private static func matches(_ value: Response, signature: Signature) -> Bool {
-        normalized(value.trackName) == signature.title && normalized(value.artistName) == signature.artist &&
+        normalized(value.trackName) == signature.title && sameArtist(value.artistName, signature.artist) &&
         value.duration.isFinite && abs(value.duration - signature.duration) <= 2
+    }
+    /// The same artist credited in either name order, such as LRCLIB's
+    /// "Takase Toya" for Apple Music's "Toya Takase": the same words, each
+    /// the same number of times. `artist` is already normalized.
+    private static func sameArtist(_ candidate: String, _ artist: String) -> Bool {
+        let other: String = normalized(candidate)
+        if other == artist { return true }
+        let words: [Substring] = artist.split(separator: " ").sorted()
+        return words.count > 1 && other.split(separator: " ").sorted() == words
     }
     private static func hasLyrics(_ value: Response) -> Bool {
         value.instrumental || [value.syncedLyrics, value.plainLyrics].contains { $0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }

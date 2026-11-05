@@ -121,6 +121,39 @@ struct CompactLyricsTests {
         #expect(cue.next?.text == "One")
     }
 
+    /// A long line starts at the leading edge, keeps the sung position in
+    /// the middle of the row, and stops once its end reaches the trailing edge.
+    @Test func aLongLineScrollsToKeepTheSungPositionCentered() {
+        let row: CGFloat = 200, text: CGFloat = 600
+        #expect(CompactLyricScroll.offset(progress: 0, textWidth: text, rowWidth: row) == 0)
+        #expect(CompactLyricScroll.offset(progress: 0.1, textWidth: text, rowWidth: row) == 0)
+        // Sung up to x = 300: centered, so x = 300 sits at row x = 100.
+        #expect(CompactLyricScroll.offset(progress: 0.5, textWidth: text, rowWidth: row) == 200)
+        #expect(CompactLyricScroll.offset(progress: 0.9, textWidth: text, rowWidth: row) == 400)
+        #expect(CompactLyricScroll.offset(progress: 1, textWidth: text, rowWidth: row) == 400)
+        // A line that fits, unusable sizes and progress never scroll or overshoot.
+        #expect(CompactLyricScroll.offset(progress: 0.7, textWidth: 150, rowWidth: row) == 0)
+        #expect(CompactLyricScroll.offset(progress: 0.7, textWidth: text, rowWidth: 0) == 0)
+        #expect(CompactLyricScroll.offset(progress: 0.7, textWidth: .infinity, rowWidth: row) == 0)
+        #expect(CompactLyricScroll.offset(progress: .nan, textWidth: text, rowWidth: row) == 0)
+        #expect(CompactLyricScroll.offset(progress: 3, textWidth: text, rowWidth: row) == 400)
+    }
+
+    @Test @MainActor func scrollProgressFollowsTheSungShareOfTheLine() {
+        let line = LyricLine(id: 0, text: "I hope the best though we're not together", start: 10, end: 14)
+        let context = LyricTimingContext()
+        let times: [Double] = [9, 10, 11, 12, 13, 14, 15]
+        let shares = times.map { CompactLyricScroll.progress(of: line, text: line.text, at: $0, context: context, reduceMotion: false) }
+        #expect(shares.first == 0)
+        #expect(shares.last == 1)
+        #expect(zip(shares, shares.dropFirst()).allSatisfy { $0 <= $1 })
+        #expect(shares[3] > 0.2 && shares[3] < 0.8)
+        #expect(CompactLyricScroll.progress(of: line, text: line.text, at: .nan, context: context, reduceMotion: false) == 0)
+        // A line with no timing never scrolls.
+        let untimed = LyricLine(id: 1, text: "Plain words")
+        #expect(CompactLyricScroll.progress(of: untimed, text: untimed.text, at: 5, context: context, reduceMotion: false) == 0)
+    }
+
     @Test func batterySaverOnlySlowsLyricsInLowPowerMode() {
         var settings = VisualSettings.standard
         settings.batterySaver = false

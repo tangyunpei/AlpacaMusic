@@ -172,6 +172,16 @@ enum LyricsParser {
             }
             if timestamps.isEmpty {
                 if remainder.hasPrefix("["), remainder.hasSuffix("]"), remainder.contains(":") { continue }
+                if let credit = creditRow(remainder) {
+                    guard !credit.text.isEmpty else { continue }
+                    expandedBytes += credit.text.utf8.count
+                    guard expandedBytes <= maximumBytes else {
+                        throw MusicError.message(L10n.string("重复时间标记展开后的歌词过大，无法读取。"))
+                    }
+                    lines.append(.init(id: lines.count, text: credit.text, start: max(0, credit.start - offset)))
+                    guard lines.count <= maximumLines else { throw MusicError.message(L10n.string("歌词时间标记过多，无法读取。")) }
+                    continue
+                }
                 lines.append(.init(id: lines.count, text: remainder))
                 continue
             }
@@ -188,6 +198,26 @@ enum LyricsParser {
             }
         }
         return finalize(lines, sourceDescription: sourceDescription, title: title, artist: artist)
+    }
+
+    /// NetEase's lyric v1 route sends credits as one JSON object per row,
+    /// e.g. `{"t":1000,"c":[{"tx":"作曲: "},{"tx":"GRP"}]}`: `t` is
+    /// milliseconds from the start of the song and the text is every `tx`
+    /// joined. The older route sent the same credits as timed LRC lines.
+    private struct CreditRow: Decodable {
+        struct Part: Decodable { let tx: String }
+        let t: Double
+        let c: [Part]
+    }
+
+    /// A credit row's start in seconds and its text (empty for a credit with
+    /// no text), or nil when the row is not a credit row.
+    private static func creditRow(_ row: String) -> (start: Double, text: String)? {
+        guard row.first == "{", row.last == "}", row.utf8.count <= 32_768,
+              let value = try? JSONDecoder().decode(CreditRow.self, from: Data(row.utf8)),
+              value.t.isFinite, (0...86_400_000).contains(value.t) else { return nil }
+        let text: String = value.c.map(\.tx).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        return (value.t / 1_000, text)
     }
 
     private static func enhancedWords(_ text: String, shift: Double, lineStart: Double) throws -> [LyricWord] {

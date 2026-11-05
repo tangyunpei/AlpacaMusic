@@ -4,6 +4,48 @@ import Testing
 @testable import AlpacaMusic
 
 struct LyricsParserTests {
+    /// NetEase's lyric v1 route sends credits as JSON rows. They read as timed
+    /// lines, like the older route's `[00:00.00] 作词 : …` lines, never as raw
+    /// JSON, and closing credits stay after the last sung line.
+    @Test func neteaseJSONCreditRowsBecomeTimedLines() throws {
+        let text = """
+        {"t":0,"c":[{"tx":"作词: "},{"tx":"こっちのけんと"},{"tx":"/"},{"tx":"GRP"}]}
+        {"t":1000,"c":[{"tx":"作曲: "},{"tx":"GRP"},{"tx":"/"},{"tx":"こっちのけんと"}]}
+        {"t":2000,"c":[{"tx":"编曲: "},{"tx":"GRP"}]}
+        {"t":3000,"c":[{"tx":"制作人: ","li":"http://p1.music.126.net/x.jpg","or":"orpheus://nm/artist/home?id=1&type=artist"},{"tx":"こっちのけんと"}]}
+        {"t":3500,"c":[]}
+        [00:07.96]First sung line
+        [00:11.22]Second sung line
+        {"t":324891,"c":[{"tx":"编曲：赵雷"}]}
+        """
+        let document = try LyricsParser.parse(text)
+        #expect(document.timing == .line)
+        #expect(document.lines.map(\.text) == ["作词: こっちのけんと/GRP", "作曲: GRP/こっちのけんと", "编曲: GRP",
+                                               "制作人: こっちのけんと", "First sung line", "Second sung line", "编曲：赵雷"])
+        #expect(document.lines.map(\.start) == [0, 1, 2, 3, 7.96, 11.22, 324.891])
+        #expect(!document.lines.contains { $0.text.contains("{") || $0.text.contains("\"tx\"") })
+        #expect(document.activeIndex(at: 0.5) == 0)
+        #expect(document.activeIndex(at: 8) == 4)
+    }
+
+    @Test func creditRowsInATranslationDoNotDuplicateTheOriginal() throws {
+        let original = "{\"t\":0,\"c\":[{\"tx\":\"作词: \"},{\"tx\":\"Euria Sin\"}]}\n[00:05.00]Why did you leave me?"
+        let translation = "{\"t\":0,\"c\":[{\"tx\":\"作词: \"},{\"tx\":\"Euria Sin\"}]}\n[00:05.00]你为什么离去"
+        let document = try LyricsParser.parse(LyricsPayload(text: original, translation: translation), sourceDescription: "NetEase")
+        #expect(document.lines.map(\.text) == ["作词: Euria Sin", "Why did you leave me?"])
+        #expect(document.lines[0].translation == nil)
+        #expect(document.lines[1].translation == "你为什么离去")
+    }
+
+    @Test func jsonThatIsNotACreditRowStaysAsText() throws {
+        for row in [#"{"t":"0","c":[{"tx":"x"}]}"#, #"{"t":0,"c":"x"}"#, #"{"t":-5,"c":[{"tx":"x"}]}"#,
+                    #"{"t":0,"c":[{"text":"x"}]}"#, "{not json}"] {
+            let document = try LyricsParser.parse(row + "\n[00:01.00]Sung")
+            #expect(document.lines.first?.text == row)
+            #expect(document.lines.first?.start == nil)
+        }
+    }
+
     @Test func lrcOffsetsRepeatedTimestampsAndSeekAreDeterministic() throws {
         let document = try LyricsParser.parse("[ti:Fixture]\n[ar:Author]\n[offset:500]\n[00:02.00][00:08.50]Repeated\n[00:04.000]Middle")
         #expect(document.timing == .line)

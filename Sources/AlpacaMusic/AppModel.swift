@@ -66,8 +66,13 @@ final class AppModel {
     var hasMenuBarPresence: Bool { showsMenuBarPlayer || showsMenuBarControls || showsMenuBarLyrics }
     var sourceFilter: MusicSource? = nil
     var queueOpen = false
-    var immersive = false
+    var immersive = false {
+        didSet { if !immersive { immersiveOpenedForLyrics = false } }
+    }
     var lyricsVisible = true
+    /// True while the immersive view is open only because the lyrics button
+    /// opened it, so closing the lyrics returns to the library.
+    @ObservationIgnored private var immersiveOpenedForLyrics = false
     var automaticLyricAudioAlignment: Bool {
         didSet {
             preferences.set(automaticLyricAudioAlignment, forKey: "lyrics-audio-alignment")
@@ -322,7 +327,18 @@ final class AppModel {
         guard let track = player.current else { notify(L10n.string("先选择一首歌曲，再为它导入歌词。")); return }
         lyricImportTarget = track; showLyricsImporter = true
     }
-    func revealLyrics() { lyricsVisible = true; immersive = true }
+    func revealLyrics() {
+        if !immersive { immersiveOpenedForLyrics = true }
+        lyricsVisible = true; immersive = true
+    }
+    /// The player bar's lyrics button. It opens the lyrics, and closes them
+    /// to where the listener was: the library when the button opened the
+    /// immersive view, otherwise the immersive visuals.
+    func toggleLyrics() {
+        guard immersive, lyricsVisible else { revealLyrics(); return }
+        if immersiveOpenedForLyrics { immersive = false } else { lyricsVisible = false }
+        immersiveOpenedForLyrics = false
+    }
     /// The single entry point for the local file importer; a running import
     /// keeps it closed instead of failing after the user picks files.
     func beginImport(folder: Bool) {

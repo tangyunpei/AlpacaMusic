@@ -21,6 +21,38 @@ struct MenuBarPresenceTests {
         #expect(model.hasMenuBarPresence)
     }
 
+    /// The player bar's lyrics button closes the lyrics again, back to where
+    /// the listener was before opening them.
+    @Test func theLyricsButtonClosesWhatItOpened() throws {
+        let domain = "AlpacaMenuBarPresenceTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer {
+            defaults.removePersistentDomain(forName: domain)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let model = AppModel(directory: directory, preferences: defaults, ephemeralAccounts: true)
+        defer { model.player.shutdown() }
+        // From the library: open the lyrics, then close back to the library.
+        model.toggleLyrics()
+        #expect(model.immersive && model.lyricsVisible)
+        model.toggleLyrics()
+        #expect(!model.immersive)
+        // From the immersive visuals: close only the lyrics, keep the visuals.
+        model.immersive = true; model.lyricsVisible = false
+        model.toggleLyrics()
+        #expect(model.immersive && model.lyricsVisible)
+        model.toggleLyrics()
+        #expect(model.immersive && !model.lyricsVisible)
+        // Leaving immersive another way forgets that the button opened it.
+        model.immersive = false
+        model.toggleLyrics()
+        model.immersive = false
+        model.immersive = true
+        model.toggleLyrics()
+        #expect(model.immersive && !model.lyricsVisible)
+    }
+
     @Test func miniPlayerStyleAndMenuBarItemsPersist() throws {
         let domain = "AlpacaMenuBarPresenceTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: domain))
