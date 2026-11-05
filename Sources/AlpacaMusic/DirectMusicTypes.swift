@@ -41,12 +41,27 @@ struct RemoteMusicPlaylist: Identifiable, Sendable, Equatable {
     var source: MusicSource
 }
 
+struct RemoteMusicAlbum: Identifiable, Sendable, Equatable {
+    var id: String
+    var name: String
+    var artist: String = ""
+    var trackCount: Int? = nil
+    var artworkURL: URL? = nil
+    var source: MusicSource
+}
+
 protocol DirectMusicProvider: Sendable {
     var source: MusicSource { get }
     func profile(cookies: [MusicSessionCookie]) async throws -> MusicAccountProfile
     func search(_ query: String, cookies: [MusicSessionCookie]) async throws -> [Track]
     func playlists(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicPlaylist]
     func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie]) async throws -> [Track]
+    func albums(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicAlbum]
+    func tracks(in album: RemoteMusicAlbum, cookies: [MusicSessionCookie]) async throws -> [Track]
+    /// Same as `tracks(in:cookies:)`, reporting songs read so far after each
+    /// page on the main actor. Providers that cannot page report nothing.
+    func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie],
+                progress: @MainActor @Sendable (ImportProgress) -> Void) async throws -> [Track]
     /// Refresh expiring share metadata before opening media. Most platforms
     /// resolve URLs separately and keep the imported track unchanged.
     func preparePlayback(_ track: Track, cookies: [MusicSessionCookie]) async throws -> Track
@@ -54,11 +69,26 @@ protocol DirectMusicProvider: Sendable {
     func lyrics(_ track: Track, cookies: [MusicSessionCookie]) async throws -> LyricsPayload?
 }
 extension DirectMusicProvider {
+    func albums(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicAlbum] {
+        throw MusicError.message(L10n.string("此音源暂不支持专辑导入。"))
+    }
+    func tracks(in album: RemoteMusicAlbum, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        throw MusicError.message(L10n.string("此音源暂不支持专辑导入。"))
+    }
+    func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie],
+                progress: @MainActor @Sendable (ImportProgress) -> Void) async throws -> [Track] {
+        try await tracks(in: playlist, cookies: cookies)
+    }
     func preparePlayback(_ track: Track, cookies: [MusicSessionCookie]) async throws -> Track { track }
     func lyrics(_ track: Track, cookies: [MusicSessionCookie]) async throws -> LyricsPayload? { nil }
 }
 
 struct LyricsSessionScope: Hashable, Sendable {
+    let source: MusicSource
+    let generation: UUID
+}
+
+struct LibrarySessionScope: Sendable {
     let source: MusicSource
     let generation: UUID
 }

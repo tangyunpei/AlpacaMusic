@@ -71,12 +71,36 @@ actor SourceService {
         }
     }
 
-    func search(_ query: String, configurations: [SourceConfiguration], includeSodaPublicly: Bool = false) async -> [SourceSearchResult] {
+    /// The sources `search` queries for these settings, in its result order,
+    /// so the interface can show every pending source before results arrive.
+    func searchTargets(configurations: [SourceConfiguration], includeSodaPublicly: Bool = false) async -> [MusicSource] {
+        let enabled: [SourceConfiguration]
+        do { enabled = try Self.validatedConfigurations(configurations).filter(\.enabled) }
+        catch { return [.netease] }
+        let connected = await native?.connectedSources() ?? []
+        var targets: [MusicSource] = []
+        if native != nil {
+            targets.append(contentsOf: connected.filter { MusicSourceAvailability.isVisible($0) })
+        }
+        if MusicSourceAvailability.sodaEnabled, includeSodaPublicly, !connected.contains(.soda) { targets.append(.soda) }
+        targets.append(contentsOf: enabled.map(\.kind).filter { !connected.contains($0) })
+        return targets.sorted { $0.rawValue < $1.rawValue }
+    }
+
+    /// Searches every connected or configured source concurrently. `onResult`
+    /// receives each source's result as soon as it finishes; the returned
+    /// array still holds all results sorted by source.
+    func search(_ query: String, configurations: [SourceConfiguration], includeSodaPublicly: Bool = false,
+                onResult: (@MainActor @Sendable (SourceSearchResult) -> Void)? = nil) async -> [SourceSearchResult] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, query.count <= 300 else { return [] }
         let enabled: [SourceConfiguration]
         do { enabled = try Self.validatedConfigurations(configurations).filter(\.enabled) }
-        catch { return [SourceSearchResult(source: .netease, tracks: [], error: error.localizedDescription)] }
+        catch {
+            let failure = SourceSearchResult(source: .netease, tracks: [], error: error.localizedDescription)
+            if let onResult { await onResult(failure) }
+            return [failure]
+        }
         let transport = self.transport
         let native = self.native
         let connected = await native?.connectedSources() ?? []
@@ -107,7 +131,10 @@ actor SourceService {
                 }
             }
             var results: [SourceSearchResult] = []
-            for await result in group { results.append(result) }
+            for await result in group {
+                results.append(result)
+                if let onResult { await onResult(result) }
+            }
             return results.sorted { $0.source.rawValue < $1.source.rawValue }
         }
     }

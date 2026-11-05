@@ -43,6 +43,11 @@ struct NeteaseDirectProvider: DirectMusicProvider {
     }
 
     func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        try await tracks(in: playlist, cookies: cookies, progress: { _ in })
+    }
+
+    func tracks(in playlist: RemoteMusicPlaylist, cookies: [MusicSessionCookie],
+                progress: @MainActor @Sendable (ImportProgress) -> Void) async throws -> [Track] {
         guard playlist.source == .netease else { throw MusicError.message(L10n.string("该歌单不是网易云歌单")) }
         try requireID(playlist.id)
         let response: NEPlaylistResponse = try await request("v6/playlist/detail", payload: ["id": playlist.id, "n": 100000, "s": 0], cookies: cookies)
@@ -54,6 +59,7 @@ struct NeteaseDirectProvider: DirectMusicProvider {
         guard items.count <= 10000 else { throw MusicError.message(L10n.string("歌单超过 10000 首，本次未导入；请拆分歌单后重试")) }
         let orderedIDs = items.map { $0.id.value }
         var songsByID = Dictionary((detail.tracks ?? []).map { ($0.id.value, $0.track) }, uniquingKeysWith: { first, _ in first })
+        await progress(ImportProgress(completed: 0, total: orderedIDs.count))
         for offset in stride(from: 0, to: orderedIDs.count, by: 200) {
             try Task.checkCancellation()
             let ids = Array(orderedIDs[offset..<min(offset + 200, orderedIDs.count)])
@@ -62,9 +68,92 @@ struct NeteaseDirectProvider: DirectMusicProvider {
             let result: NESongsResponse = try await request("v3/song/detail", payload: ["c": String(decoding: c, as: UTF8.self)], cookies: cookies)
             guard let songs = result.songs else { throw MusicError.message(L10n.string("网易云曲目读取中断，未导入不完整歌单")) }
             for song in songs { songsByID[song.id.value] = song.track }
+            await progress(ImportProgress(completed: offset + ids.count, total: orderedIDs.count))
         }
         return orderedIDs.map { id in
             songsByID[id] ?? Track(id: "netease:\(id)", title: L10n.string("暂不可用的歌曲"), artist: L10n.string("未知艺术家"), album: playlist.name, duration: 0, source: .netease, sourceID: id, unavailable: true)
+        }
+    }
+
+    func albums(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicAlbum] {
+        try requireID(profile.id)
+        var result: [RemoteMusicAlbum] = [], seen = Set<String>(), offset = 0
+        var expectedCount: Int?
+        let pageSize = 100
+        while true {
+            try Task.checkCancellation()
+            // The collection belongs to the logged-in account, not a supplied UID.
+            let response: NEAlbumsResponse = try await request("album/sublist", payload: ["limit": pageSize, "offset": offset, "total": true], cookies: cookies)
+            try Task.checkCancellation()
+            guard let albums = response.data else {
+                throw MusicError.message(L10n.string("网易云未返回收藏专辑列表，请重新登录后重试"))
+            }
+            if let count = response.count {
+                guard count >= 0, expectedCount == nil || expectedCount == count else {
+                    throw MusicError.message(L10n.string("网易云收藏专辑数量在读取时发生变化，请刷新后重试"))
+                }
+                expectedCount = count
+            }
+            for album in albums {
+                try requireID(album.id.value)
+                guard seen.insert(album.id.value).inserted else {
+                    throw MusicError.message(L10n.string("网易云收藏专辑分页重复，未将部分列表视为完整结果"))
+                }
+                result.append(RemoteMusicAlbum(id: album.id.value,
+                    name: album.name?.nonempty ?? L10n.string("未知专辑"),
+                    artist: album.artistName,
+                    trackCount: (album.songCount ?? album.size).flatMap { $0 >= 0 ? $0 : nil },
+                    artworkURL: Self.artworkURL(album.picUrl), source: .netease))
+            }
+            let hasMore = response.hasMore ?? response.more
+            if let expectedCount {
+                guard result.count <= expectedCount,
+                      hasMore != false || result.count == expectedCount,
+                      hasMore != true || result.count < expectedCount else {
+                    throw MusicError.message(L10n.string("网易云收藏专辑数量与分页结果不一致，请刷新后重试"))
+                }
+                if result.count == expectedCount { return result }
+            } else if hasMore == false || (hasMore == nil && albums.count < pageSize) {
+                return result
+            }
+            guard !albums.isEmpty else {
+                throw MusicError.message(L10n.string("网易云收藏专辑分页未继续，未将部分列表视为完整结果"))
+            }
+            offset += albums.count
+        }
+    }
+
+    func tracks(in album: RemoteMusicAlbum, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        guard album.source == .netease else { throw MusicError.message(L10n.string("该专辑不是网易云专辑")) }
+        try requireID(album.id)
+        let response: NEAlbumResponse = try await request("v1/album/\(album.id)", payload: [:], cookies: cookies, phase: L10n.string("读取专辑曲目"))
+        try Task.checkCancellation()
+        guard let detail = response.album, detail.id.value == album.id, let songs = response.songs else {
+            throw MusicError.message(L10n.string("网易云未返回完整专辑资料，请刷新后重试"))
+        }
+        // Fresh album metadata wins over the collection's potentially stale count.
+        // A missing song cannot be classified as deleted without an explicit item.
+        if let expected = detail.size ?? detail.songCount ?? album.trackCount,
+           expected < 0 || expected != songs.count {
+            throw MusicError.message(L10n.string("网易云专辑标记有 \(String(expected)) 首，但返回 \(String(songs.count)) 首，无法确认完整曲目，本次未导入"))
+        }
+        let albumName = detail.name?.nonempty ?? album.name
+        let albumArtist = detail.artistName.nonempty ?? album.artist
+        let artwork = Self.artworkURL(detail.picUrl) ?? album.artworkURL
+        var seen = Set<String>()
+        return try songs.map { song in
+            try Task.checkCancellation()
+            try requireID(song.id.value)
+            guard seen.insert(song.id.value).inserted else {
+                throw MusicError.message(L10n.string("网易云专辑返回重复曲目，无法确认完整顺序，本次未导入"))
+            }
+            var track = song.track
+            if (song.al?.name ?? song.album?.name)?.nonempty == nil { track.album = albumName }
+            if (song.ar ?? song.artists ?? []).compactMap(\.name).joined().isEmpty, !albumArtist.isEmpty { track.artist = albumArtist }
+            if track.artworkURL == nil { track.artworkURL = artwork }
+            // Explicitly unavailable entries remain in their original album position.
+            if (song.st ?? song.privilege?.st ?? 0) < 0 { track.unavailable = true }
+            return track
         }
     }
 
@@ -202,6 +291,7 @@ struct NeteaseDirectProvider: DirectMusicProvider {
         case "w/nuser/account/get": L10n.string("确认登录身份")
         case "cloudsearch/pc": L10n.string("搜索歌曲")
         case "user/playlist": L10n.string("读取歌单列表")
+        case "album/sublist": L10n.string("读取收藏专辑")
         case "v6/playlist/detail": L10n.string("读取歌单曲目")
         case "v3/song/detail": L10n.string("读取歌曲资料")
         case "song/enhance/player/url/v1": L10n.string("获取播放地址")
@@ -254,6 +344,18 @@ private struct NESearchResponse: Decodable {
 }
 private struct NEPlaylistsResponse: Decodable { var playlist: [NEPlaylist]?; var more: Bool? }
 private struct NEPlaylistResponse: Decodable { var playlist: NEPlaylist? }
+private struct NEAlbumsResponse: Decodable {
+    var data: [NEAlbum]?; var hasMore: Bool?; var more: Bool?; var count: Int?
+}
+private struct NEAlbumResponse: Decodable { var album: NEAlbum?; var songs: [NESong]? }
+private struct NEAlbum: Decodable {
+    var id: NEID; var name: String?; var artists: [NESong.Artist]?; var artist: NESong.Artist?
+    var songCount: Int?; var size: Int?; var picUrl: String?
+    var artistName: String {
+        let names = (artists ?? []).compactMap(\.name).filter { !$0.isEmpty }.joined(separator: " / ")
+        return names.nonempty ?? artist?.name?.nonempty ?? ""
+    }
+}
 private struct NEPlaylist: Decodable {
     var id: NEID; var name: String?; var trackCount: Int?; var coverImgUrl: String?
     var trackIds: [TrackID]?; var tracks: [NESong]?
@@ -284,6 +386,7 @@ private struct NEPrivilege: Decodable {
 }
 private struct NESong: Decodable {
     var id: NEID; var name: String?; var ar: [Artist]?; var artists: [Artist]?; var al: Album?; var album: Album?; var dt: Double?; var duration: Double?
+    var st: Int?; var privilege: NEPrivilege?
     struct Artist: Decodable { var name: String? }
     struct Album: Decodable { var name: String?; var picUrl: String? }
     var track: Track {

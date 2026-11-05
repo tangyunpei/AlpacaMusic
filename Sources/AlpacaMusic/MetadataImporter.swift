@@ -11,18 +11,34 @@ actor MetadataImporter {
     static var supportedContentTypes: [UTType] { AVURLAsset.audiovisualContentTypes.filter { $0.conforms(to: .audio) } }
     private let limit = 5000
 
-    func importURLs(_ urls: [URL]) async -> ImportResult {
+    /// `progress` reports files processed (imported, skipped or failed) against
+    /// the audio files discovered so far. Selections that are not yet
+    /// enumerated count as one file each, so the total can grow; it is nil
+    /// only while a folder is enumerated before anything was discovered.
+    func importURLs(_ urls: [URL], progress: @escaping @MainActor @Sendable (ImportProgress) -> Void = { _ in }) async -> ImportResult {
         var result = ImportResult()
         var visited = Set<String>()
-        for selection in urls.prefix(limit) {
+        let selections = Array(urls.prefix(limit))
+        var discovered = 0
+        var completed = 0
+        for (index, selection) in selections.enumerated() {
             if Task.isCancelled { break }
-            guard selection.isFileURL else { result.errors.append(L10n.string("只能导入本地音频文件")); continue }
+            let pending = selections.count - index - 1
+            guard selection.isFileURL else {
+                result.errors.append(L10n.string("只能导入本地音频文件"))
+                discovered += 1; completed += 1
+                await progress(ImportProgress(completed: completed, total: discovered + pending))
+                continue
+            }
             let accessing = selection.startAccessingSecurityScopedResource()
             defer { if accessing { selection.stopAccessingSecurityScopedResource() } }
             do {
                 let values = try selection.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey])
                 let files: [URL]
                 if values.isDirectory == true {
+                    // Unknown only until something is found; afterwards this folder
+                    // counts as one pending file so the bar stays determinate.
+                    await progress(ImportProgress(completed: completed, total: discovered > 0 ? discovered + pending + 1 : nil))
                     var selected: [URL] = []
                     let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey]
                     let iterator = FileManager.default.enumerator(at: selection, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants])
@@ -38,21 +54,42 @@ actor MetadataImporter {
                 } else if values.isRegularFile == true || values.isSymbolicLink == true {
                     files = [selection]
                 } else { files = [] }
+                discovered += files.count
+                await progress(ImportProgress(completed: completed, total: discovered + pending))
                 for file in files {
                     if Task.isCancelled { break }
                     guard result.tracks.count < limit else { break }
                     let canonical = file.resolvingSymlinksInPath().standardizedFileURL
-                    guard visited.insert(canonical.path()).inserted else { continue }
-                    guard Self.fileExtensions.contains(canonical.pathExtension.lowercased()) else {
-                        result.errors.append(L10n.string("\(file.lastPathComponent)：不支持此文件格式")); continue
+                    if visited.insert(canonical.path()).inserted {
+                        if Self.fileExtensions.contains(canonical.pathExtension.lowercased()) {
+                            do { result.tracks.append(try await Self.readMetadata(canonical)) }
+                            catch is CancellationError { break }
+                            catch {
+                                if Task.isCancelled { break }
+                                result.errors.append(L10n.string("\(file.lastPathComponent)：\(error.localizedDescription)"))
+                            }
+                        } else {
+                            result.errors.append(L10n.string("\(file.lastPathComponent)：不支持此文件格式"))
+                        }
                     }
-                    do { result.tracks.append(try await Self.readMetadata(canonical)) }
-                    catch is CancellationError { break }
-                    catch { result.errors.append(L10n.string("\(file.lastPathComponent)：\(error.localizedDescription)")) }
+                    completed += 1
+                    let total = discovered + pending
+                    if Self.shouldReport(completed: completed, total: total) {
+                        await progress(ImportProgress(completed: completed, total: total))
+                    }
                 }
-            } catch { result.errors.append(L10n.string("\(selection.lastPathComponent)：文件不存在或无法读取")) }
+            } catch {
+                result.errors.append(L10n.string("\(selection.lastPathComponent)：文件不存在或无法读取"))
+                discovered += 1; completed += 1
+                await progress(ImportProgress(completed: completed, total: discovered + pending))
+            }
         }
         return result
+    }
+
+    /// Every file for small imports; otherwise about every 1% and at the end.
+    static func shouldReport(completed: Int, total: Int) -> Bool {
+        total < 200 || completed >= total || completed % max(1, total / 100) == 0
     }
 
     static func readMetadata(_ url: URL) async throws -> Track {

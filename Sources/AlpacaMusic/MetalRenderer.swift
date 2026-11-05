@@ -137,6 +137,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let previousSettings = self.settings
         self.settings = settings
         let next = qualityLevels(settings)
+        var resample = false
         if next != qualities {
             let oldDensity = quality.density
             let requestedDensityChanged = previousSettings.density != settings.density
@@ -144,10 +145,19 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             qualityIndex = requestedDensityChanged ? 0 : min(qualityIndex, next.count - 1)
             lowSeconds = 0; goodSeconds = 0
             resizeDrawable()
-            if oldDensity != quality.density { requestCover() }
+            resample = oldDensity != quality.density
         }
         let key = Artwork.key(for: track)
-        if key != requestedKey { requestedKey = key; requestCover() }
+        if key != requestedKey {
+            requestedKey = key
+            requestCover()
+        } else if resample {
+            requestCover()
+        } else if Self.abstractionBucket(previousSettings.abstraction) != Self.abstractionBucket(settings.abstraction) {
+            // Slider updates coalesce while the current cloud remains visible.
+            // No intermediate raster cover or partially generated cloud is shown.
+            requestCover(debounce: true)
+        }
         updateFrameRate()
         view?.needsDisplay = true
     }
@@ -188,20 +198,33 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         view?.needsDisplay = true
     }
 
-    private func requestCover() {
+    private static func abstractionBucket(_ value: Float) -> Float {
+        guard value.isFinite else { return 0.2 }
+        return (min(1, max(0, value)) * 50).rounded() / 50
+    }
+
+    private func requestCover(debounce: Bool = false) {
         guard !stopped else { return }
         samplingTask?.cancel(); samplingWorker?.cancel()
         generation += 1
         let ownGeneration = generation, track = track, density = quality.density
+        let abstraction = Self.abstractionBucket(settings.abstraction)
         let key = Artwork.key(for: track), changed = builtKey != key
         isSampling = true
         if changed, !reducedMotion, let index = layers.indices.last, layers[index].dissolveAt == nil { layers[index].dissolveAt = CACurrentMediaTime() }
         samplingTask = Task { [weak self] in
             guard let self else { return }
+            if debounce {
+                do { try await Task.sleep(for: .milliseconds(120)) }
+                catch { return }
+            }
+            guard !Task.isCancelled, !stopped, generation == ownGeneration else { return }
             let artwork = await Artwork.raster(for: track)
             guard !Task.isCancelled, !stopped, generation == ownGeneration else { return }
             let seed = Artwork.seed(for: track)
-            let worker = Task.detached(priority: .userInitiated) { try await CloudSampler.sample(artwork.pixels, density: density, seed: seed) }
+            let worker = Task.detached(priority: .userInitiated) {
+                try await CloudSampler.sample(artwork.pixels, density: density, seed: seed, abstraction: abstraction)
+            }
             samplingWorker = worker
             do {
                 let samples = try await worker.value
@@ -312,8 +335,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 behavior: SIMD4(settings.beatPop ? 1 : 0, !reduce && isPlaying ? 1 : 0, dissolve, layers[i].opacity),
                 viewport: SIMD4(Float(view.drawableSize.height) / (2 * tanHalf), quality.glow ? 1 : 0, 160 / Float(layers[i].samples.density), distance / zoom))
             encoder.setVertexBuffer(layers[i].buffer, offset: 0, index: 0)
-            // A restrained additive halo sits beneath an accurate color core.
-            // Never render the photographic core itself with additive blending.
+            // A restrained halo sits beneath the sampled pigment grains.
+            // The core keeps ordinary alpha blending so dark regions stay dark.
             if quality.glow {
                 encoder.setRenderPipelineState(pipelines.glow)
                 uniforms.viewport.y = 1

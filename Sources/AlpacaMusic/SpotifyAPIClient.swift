@@ -129,16 +129,20 @@ actor SpotifyAPIClient {
         }
     }
 
-    func tracks(in playlist: RemoteMusicPlaylist, accessToken: String) async throws -> [Track] {
+    /// `progress` reports items read so far and Spotify's total after each page.
+    func tracks(in playlist: RemoteMusicPlaylist, accessToken: String,
+                progress: @MainActor @Sendable (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
         guard playlist.source == .spotify, Self.validIdentifier(playlist.id) else { throw SpotifyAPIError.invalidRequest }
         // The renamed /items endpoint returns `item`; extended-quota responses
         // may still carry the older `track` field, accepted by the decoder below.
-        let values: [SpotifyItemResponse?] = try await collection(path: "/v1/playlists/\(playlist.id)/items", accessToken: accessToken)
+        let values: [SpotifyItemResponse?] = try await collection(path: "/v1/playlists/\(playlist.id)/items", accessToken: accessToken,
+                                                                  progress: progress)
         return values.compactMap { $0?.track }
     }
 
-    func savedTracks(accessToken: String) async throws -> [Track] {
-        let values: [SpotifyItemResponse?] = try await collection(path: "/v1/me/tracks", accessToken: accessToken)
+    func savedTracks(accessToken: String,
+                     progress: @MainActor @Sendable (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
+        let values: [SpotifyItemResponse?] = try await collection(path: "/v1/me/tracks", accessToken: accessToken, progress: progress)
         return values.compactMap { $0?.track }
     }
 
@@ -183,7 +187,8 @@ actor SpotifyAPIClient {
         _ = try await request(path: "/v1/me/player/volume", query: query, method: "PUT", accessToken: accessToken, allowsEmpty: true)
     }
 
-    private func collection<Item: Decodable & Sendable>(path: String, accessToken: String) async throws -> [Item] {
+    private func collection<Item: Decodable & Sendable>(path: String, accessToken: String,
+                                                        progress: @MainActor @Sendable (ImportProgress) -> Void = { _ in }) async throws -> [Item] {
         var url = try Self.url(path: path, query: [.init(name: "limit", value: "50"), .init(name: "offset", value: "0")])
         var values: [Item] = []
         var visited = Set<String>()
@@ -199,6 +204,7 @@ actor SpotifyAPIClient {
             }
             values.append(contentsOf: page.items)
             offset += page.items.count
+            await progress(ImportProgress(completed: offset, total: page.total))
             guard let next = page.next else {
                 guard offset >= page.total else { throw SpotifyAPIError.incompleteCollection }
                 return values

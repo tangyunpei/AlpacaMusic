@@ -163,7 +163,7 @@ import Testing
         // ID 203 has no available metadata; it must not silently disappear.
         let batchTwo = try json(["code": 200, "songs": [205, 204, 202, 201].map { ["id": $0, "name": "歌曲\($0)"] }])
         let fixture = NEFixture([.init(path: "/weapi/v6/playlist/detail", json: detail), .init(path: "/weapi/v3/song/detail", json: batchOne), .init(path: "/weapi/v3/song/detail", json: batchTwo)])
-        let tracks = try await provider(fixture).tracks(in: .init(id: "123", name: "完整歌单", trackCount: 205, source: .netease), cookies: cookies)
+        let tracks = try await provider(fixture).tracks(in: RemoteMusicPlaylist(id: "123", name: "完整歌单", trackCount: 205, source: .netease), cookies: cookies)
         #expect(tracks.map(\.sourceID) == (1...205).map { String($0) })
         #expect(tracks[202].unavailable)
         #expect(tracks[204].title == "歌曲205")

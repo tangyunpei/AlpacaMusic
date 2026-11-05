@@ -142,6 +142,7 @@ struct VisualSettingsView: View {
                     Spacer()
                     VStack(alignment: .leading, spacing: 9) { Text(L10n.string("运动方式")).font(.system(size: 11)); Picker(L10n.string("运动方式"), selection: $model.visual.scheme) { Text(L10n.string("轻盈跃动")).tag(0); Text(L10n.string("纵深呼吸")).tag(1) }.labelsHidden() }
                 }.foregroundStyle(palette.secondary)
+                slider(L10n.string("抽象程度"), $model.visual.abstraction, 0...1)
                 Grid(horizontalSpacing: 26, verticalSpacing: 18) {
                     GridRow { slider(L10n.string("浮雕深度"), $model.visual.depth, 0...1); slider(L10n.string("颗粒大小"), $model.visual.pointSize, 0.5...4) }
                     GridRow { slider(L10n.string("律动强度"), $model.visual.bounce, 0...0.4); slider(L10n.string("流动速度"), $model.visual.speed, 0.5...8) }

@@ -95,10 +95,12 @@ actor NativeMusicClient {
         try validate(source, token)
         return result
     }
-    func tracks(in playlist: RemoteMusicPlaylist) async throws -> [Track] {
+    /// `progress` reports songs read so far after each provider page, on the main actor.
+    func tracks(in playlist: RemoteMusicPlaylist,
+                progress: @MainActor @Sendable (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
         let (session, token) = try snapshot(playlist.source)
         do {
-            let result = try await provider(playlist.source).tracks(in: playlist, cookies: session.cookies)
+            let result = try await provider(playlist.source).tracks(in: playlist, cookies: session.cookies, progress: progress)
             try validate(playlist.source, token)
             return result
         } catch {
@@ -107,6 +109,26 @@ actor NativeMusicClient {
             try validate(playlist.source, token)
             throw error
         }
+    }
+    func albums(_ source: MusicSource) async throws -> [RemoteMusicAlbum] {
+        let (session, token) = try snapshot(source)
+        let result = try await provider(source).albums(profile: session.profile, cookies: session.cookies)
+        try validate(source, token)
+        return result
+    }
+    func libraryScope(for source: MusicSource) throws -> LibrarySessionScope {
+        let (_, token) = try snapshot(source)
+        try validate(source, token)
+        return .init(source: source, generation: token)
+    }
+    func validateLibraryScope(_ scope: LibrarySessionScope) throws {
+        try validate(scope.source, scope.generation)
+    }
+    func tracks(in album: RemoteMusicAlbum) async throws -> [Track] {
+        let (session, token) = try snapshot(album.source)
+        let result = try await provider(album.source).tracks(in: album, cookies: session.cookies)
+        try validate(album.source, token)
+        return result
     }
     func preparePlayback(_ track: Track) async throws -> Track {
         let (session, token) = try snapshot(track.source)

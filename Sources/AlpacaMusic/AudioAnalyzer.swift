@@ -17,15 +17,26 @@ final class AudioAnalyzer: @unchecked Sendable {
         var sampleRate: Double = 44100
         var format = AudioStreamBasicDescription()
         var lastInput: Double = 0
+        /// Frames the playback tap has delivered since creation; never reset.
+        var tapFrames: UInt64 = 0
         mutating func clear() {
             writeIndex = 0; count = 0; lastInput = 0
             serial &+= 1; generation &+= 1
         }
     }
+    /// PCM older than this is neither analyzed nor shown.
+    static let expiry: Double = 0.5
     private let capture = Mutex(CaptureState())
     private let published = Mutex(AudioLevels())
+    /// `CaptureState.lastInput`, mirrored so `levels()` can check the expiry
+    /// without taking `capture`: the main thread reads levels every frame,
+    /// and each hold of `capture` could make the tap's try-lock drop a buffer.
+    private let lastInputMirror = Atomic<UInt64>(0)
     private let worker = DispatchQueue(label: "dev.byalpaca.music.spectrum", qos: .utility)
-    private let timer: DispatchSourceTimer
+    private let timer: DispatchSourceTimer?
+    /// Seconds on a monotonic clock. Tests supply their own to step past the
+    /// expiry without sleeping.
+    private let clock: @Sendable () -> Double
     private let bandAnalysis = AudioBandAnalysis()
     // Worker-queue-only state.
     private var workerGeneration: UInt64?
@@ -36,23 +47,41 @@ final class AudioAnalyzer: @unchecked Sendable {
     private var history: [(Double, Float)] = []
     private var lastBeat = -Double.infinity
 
-    init() {
-        timer = DispatchSource.makeTimerSource(queue: worker)
+    /// `analyzesOnTimer: false` leaves analysis to `analyzeNow()`, so a test
+    /// decides exactly when the worker runs, including not at all.
+    init(clock: @escaping @Sendable () -> Double = { CACurrentMediaTime() }, analyzesOnTimer: Bool = true) {
+        self.clock = clock
+        guard analyzesOnTimer else { timer = nil; return }
+        let timer = DispatchSource.makeTimerSource(queue: worker)
+        self.timer = timer
         timer.schedule(deadline: .now(), repeating: .milliseconds(33), leeway: .milliseconds(5))
         timer.setEventHandler { [weak self] in self?.analyze() }
         timer.resume()
     }
-    deinit { timer.cancel() }
-    func levels() -> AudioLevels { published.withLock { $0 } }
+    deinit { timer?.cancel() }
+    /// The latest analysis, or nothing once its PCM has expired. Expiry is
+    /// checked here too, so stopped audio stops showing on time even while
+    /// the worker is starved and has not cleared the published levels yet.
+    func levels() -> AudioLevels {
+        let lastInput = Double(bitPattern: lastInputMirror.load(ordering: .acquiring))
+        guard lastInput > 0, clock() - lastInput < Self.expiry else { return AudioLevels() }
+        return published.withLock { $0 }
+    }
+    /// Runs one analysis pass now, on the worker queue, instead of waiting
+    /// for the timer. Tests use it so they never race the timer's schedule.
+    func analyzeNow() { worker.sync { analyze() } }
+    /// How many frames the playback tap has delivered, for diagnostics.
+    func capturedTapFrames() -> UInt64 { capture.withLock { $0.tapFrames } }
     func reset() {
         capture.withLock { state in
-            state.clear()
+            state.clear(); mirrorLastInput(state.lastInput)
             published.withLock { $0 = AudioLevels() }
         }
     }
     fileprivate func prepare(_ format: AudioStreamBasicDescription) {
         capture.withLock { state in
             state.clear(); state.format = format; state.sampleRate = format.mSampleRate
+            mirrorLastInput(state.lastInput)
             published.withLock { $0 = AudioLevels() }
         }
     }
@@ -67,8 +96,8 @@ final class AudioAnalyzer: @unchecked Sendable {
             let signed = format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
             let bytes = Int(format.mBitsPerChannel / 8)
             guard (isFloat && (bytes == 4 || bytes == 8)) || (signed && (bytes == 2 || bytes == 4)) else { return }
-            let now = CACurrentMediaTime()
-            if state.lastInput > 0, now - state.lastInput >= 0.5 {
+            let now = clock()
+            if state.lastInput > 0, now - state.lastInput >= Self.expiry {
                 state.clear(); published.withLock { $0 = AudioLevels() }
             }
             var copied = false
@@ -95,25 +124,32 @@ final class AudioAnalyzer: @unchecked Sendable {
                 state.samples[state.writeIndex] = sample / Float(channels)
                 state.writeIndex = (state.writeIndex + 1) % state.samples.count
                 state.count = min(state.samples.count, state.count + 1)
+                state.tapFrames &+= 1
                 copied = true
             }
             if copied { state.lastInput = now; state.serial &+= 1 }
+            mirrorLastInput(state.lastInput)
         }
     }
     /// Test/import analysis entry point, also useful for decoded PCM from future providers.
     func ingest(samples: [Float], sampleRate: Double) {
         capture.withLock { state in
             guard Self.validSampleRate(sampleRate), !samples.isEmpty else {
-                state.clear(); published.withLock { $0 = AudioLevels() }; return
+                state.clear(); mirrorLastInput(state.lastInput); published.withLock { $0 = AudioLevels() }; return
             }
-            let now = CACurrentMediaTime()
-            if state.sampleRate != sampleRate || (state.lastInput > 0 && now - state.lastInput >= 0.5) {
+            let now = clock()
+            if state.sampleRate != sampleRate || (state.lastInput > 0 && now - state.lastInput >= Self.expiry) {
                 state.clear(); published.withLock { $0 = AudioLevels() }
             }
             state.sampleRate = sampleRate
             for value in samples { state.samples[state.writeIndex] = Self.finitePCM(value); state.writeIndex = (state.writeIndex + 1) % state.samples.count; state.count = min(state.samples.count, state.count + 1) }
             state.lastInput = now; state.serial &+= 1
+            mirrorLastInput(state.lastInput)
         }
+    }
+    /// Called with `capture` held, wherever `lastInput` may have changed.
+    private func mirrorLastInput(_ seconds: Double) {
+        lastInputMirror.store(seconds.bitPattern, ordering: .releasing)
     }
     private static func finitePCM(_ value: Float) -> Float { value.isFinite ? min(1, max(-1, value)) : 0 }
     private static func validSampleRate(_ rate: Double) -> Bool { AudioBandAnalysis.isValidSampleRate(rate) }
@@ -122,10 +158,10 @@ final class AudioAnalyzer: @unchecked Sendable {
         fast = 0; slow = 0; history.removeAll(keepingCapacity: true); lastBeat = -.infinity
     }
     private func analyze() {
-        let now = CACurrentMediaTime()
+        let now = clock()
         let snapshot = capture.withLock { state -> ([Float], Double, UInt64, UInt64)? in
-            guard state.count >= 2048, now - state.lastInput < 0.5, Self.validSampleRate(state.sampleRate) else {
-                if state.lastInput > 0, now - state.lastInput >= 0.5 { state.clear() }
+            guard state.count >= 2048, now - state.lastInput < Self.expiry, Self.validSampleRate(state.sampleRate) else {
+                if state.lastInput > 0, now - state.lastInput >= Self.expiry { state.clear(); mirrorLastInput(state.lastInput) }
                 published.withLock { $0 = AudioLevels() }; return nil
             }
             // Retain up to 8192 samples for the band filters' actual PCM pre-roll.
@@ -157,7 +193,7 @@ final class AudioAnalyzer: @unchecked Sendable {
         // Always acquire capture before published. A reset/prepare that wins this lock
         // invalidates this snapshot, so an in-flight transform cannot revive old PCM.
         capture.withLock { state in
-            guard state.generation == generation, state.count >= 2048, CACurrentMediaTime() - state.lastInput < 0.5 else { return }
+            guard state.generation == generation, state.count >= 2048, clock() - state.lastInput < Self.expiry else { return }
             published.withLock { $0 = levels }
         }
     }

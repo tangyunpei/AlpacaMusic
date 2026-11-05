@@ -33,6 +33,15 @@ struct Track: Identifiable, Codable, Hashable, Sendable {
     var addedAt: Date = Date()
     var unavailable: Bool = false
 }
+/// A saved album is a separate collection, not a user-editable playlist.
+struct MusicAlbum: Identifiable, Codable, Hashable, Sendable {
+    var id: String
+    var name: String
+    var artist: String
+    var source: MusicSource
+    var trackIDs: [String]
+    var artworkURL: URL? = nil
+}
 struct MusicPlaylist: Identifiable, Codable, Hashable, Sendable {
     var id: String = UUID().uuidString
     var name: String
@@ -74,6 +83,7 @@ struct AudioLevels: Sendable {
 }
 struct VisualSettings: Codable, Equatable, Sendable {
     var density: Int = 160
+    var abstraction: Float = 0.2
     var pointSize: Float = 1.8
     var depth: Float = 0.35
     var bounce: Float = 0.16
@@ -94,6 +104,35 @@ struct VisualSettings: Codable, Equatable, Sendable {
         (L10n.string("深邃"), VisualSettings(pointSize: 1.7, depth: 0.65, bounce: 0.14, speed: 3, idle: 0.012))
     ] }
 }
+// Default the new control when reading existing visual settings and presets.
+// Declaring this initializer in an extension preserves the memberwise presets.
+extension VisualSettings {
+    enum CodingKeys: String, CodingKey {
+        case density, abstraction, pointSize, depth, bounce, speed, frequency, idle, scheme
+        case invert, glow, beatPop, autoOrbit, reduceMotion, batterySaver
+    }
+
+    init(from decoder: any Decoder) throws {
+        self.init()
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        density = try values.decodeIfPresent(Int.self, forKey: .density) ?? density
+        abstraction = try values.decodeIfPresent(Float.self, forKey: .abstraction) ?? abstraction
+        pointSize = try values.decodeIfPresent(Float.self, forKey: .pointSize) ?? pointSize
+        depth = try values.decodeIfPresent(Float.self, forKey: .depth) ?? depth
+        bounce = try values.decodeIfPresent(Float.self, forKey: .bounce) ?? bounce
+        speed = try values.decodeIfPresent(Float.self, forKey: .speed) ?? speed
+        frequency = try values.decodeIfPresent(Float.self, forKey: .frequency) ?? frequency
+        idle = try values.decodeIfPresent(Float.self, forKey: .idle) ?? idle
+        scheme = try values.decodeIfPresent(Int.self, forKey: .scheme) ?? scheme
+        invert = try values.decodeIfPresent(Bool.self, forKey: .invert) ?? invert
+        glow = try values.decodeIfPresent(Bool.self, forKey: .glow) ?? glow
+        beatPop = try values.decodeIfPresent(Bool.self, forKey: .beatPop) ?? beatPop
+        autoOrbit = try values.decodeIfPresent(Bool.self, forKey: .autoOrbit) ?? autoOrbit
+        reduceMotion = try values.decodeIfPresent(Bool.self, forKey: .reduceMotion) ?? reduceMotion
+        batterySaver = try values.decodeIfPresent(Bool.self, forKey: .batterySaver) ?? batterySaver
+    }
+}
+
 struct VisualPreset: Identifiable, Codable, Sendable { var id: String = UUID().uuidString; var name: String; var settings: VisualSettings }
 struct PartialPlaylistImport: Sendable {
     let tracks: [Track]
