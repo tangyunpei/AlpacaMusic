@@ -124,9 +124,11 @@ struct CompactLyricsTests {
     @Test func batterySaverOnlySlowsLyricsInLowPowerMode() {
         var settings = VisualSettings.standard
         settings.batterySaver = false
-        #expect(!CompactLyricsMotion.lowPower(settings))
+        #expect(!CompactLyricsMotion.lowPower(settings, systemLowPower: false))
+        #expect(!CompactLyricsMotion.lowPower(settings, systemLowPower: true))
         settings.batterySaver = true
-        #expect(CompactLyricsMotion.lowPower(settings) == ProcessInfo.processInfo.isLowPowerModeEnabled)
+        #expect(!CompactLyricsMotion.lowPower(settings, systemLowPower: false))
+        #expect(CompactLyricsMotion.lowPower(settings, systemLowPower: true))
     }
 
     @Test func compactViewsKeepTheirSharedInitializers() throws {

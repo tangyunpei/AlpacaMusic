@@ -111,8 +111,9 @@ enum CompactLyricFallback: Sendable { case trackInfo, hidden }
 
 enum CompactLyricsMotion {
     /// Battery saver only slows lyric frames while macOS Low Power Mode is on.
-    @MainActor static func lowPower(_ settings: VisualSettings) -> Bool {
-        settings.batterySaver && ProcessInfo.processInfo.isLowPowerModeEnabled
+    @MainActor static func lowPower(_ settings: VisualSettings,
+                                    systemLowPower: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled) -> Bool {
+        settings.batterySaver && systemLowPower
     }
 }
 

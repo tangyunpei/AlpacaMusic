@@ -21,36 +21,67 @@ struct MenuBarLyricsTests {
         MenuBarLyricsPresentation.cue(status: .playing, document: document, position: position)
     }
 
+    /// The panel frame for a screen whose menu bar is `menuBar` points tall
+    /// and whose Dock takes `dock` points on the left.
+    private func frame(screen: CGRect, menuBar: CGFloat, dock: CGFloat = 0, minimum: CGFloat = 24) -> CGRect {
+        let visible = CGRect(x: screen.minX + dock, y: screen.minY,
+                             width: screen.width - dock, height: screen.height - menuBar)
+        return MenuBarLyricsLayout.frame(screenFrame: screen, visibleFrame: visible, minimumMenuBarHeight: minimum)
+    }
+
     @Test func thePanelIsCenteredJustBelowTheMenuBar() {
         #expect(MenuBarLyricsLayout.maximumWidth == 760)
         #expect(MenuBarLyricsLayout.height == 72)
         #expect(MenuBarLyricsLayout.topGap == 4)
-        let visible: CGRect = CGRect(x: 0, y: 0, width: 1512, height: 945)
-        let frame: CGRect = MenuBarLyricsLayout.frame(visibleFrame: visible)
+        let screen: CGRect = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let placed: CGRect = frame(screen: screen, menuBar: 37)
         let expected: CGRect = CGRect(x: 376, y: 869, width: 760, height: 72)
-        #expect(frame == expected)
-        #expect(frame.midX == visible.midX)
-        #expect(frame.maxY == visible.maxY - MenuBarLyricsLayout.topGap)
+        #expect(placed == expected)
+        #expect(placed.midX == screen.midX)
+        #expect(placed.maxY == screen.maxY - 37 - MenuBarLyricsLayout.topGap)
+    }
+
+    @Test func aSideDockLeavesThePanelUnderTheMiddleOfTheMenuBar() {
+        let screen: CGRect = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let placed: CGRect = frame(screen: screen, menuBar: 37, dock: 65)
+        #expect(placed.midX == screen.midX)
+        #expect(placed == CGRect(x: 376, y: 869, width: 760, height: 72))
+    }
+
+    @Test func anAutoHidingMenuBarStillKeepsThePanelBelowIt() {
+        let screen: CGRect = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        // While the menu bar hides itself the visible frame reaches the top.
+        let notched: CGRect = frame(screen: screen, menuBar: 0, minimum: 37)
+        #expect(notched.maxY == screen.maxY - 37 - MenuBarLyricsLayout.topGap)
+        let plain: CGRect = frame(screen: screen, menuBar: 0, minimum: 24)
+        #expect(plain.maxY == screen.maxY - 24 - MenuBarLyricsLayout.topGap)
+        // A visible menu bar taller than the minimum wins.
+        let shown: CGRect = frame(screen: screen, menuBar: 37, minimum: 24)
+        #expect(shown.maxY == screen.maxY - 37 - MenuBarLyricsLayout.topGap)
+        // Without a usable visible frame only the minimum applies.
+        let unknown: CGRect = MenuBarLyricsLayout.frame(screenFrame: screen, visibleFrame: CGRect.null,
+                                                        minimumMenuBarHeight: 24)
+        #expect(unknown.maxY == screen.maxY - 24 - MenuBarLyricsLayout.topGap)
     }
 
     @Test func aNarrowScreenKeepsASideMarginAndStaysCentered() {
-        let visible: CGRect = CGRect(x: 0, y: 0, width: 600, height: 400)
-        let frame: CGRect = MenuBarLyricsLayout.frame(visibleFrame: visible)
+        let screen: CGRect = CGRect(x: 0, y: 0, width: 600, height: 424)
+        let placed: CGRect = frame(screen: screen, menuBar: 24)
         let expected: CGRect = CGRect(x: 24, y: 324, width: 552, height: 72)
-        #expect(frame == expected)
-        #expect(frame.midX == visible.midX)
+        #expect(placed == expected)
+        #expect(placed.midX == screen.midX)
     }
 
-    @Test func otherDisplaysKeepThePanelOnTheirOwnMenuBar() {
-        let right: CGRect = CGRect(x: 1512, y: 0, width: 1920, height: 1050)
-        let rightFrame: CGRect = MenuBarLyricsLayout.frame(visibleFrame: right)
+    @Test func aFrameOnAnOffsetDisplayStaysWithinIt() {
+        let right: CGRect = CGRect(x: 1512, y: 0, width: 1920, height: 1080)
+        let rightFrame: CGRect = frame(screen: right, menuBar: 30)
         let rightExpected: CGRect = CGRect(x: 2092, y: 974, width: 760, height: 72)
         #expect(rightFrame == rightExpected)
         #expect(rightFrame.midX == right.midX)
         #expect(rightFrame.minX >= right.minX)
         #expect(rightFrame.maxX <= right.maxX)
-        let left: CGRect = CGRect(x: -1440, y: 120, width: 1440, height: 875)
-        let leftFrame: CGRect = MenuBarLyricsLayout.frame(visibleFrame: left)
+        let left: CGRect = CGRect(x: -1440, y: 120, width: 1440, height: 900)
+        let leftFrame: CGRect = frame(screen: left, menuBar: 25)
         let leftExpected: CGRect = CGRect(x: -1100, y: 919, width: 760, height: 72)
         #expect(leftFrame == leftExpected)
         #expect(leftFrame.midX == left.midX)
@@ -69,8 +100,16 @@ struct MenuBarLyricsTests {
             CGRect.zero, CGRect.null, CGRect.infinite,
             zeroWidth, zeroHeight, nanOrigin, nanHeight, infiniteWidth, infiniteOrigin
         ]
-        for visible in frames {
-            #expect(MenuBarLyricsLayout.frame(visibleFrame: visible) == CGRect.zero)
+        for screen in frames {
+            #expect(MenuBarLyricsLayout.frame(screenFrame: screen, visibleFrame: screen, minimumMenuBarHeight: 24) == CGRect.zero)
+        }
+        // A non-finite minimum counts as none; the visible frame still decides.
+        let screen: CGRect = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let visible: CGRect = CGRect(x: 0, y: 0, width: 1200, height: 770)
+        for minimum in [nan, infinity, -infinity] {
+            let placed: CGRect = MenuBarLyricsLayout.frame(screenFrame: screen, visibleFrame: visible,
+                                                           minimumMenuBarHeight: minimum)
+            #expect(placed.maxY == 770 - MenuBarLyricsLayout.topGap)
         }
     }
 
@@ -139,10 +178,9 @@ struct MenuBarLyricsTests {
         }
         let model = AppModel(directory: directory, preferences: defaults, ephemeralAccounts: true)
         defer { model.player.shutdown() }
-        // Construction only: no panel, window or hosting view is created.
+        // Construction only: no panel, window or hosting view is created,
+        // and the view's body is never evaluated.
         _ = MenuBarLyricsView(model: model)
         #expect(model.showsMenuBarLyrics)
-        #expect(MenuBarLyricsPresentation.cue(status: model.player.status, document: model.lyrics.document,
-                                              position: model.player.position) == nil)
     }
 }

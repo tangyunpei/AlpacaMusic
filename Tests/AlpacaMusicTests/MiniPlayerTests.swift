@@ -112,15 +112,49 @@ struct MiniPlayerTests {
         #expect(MiniPlayerStyle.allCases == expected)
     }
 
-    @Test func nextStyleCyclesThroughEveryStyle() {
-        #expect(MiniPlayerStyle.artwork.next == .lyrics)
-        #expect(MiniPlayerStyle.lyrics.next == .card)
-        #expect(MiniPlayerStyle.card.next == .artwork)
-        for style in MiniPlayerStyle.allCases {
-            let third: MiniPlayerStyle = style.next.next.next
-            #expect(style.next != style)
-            #expect(third == style)
-        }
+    /// A cover in the top-right corner that grows into the lyric strip stays
+    /// in that corner instead of running off the screen.
+    @Test func aStyleChangeKeepsTheMiniPlayerOnScreen() {
+        let visible = CGRect(x: 0, y: 0, width: 2560, height: 1410)
+        let cover = MiniPlayerStyle.artwork.size
+        let strip = MiniPlayerStyle.lyrics.size
+        // Top-left corner fixed, as AppKit resizes it: the strip overhangs.
+        let grown = CGRect(x: 2560 - cover.width, y: 1410 - strip.height, width: strip.width, height: strip.height)
+        let moved = MiniPlayerWindowChrome.onScreenOrigin(for: grown, in: visible)
+        #expect(moved == CGPoint(x: 2560 - strip.width, y: 1410 - strip.height))
+
+        let inside = CGRect(x: 400, y: 300, width: strip.width, height: strip.height)
+        #expect(MiniPlayerWindowChrome.onScreenOrigin(for: inside, in: visible) == inside.origin)
+
+        let belowLeft = CGRect(x: -50, y: -20, width: 400, height: 236)
+        #expect(MiniPlayerWindowChrome.onScreenOrigin(for: belowLeft, in: visible) == CGPoint.zero)
+
+        // Larger than the screen: the top-left corner stays reachable.
+        let small = CGRect(x: 100, y: 100, width: 300, height: 200)
+        let huge = CGRect(x: 250, y: 0, width: 480, height: 300)
+        #expect(MiniPlayerWindowChrome.onScreenOrigin(for: huge, in: small) == CGPoint(x: 100, y: 0))
+
+        let unusable = CGRect(x: 10, y: 10, width: 480, height: 84)
+        #expect(MiniPlayerWindowChrome.onScreenOrigin(for: unusable, in: CGRect.null) == unusable.origin)
+        #expect(MiniPlayerWindowChrome.onScreenOrigin(for: unusable, in: CGRect.zero) == unusable.origin)
+    }
+
+    /// A player against the right edge stays against it when a style change
+    /// shrinks it; one elsewhere keeps its left edge.
+    @Test func aRightDockedMiniPlayerKeepsItsCorner() {
+        let visible = CGRect(x: 0, y: 0, width: 2560, height: 1410)
+        let strip = CGRect(x: 2080, y: 1326, width: 480, height: 84)
+        let card = MiniPlayerStyle.card.size
+        // AppKit keeps the top-left corner: the card ends 80 pt short.
+        let shrunk = CGRect(x: 2080, y: 1410 - card.height, width: card.width, height: card.height)
+        let docked = MiniPlayerWindowChrome.resizedOrigin(for: shrunk, previousFrame: strip, in: visible)
+        #expect(docked == CGPoint(x: 2560 - card.width, y: 1410 - card.height))
+
+        let floating = CGRect(x: 900, y: 600, width: 480, height: 84)
+        let shrunkFloating = CGRect(x: 900, y: 448, width: card.width, height: card.height)
+        let kept = MiniPlayerWindowChrome.resizedOrigin(for: shrunkFloating, previousFrame: floating, in: visible)
+        #expect(kept == shrunkFloating.origin)
+        #expect(MiniPlayerWindowChrome.resizedOrigin(for: shrunkFloating, previousFrame: nil, in: visible) == shrunkFloating.origin)
     }
 
     @Test func styleSizesGrowFromASquareCoverToTheCard() {

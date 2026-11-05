@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Scene identifiers shared by the main window, the mini player and the
@@ -77,7 +78,8 @@ enum MiniPlayerStyle: String, CaseIterable, Identifiable, Sendable {
         case .card: "rectangle"
         }
     }
-    /// The exact content size; the window follows it.
+    /// The exact window size: the content fills the whole window, under the
+    /// title bar too.
     var size: CGSize {
         switch self {
         case .artwork: CGSize(width: 156, height: 156)
@@ -85,12 +87,125 @@ enum MiniPlayerStyle: String, CaseIterable, Identifiable, Sendable {
         case .card: CGSize(width: 400, height: 236)
         }
     }
-    /// The following layout, wrapping from the card back to the artwork.
-    var next: MiniPlayerStyle {
-        switch self {
-        case .artwork: .lyrics
-        case .lyrics: .card
-        case .card: .artwork
+}
+
+/// The mini player's window chrome: the content reaches the window's top
+/// edge, and the close, minimize and zoom buttons show only while the
+/// pointer is over the player, so the cover style is a plain square.
+@MainActor enum MiniPlayerWindowChrome {
+    static let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+
+    static func apply(to window: NSWindow, showsButtons: Bool) {
+        if !window.styleMask.contains(.fullSizeContentView) { window.styleMask.insert(.fullSizeContentView) }
+        if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+        if window.titleVisibility != .hidden { window.titleVisibility = .hidden }
+        // The title bar's safe area would make the content-sized window
+        // taller than the style; cancelling it keeps the window exactly the
+        // style's size, with the buttons over the content.
+        if let content = window.contentView {
+            let titleBar: CGFloat = content.safeAreaInsets.top - content.additionalSafeAreaInsets.top
+            if content.additionalSafeAreaInsets.top != -titleBar {
+                content.additionalSafeAreaInsets = NSEdgeInsets(top: -titleBar, left: 0, bottom: 0, right: 0)
+            }
+        }
+        for type in buttonTypes {
+            guard let button = window.standardWindowButton(type), button.isHidden == showsButtons else { continue }
+            button.isHidden = !showsButtons
+        }
+    }
+
+    /// A style change resizes the window from its top-left corner, so a
+    /// player in the screen's top-right corner would grow off the screen or
+    /// shrink away from the corner. This keeps a player that touched the
+    /// right edge against it, and any player inside its screen.
+    static func keepOnScreen(_ window: NSWindow, previousFrame: CGRect?) {
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        let origin: CGPoint = resizedOrigin(for: window.frame, previousFrame: previousFrame, in: screen.visibleFrame)
+        if origin != window.frame.origin { window.setFrameOrigin(origin) }
+    }
+
+    /// The origin after a resize: a frame whose previous right edge was at
+    /// the right edge of `visible` stays there, then it is kept inside.
+    nonisolated static func resizedOrigin(for frame: CGRect, previousFrame: CGRect?, in visible: CGRect) -> CGPoint {
+        var anchored: CGRect = frame
+        if let previousFrame, previousFrame.maxX.isFinite, visible.maxX.isFinite, frame.width.isFinite,
+           abs(previousFrame.maxX - visible.maxX) <= 1 {
+            anchored.origin.x = visible.maxX - frame.width
+        }
+        return onScreenOrigin(for: anchored, in: visible)
+    }
+
+    /// The origin that keeps `frame` inside `visible`, moving it as little as
+    /// possible. A frame larger than `visible` keeps its top-left corner
+    /// inside; an unusable rectangle leaves the origin unchanged.
+    nonisolated static func onScreenOrigin(for frame: CGRect, in visible: CGRect) -> CGPoint {
+        let values: [CGFloat] = [frame.minX, frame.minY, frame.width, frame.height,
+                                 visible.minX, visible.minY, visible.width, visible.height]
+        guard values.allSatisfy({ (value: CGFloat) -> Bool in value.isFinite }),
+              visible.width > 0, visible.height > 0 else { return frame.origin }
+        var origin: CGPoint = frame.origin
+        if origin.x + frame.width > visible.maxX { origin.x = visible.maxX - frame.width }
+        if origin.x < visible.minX { origin.x = visible.minX }
+        if origin.y < visible.minY { origin.y = visible.minY }
+        if origin.y + frame.height > visible.maxY { origin.y = visible.maxY - frame.height }
+        return origin
+    }
+}
+
+/// Finds the window that hosts the mini player, keeps its chrome in step
+/// with the hover and keeps it on screen when a style change resizes it. It
+/// draws nothing and never takes clicks.
+private struct MiniPlayerWindowChromeHost: NSViewRepresentable {
+    var showsButtons: Bool
+
+    func makeNSView(context: Context) -> ChromeProbe { ChromeProbe() }
+
+    func updateNSView(_ view: ChromeProbe, context: Context) {
+        view.showsButtons = showsButtons
+    }
+
+    final class ChromeProbe: NSView {
+        var showsButtons: Bool = false {
+            didSet { if showsButtons != oldValue { applyChrome() } }
+        }
+        private var frameObservers: [any NSObjectProtocol] = []
+        /// The window's frame before the latest resize.
+        private var settledFrame: CGRect?
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            super.viewWillMove(toWindow: newWindow)
+            for observer in frameObservers { NotificationCenter.default.removeObserver(observer) }
+            frameObservers = []
+            settledFrame = nil
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            applyChrome()
+            guard let window else { return }
+            settledFrame = window.frame
+            let center: NotificationCenter = NotificationCenter.default
+            frameObservers = [
+                center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.windowResized() }
+                },
+                center.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.settledFrame = self?.window?.frame }
+                }
+            ]
+        }
+
+        private func windowResized() {
+            guard let window else { return }
+            MiniPlayerWindowChrome.keepOnScreen(window, previousFrame: settledFrame)
+            settledFrame = window.frame
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        private func applyChrome() {
+            guard let window else { return }
+            MiniPlayerWindowChrome.apply(to: window, showsButtons: showsButtons)
         }
     }
 }
@@ -110,6 +225,8 @@ struct MiniPlayerView: View {
     var body: some View {
         let reduceMotion = reduced
         surface(model.miniPlayerStyle, reduceMotion: reduceMotion)
+            .ignoresSafeArea()
+            .background { MiniPlayerWindowChromeHost(showsButtons: hovering) }
             .onHover { hovering = $0 }
             .contextMenu {
                 stylePicker

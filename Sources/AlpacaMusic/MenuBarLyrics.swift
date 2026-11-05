@@ -2,8 +2,8 @@ import AppKit
 import Observation
 import SwiftUI
 
-/// Where the lyrics panel sits: centered just below the menu bar, which a
-/// screen's visible frame already leaves out.
+/// Where the lyrics panel sits: centered on the screen, so under the middle
+/// of the menu bar and the notch, just below the menu bar.
 enum MenuBarLyricsLayout {
     static let maximumWidth: CGFloat = 760
     static let height: CGFloat = 72
@@ -11,19 +11,26 @@ enum MenuBarLyricsLayout {
     /// Keeps a narrow screen's panel clear of its side edges.
     private static let sideMargin: CGFloat = 24
 
-    /// The panel frame for a screen's visible frame, or `.zero` when that
-    /// frame is empty or not finite.
-    static func frame(visibleFrame: CGRect) -> CGRect {
-        let origin: CGPoint = visibleFrame.origin
-        let size: CGSize = visibleFrame.size
+    /// The panel frame for a screen, or `.zero` when the screen frame is
+    /// empty or not finite. The menu bar is what the visible frame leaves out
+    /// at the top; a side Dock never moves the panel off center. While the
+    /// menu bar hides itself the visible frame reaches the top edge, so
+    /// `minimumMenuBarHeight` (the notch, or the status bar's thickness)
+    /// still keeps the panel below where the menu bar appears.
+    static func frame(screenFrame: CGRect, visibleFrame: CGRect, minimumMenuBarHeight: CGFloat) -> CGRect {
+        let origin: CGPoint = screenFrame.origin
+        let size: CGSize = screenFrame.size
         guard origin.x.isFinite, origin.y.isFinite, size.width.isFinite, size.height.isFinite,
-              size.width > 0, size.height > 0, !visibleFrame.isInfinite else { return .zero }
+              size.width > 0, size.height > 0, !screenFrame.isInfinite else { return .zero }
+        let top: CGFloat = origin.y + size.height
+        let visibleTop: CGFloat = visibleFrame.isNull || visibleFrame.isInfinite ? top : visibleFrame.maxY
+        let reserved: CGFloat = visibleTop.isFinite ? max(0, top - visibleTop) : 0
+        let minimum: CGFloat = minimumMenuBarHeight.isFinite ? max(0, minimumMenuBarHeight) : 0
+        let menuBar: CGFloat = max(reserved, minimum)
         let available: CGFloat = size.width - sideMargin * 2
         let width: CGFloat = min(maximumWidth, max(0, available))
-        let midX: CGFloat = origin.x + size.width / 2
-        let x: CGFloat = midX - width / 2
-        let top: CGFloat = origin.y + size.height
-        let y: CGFloat = top - topGap - height
+        let x: CGFloat = origin.x + size.width / 2 - width / 2
+        let y: CGFloat = top - menuBar - topGap - height
         guard x.isFinite, y.isFinite else { return .zero }
         return CGRect(x: x, y: y, width: width, height: height)
     }
@@ -177,7 +184,9 @@ private struct MenuBarLyricsCapsule: View {
 }
 
 /// Frosted glass with a dark tint and a hairline edge, legible over any
-/// wallpaper or window. Only the glass casts the soft shadow.
+/// wallpaper or window. The tint is deep enough that the glass stays dark
+/// over a bright window too, where the unsung words (a quarter of the text
+/// color) would otherwise fade into it. Only the glass casts the shadow.
 private struct MenuBarLyricsBackdrop: View {
     var body: some View {
         ZStack {
@@ -185,7 +194,7 @@ private struct MenuBarLyricsBackdrop: View {
                 .fill(.ultraThinMaterial)
                 .shadow(color: Color.black.opacity(0.25), radius: 7, y: 3)
             Capsule(style: .continuous)
-                .fill(Color.black.opacity(0.3))
+                .fill(Color.black.opacity(0.6))
             Capsule(style: .continuous)
                 .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5)
         }
@@ -224,16 +233,15 @@ private struct MenuBarLyricsOverlayRoot: View {
 
 /// Shows `MenuBarLyricsView` in a borderless, click-through panel just below
 /// the menu bar while the setting is on. The panel never activates the app,
-/// takes focus or joins window cycling, and it follows display and Space
-/// changes.
+/// takes focus or joins window cycling, and it follows display, Space and
+/// focus changes.
 @MainActor final class MenuBarLyricsOverlayController {
     private weak var model: AppModel?
     private var running = false
     private var generation: UInt64 = 0
     private var showing = false
     private var panel: NSPanel?
-    private var screenObserver: (any NSObjectProtocol)?
-    private var spaceObserver: (any NSObjectProtocol)?
+    private var observers: [(center: NotificationCenter, token: any NSObjectProtocol)] = []
 
     init(model: AppModel) {
         self.model = model
@@ -285,8 +293,8 @@ private struct MenuBarLyricsOverlayRoot: View {
         reposition()
     }
 
-    /// Places the panel below the menu bar of the main screen and keeps it in
-    /// front; without a usable screen it stays hidden.
+    /// Places the panel below the menu bar of the lyrics screen and keeps it
+    /// in front; without a usable screen it stays hidden.
     private func reposition() {
         guard running, showing, let panel else { return }
         let frame: CGRect = Self.overlayFrame()
@@ -298,30 +306,43 @@ private struct MenuBarLyricsOverlayRoot: View {
         panel.orderFrontRegardless()
     }
 
+    /// Repositions on display and Space changes, and when focus moves to
+    /// another app or window, so with a menu bar on every display the panel
+    /// follows the display in use.
     private func observeScreens() {
         removeScreenObservers()
-        screenObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.reposition() }
-        }
-        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.reposition() }
+        let workspace: NotificationCenter = NSWorkspace.shared.notificationCenter
+        let triggers: [(center: NotificationCenter, name: Notification.Name)] = [
+            (NotificationCenter.default, NSApplication.didChangeScreenParametersNotification),
+            (NotificationCenter.default, NSWindow.didBecomeKeyNotification),
+            (workspace, NSWorkspace.activeSpaceDidChangeNotification),
+            (workspace, NSWorkspace.didActivateApplicationNotification)
+        ]
+        observers = triggers.map { (trigger: (center: NotificationCenter, name: Notification.Name)) in
+            let token: any NSObjectProtocol = trigger.center.addObserver(forName: trigger.name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.reposition() }
+            }
+            return (trigger.center, token)
         }
     }
 
     private func removeScreenObservers() {
-        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
-        if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
-        screenObserver = nil
-        spaceObserver = nil
+        for observer in observers { observer.center.removeObserver(observer.token) }
+        observers = []
+    }
+
+    /// The display in use when every display has its own menu bar, otherwise
+    /// the one display that has the menu bar.
+    private static func lyricsScreen() -> NSScreen? {
+        if NSScreen.screensHaveSeparateSpaces { return NSScreen.main ?? NSScreen.screens.first }
+        return NSScreen.screens.first
     }
 
     private static func overlayFrame() -> CGRect {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return .zero }
-        return MenuBarLyricsLayout.frame(visibleFrame: screen.visibleFrame)
+        guard let screen = lyricsScreen() else { return .zero }
+        let minimumMenuBarHeight: CGFloat = max(screen.safeAreaInsets.top, NSStatusBar.system.thickness)
+        return MenuBarLyricsLayout.frame(screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
+                                         minimumMenuBarHeight: minimumMenuBarHeight)
     }
 
     /// A transparent panel above the menu bar's level that ignores the mouse

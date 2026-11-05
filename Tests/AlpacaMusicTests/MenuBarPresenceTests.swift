@@ -163,7 +163,9 @@ struct MenuBarPresenceTests {
         #expect(wrapped == expected)
     }
 
-    @Test func combinedChangesLoadBeforeHandingOverTheSource() {
+    /// The plan's order only. `LyricsSync` runs the load in a task, so the
+    /// source reaches the lyrics controller first; `load(track:)` keeps it.
+    @Test func combinedChangesListTheLoadBeforeTheSource() {
         let source = audioSource("second")
         let expected: [LyricsSyncAction] = [.load, .setAudioSource]
         let switched = LyricsSyncPlan.actions(from: snapshot(track: "first"), to: snapshot(track: "second", source: source))
