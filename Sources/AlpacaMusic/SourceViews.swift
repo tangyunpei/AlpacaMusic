@@ -10,6 +10,10 @@ struct SourcesView: View {
     @State private var results: [String: String] = [:]
     @State private var login: PlatformSheet?
     @State private var playlists: PlatformSheet?
+    @State private var albums: PlatformSheet?
+    /// The login attempt whose success started an auto-import; cancelling that
+    /// attempt reverts the account, so its import stops too.
+    @State private var autoImportAttempt: UUID?
     @State private var sodaShare = false
     @State private var advanced = false
     private var enabledCount: Int { 1 + DirectMusicAccess.visibleSources.filter { source in model.accounts.state(source).profile != nil || model.library.sources.contains { $0.kind == source && $0.enabled && !$0.endpoint.isEmpty } }.count + (model.appleMusic.isEnabled ? 1 : 0) + (model.spotify.isEnabled ? 1 : 0) }
@@ -21,7 +25,7 @@ struct SourcesView: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 18, alignment: .topLeading)], alignment: .leading, spacing: 18) {
                 sourceCard(source: .local, status: L10n.string("随时可用"), detail: L10n.string("\(model.library.tracks.filter { $0.source == .local }.count) 首已导入")) {
-                    Button { model.beginImport(folder: false) } label: { Label(L10n.string("导入音乐"), systemImage: "folder.badge.plus").frame(maxWidth: .infinity) }.buttonStyle(QuietButtonStyle())
+                    Button { model.beginImport(folder: false) } label: { Label(L10n.string("导入音乐"), systemImage: "folder.badge.plus").frame(maxWidth: .infinity) }.buttonStyle(QuietButtonStyle()).disabled(model.library.busy)
                 }
                 sourceCard(source: .appleMusic, status: model.appleMusic.authorizationDescription, detail: model.appleMusic.subscriptionDescription) {
                     AppleMusicConnectionControls(model: model)
@@ -38,23 +42,31 @@ struct SourcesView: View {
                                     Button { playlists = PlatformSheet(source: source) } label: { Label(L10n.string("导入歌单"), systemImage: "music.note.list").frame(maxWidth: .infinity) }.buttonStyle(QuietButtonStyle())
                                     Button(L10n.string("退出")) { Task { await model.disconnectAccount(source) } }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(palette.secondary).disabled(state.busy)
                                 }
+                                if source == .netease {
+                                    Button { albums = PlatformSheet(source: source) } label: { Label(L10n.string("导入专辑"), systemImage: "opticaldisc").frame(maxWidth: .infinity) }
+                                        .buttonStyle(QuietButtonStyle()).disabled(state.busy)
+                                        .accessibilityIdentifier("netease-import-albums")
+                                }
                                 Button(L10n.string("重新登录或切换账号")) { login = PlatformSheet(source: source) }.buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(palette.accent).disabled(state.busy)
                             } else {
                                 Button { login = PlatformSheet(source: source) } label: { Label(L10n.string("登录\(source.title)"), systemImage: "person.crop.circle").frame(maxWidth: .infinity) }.buttonStyle(QuietButtonStyle()).disabled(state.busy)
                             }
                             if source == .soda {
-                                Button { sodaShare = true } label: {
-                                    Label(L10n.string("导入分享链接"), systemImage: "link").frame(maxWidth: .infinity)
-                                }.buttonStyle(QuietButtonStyle()).accessibilityIdentifier("soda-share-open")
-                                Text(L10n.string("当前播放使用官方分享音频，可能仅提供试听。"))
-                                    .font(.system(size: 10)).foregroundStyle(palette.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                HStack(spacing: 6) {
+                                    Button { sodaShare = true } label: {
+                                        Label(L10n.string("导入分享链接"), systemImage: "link").frame(maxWidth: .infinity)
+                                    }.buttonStyle(QuietButtonStyle()).accessibilityIdentifier("soda-share-open")
+                                    InfoHint(text: L10n.string("当前播放使用官方分享音频，可能仅提供试听。"))
+                                }
                                 if state.profile == nil {
                                     Toggle(L10n.string("参与公开曲库搜索"), isOn: $model.sodaPublicSearch)
                                         .toggleStyle(.checkbox).font(.system(size: 10)).tint(palette.accent)
                                 }
                             }
-                            if let error = state.error { Text(error).font(.system(size: 10)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+                            if let error = state.error {
+                                Text(error).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled).help(error)
+                            }
                         }
                     }
                 }
@@ -65,13 +77,14 @@ struct SourcesView: View {
                 Spacer()
                 Button { model.sheet = .url } label: { Label(L10n.string("添加链接"), systemImage: "plus") }.buttonStyle(QuietButtonStyle())
             }.padding(22).background(palette.panel, in: .rect(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.line))
-            HStack(alignment: .top, spacing: 13) {
-                Image(systemName: "cloud").font(.system(size: 19)).foregroundStyle(palette.faint)
-                VStack(alignment: .leading, spacing: 9) { Text(L10n.string("登录与隐私")).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary); Text(L10n.string("登录凭证保存在本机钥匙串。导入仅保存歌单与歌曲资料；播放受订阅、购买和地区权限限制。平台接口变化后可能需要重新登录。")).font(.system(size: 10)).foregroundStyle(palette.faint).lineSpacing(6) }
+            HStack(spacing: 8) {
+                Image(systemName: "lock.shield").font(.system(size: 13)).foregroundStyle(palette.faint).accessibilityHidden(true)
+                Text(L10n.string("登录与隐私")).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+                InfoHint(text: L10n.string("登录凭证保存在本机钥匙串。导入仅保存歌单与歌曲资料；播放受订阅、购买和地区权限限制。平台接口变化后可能需要重新登录。"))
             }.padding(.top, 3)
             DisclosureGroup(L10n.string("高级：自定义服务"), isExpanded: $advanced) {
                 VStack(spacing: 12) {
-                    Text(L10n.string("已登录的平台优先使用账号连接，登录凭证不会发送给自定义服务。")).font(.system(size: 10)).foregroundStyle(palette.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    HStack { InfoHint(text: L10n.string("已登录的平台优先使用账号连接，登录凭证不会发送给自定义服务。")); Spacer() }
                     ForEach(model.library.sources) { config in
                         HStack {
                             Text(config.name).font(.system(size: 12)); Spacer()
@@ -90,23 +103,44 @@ struct SourcesView: View {
             Group {
                 if item.source == .soda {
                     SodaLoginView(onConnect: { try await connect(item, cookies: $0) },
-                                  onCancel: { Task { await model.accounts.cancelConnection(item.source, attemptID: item.id) } },
-                                  onComplete: { Task { await model.accounts.completeConnection(item.source, attemptID: item.id) } })
+                                  onCancel: { cancelLogin(item) },
+                                  onComplete: { completeLogin(item) })
                 } else {
                     QRLoginView(source: item.source, onConnect: { try await connect(item, cookies: $0) },
-                                    onCancel: { Task { await model.accounts.cancelConnection(item.source, attemptID: item.id) } },
-                                    onComplete: { Task { await model.accounts.completeConnection(item.source, attemptID: item.id) } })
+                                    onCancel: { cancelLogin(item) },
+                                    onComplete: { completeLogin(item) })
                 }
             }.modifier(PanelEntrance(appReduced: model.visual.reduceMotion))
         }
         .sheet(item: $playlists) { item in RemotePlaylistsView(model: model, source: item.source).modifier(PanelEntrance(appReduced: model.visual.reduceMotion)) }
+        .sheet(item: $albums) { item in RemoteAlbumsView(model: model, source: item.source).modifier(PanelEntrance(appReduced: model.visual.reduceMotion)) }
         .sheet(isPresented: $sodaShare) { SodaShareImportView(model: model).modifier(PanelEntrance(appReduced: model.visual.reduceMotion)) }
     }
     private func connect(_ item: PlatformSheet, cookies: [MusicSessionCookie]) async throws {
         let previous = model.accounts.state(item.source).profile?.id
+        // Re-authenticating invalidates a running import; stop it quietly first.
+        model.autoImport.cancel(item.source)
         try await model.accounts.connect(item.source, cookies: cookies, attemptID: item.id)
+        // A login closed while the connection committed is about to be reverted.
+        try Task.checkCancellation()
         if previous != model.accounts.state(item.source).profile?.id, model.player.current?.source == item.source { model.player.pause() }
         model.notify(L10n.string("已连接\(item.source.title)，可以搜索歌曲或导入歌单"))
+        // Only a login made here imports; launch-time restores never do. A run
+        // for the previous connection is replaced by one for this account.
+        model.autoImport.cancel(item.source)
+        model.autoImport.start(item.source)
+        autoImportAttempt = item.id
+    }
+    private func cancelLogin(_ item: PlatformSheet) {
+        if autoImportAttempt == item.id {
+            autoImportAttempt = nil
+            model.autoImport.cancel(item.source)
+        }
+        Task { await model.accounts.cancelConnection(item.source, attemptID: item.id) }
+    }
+    private func completeLogin(_ item: PlatformSheet) {
+        if autoImportAttempt == item.id { autoImportAttempt = nil }
+        Task { await model.accounts.completeConnection(item.source, attemptID: item.id) }
     }
     private func sourceCard<Actions: View>(source: MusicSource, status: String, detail: String, @ContentBuilder actions: () -> Actions) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -134,14 +168,28 @@ struct AppleMusicConnectionControls: View {
                     Button(L10n.string("停用")) { model.disconnectAppleMusic() }.buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(palette.secondary)
                 }
             } else {
-                Button { Task { await model.appleMusic.connect() } } label: {
+                Button { Task { await connectAndAutoImport() } } label: {
                     HStack(spacing: 8) { if model.appleMusic.isBusy { ProgressView().controlSize(.mini) }; Text(L10n.string("连接 Apple Music")).frame(maxWidth: .infinity) }
                 }.buttonStyle(QuietButtonStyle()).disabled(!model.appleMusic.isConfigured || model.appleMusic.isBusy).opacity(model.appleMusic.isConfigured ? 1 : 0.45)
             }
             Button(model.appleMusic.isConfigured ? L10n.string("关于 Apple Music 播放") : L10n.string("完成开发者配置")) { model.sheet = .appleMusicSetup }.buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(palette.accent)
-            if let error = model.appleMusic.error { Text(error).font(.system(size: 10)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let error = model.appleMusic.error {
+                Text(error).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled).help(error)
+            }
         }
         .sheet(isPresented: $showsLibrary) { AppleMusicLibraryImportView(model: model).modifier(PanelEntrance(appReduced: model.visual.reduceMotion)) }
+    }
+    /// A user-initiated connection that ends enabled, authorized (an
+    /// unauthorized result disables the service) and error-free imports the
+    /// library in the background, with progress in the app's floating card.
+    private func connectAndAutoImport() async {
+        await model.appleMusic.connect()
+        let music = model.appleMusic
+        guard music.isEnabled, !music.isBusy, music.error == nil else { return }
+        // A stale run from a lapsed session would make start a no-op.
+        model.autoImport.cancel(.appleMusic)
+        model.autoImport.start(.appleMusic)
     }
 }
 

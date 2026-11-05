@@ -6,7 +6,24 @@ private struct LibrarySnapshot: Codable, Sendable {
     var tracks: [Track] = []
     var favorites: Set<String> = []
     var playlists: [MusicPlaylist] = []
+    var albums: [MusicAlbum] = []
     var sources: [SourceConfiguration] = SourceConfiguration.defaults
+}
+
+private extension LibrarySnapshot {
+    enum CodingKeys: String, CodingKey { case version, tracks, favorites, playlists, albums, sources }
+
+    // Version 1 snapshots written before album collections have no albums key.
+    // All existing required fields retain their strict decoding behavior.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        version = try values.decode(Int.self, forKey: .version)
+        tracks = try values.decode([Track].self, forKey: .tracks)
+        favorites = try values.decode(Set<String>.self, forKey: .favorites)
+        playlists = try values.decode([MusicPlaylist].self, forKey: .playlists)
+        albums = try values.decodeIfPresent([MusicAlbum].self, forKey: .albums) ?? []
+        sources = try values.decode([SourceConfiguration].self, forKey: .sources)
+    }
 }
 
 private enum StartupMutation {
@@ -30,11 +47,25 @@ private actor LibraryStorage {
         catch { throw MusicError.message(L10n.string("无法读取音乐资料库，请检查应用数据目录权限")) }
         do {
             var state = try JSONDecoder().decode(LibrarySnapshot.self, from: data)
-            guard state.version == 1, state.tracks.count <= 10000,
+            guard state.version == 1,
                   Set(state.tracks.map(\.id)).count == state.tracks.count,
                   state.tracks.allSatisfy({ !$0.id.isEmpty && $0.duration.isFinite && $0.duration >= 0 && ($0.source != .local || $0.bookmark != nil) }) else { throw MusicError.message(L10n.string("资料库格式无效")) }
             state.sources = try SourceService.validatedConfigurations(state.sources)
             let ids = Set(state.tracks.map(\.id))
+            guard Set(state.albums.map(\.id)).count == state.albums.count,
+                  state.albums.allSatisfy({
+                      !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                      !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                      Set($0.trackIDs).count == $0.trackIDs.count && !$0.trackIDs.contains(where: \.isEmpty)
+                  }) else { throw MusicError.message(L10n.string("资料库格式无效")) }
+            let trackSources = Dictionary(uniqueKeysWithValues: state.tracks.map { ($0.id, $0.source) })
+            for index in state.albums.indices {
+                state.albums[index].trackIDs = state.albums[index].trackIDs.filter(ids.contains)
+                guard state.albums[index].trackIDs.allSatisfy({ trackSources[$0] == state.albums[index].source }) else {
+                    throw MusicError.message(L10n.string("资料库格式无效"))
+                }
+            }
+            state.albums.removeAll { $0.trackIDs.isEmpty }
             state.favorites.formIntersection(ids)
             for index in state.playlists.indices { state.playlists[index].trackIDs = state.playlists[index].trackIDs.filter(ids.contains) }
             // Resolve bookmarks without UI, renew stale bookmarks, and retain missing
@@ -74,16 +105,23 @@ private actor LibraryStorage {
     private(set) var tracks: [Track] = [] { didSet { trackLookup = nil; listingRevision &+= 1 } }
     private(set) var favorites: Set<String> = [] { didSet { listingRevision &+= 1 } }
     private(set) var playlists: [MusicPlaylist] = [] { didSet { listingRevision &+= 1 } }
+    private var storedAlbums: [MusicAlbum] = [] { didSet { listingRevision &+= 1 } }
+    @ObservationIgnored private var albumCacheRevision: UInt64?
+    @ObservationIgnored private var albumCache: [MusicAlbum] = []
+    @ObservationIgnored private var albumLookup: [String: MusicAlbum] = [:]
     private(set) var listingRevision: UInt64 = 0
     @ObservationIgnored private var trackLookup: [String: Track]?
     private(set) var sources: [SourceConfiguration] = SourceConfiguration.defaults
     private(set) var ready = false
     private(set) var busy = false
+    /// Non-nil exactly while `importURLs(_:)` runs; drives the import progress card.
+    private(set) var localImport: ImportProgress?
     var error: String?
     private(set) var persistenceError: String?
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private let storage: LibraryStorage
     @ObservationIgnored private let importer = MetadataImporter()
+    @ObservationIgnored private var localImportTask: Task<ImportResult, Never>?
     @ObservationIgnored private var revision: UInt64 = 0
     @ObservationIgnored private var saveTask: Task<Result<Void, MusicError>, Never>?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
@@ -95,6 +133,26 @@ private actor LibraryStorage {
         let directory = directory ?? URL.applicationSupportDirectory.appending(path: "AlpacaMusic", directoryHint: .isDirectory)
         self.directory = directory
         self.storage = LibraryStorage(directory: directory)
+    }
+
+    var albums: [MusicAlbum] {
+        updateAlbumCache()
+        return albumCache
+    }
+
+    func album(id: String) -> MusicAlbum? {
+        updateAlbumCache()
+        return albumLookup[id]
+    }
+
+    private func updateAlbumCache() {
+        // The observed revision changes for both track and album-only mutations.
+        // Reading it even on cache hits keeps SwiftUI's dependency registered.
+        let currentRevision = listingRevision
+        guard albumCacheRevision != currentRevision else { return }
+        albumCache = AlbumGrouping.collections(stored: storedAlbums, tracks: tracks)
+        albumLookup = Dictionary(uniqueKeysWithValues: albumCache.map { ($0.id, $0) })
+        albumCacheRevision = currentRevision
     }
 
     func tracks(withIDs ids: [String]) -> [Track] {
@@ -121,11 +179,11 @@ private actor LibraryStorage {
         do {
             let (state, warning) = try await storage.read()
             if let state {
-                tracks = state.tracks; favorites = state.favorites; playlists = state.playlists; sources = state.sources
+                tracks = state.tracks; favorites = state.favorites; playlists = state.playlists; storedAlbums = state.albums; sources = state.sources
                 if let warning { error = warning }
             } else {
                 let demos = try await DemoLibrary.tracks(in: directory)
-                tracks = demos; favorites = []; playlists = []; sources = SourceConfiguration.defaults
+                tracks = demos; favorites = []; playlists = []; storedAlbums = []; sources = SourceConfiguration.defaults
             }
             // Operations from the still-interactive UI are applied after the disk
             // snapshot. No empty startup snapshot is ever written over stored data.
@@ -164,20 +222,33 @@ private actor LibraryStorage {
     func importURLs(_ urls: [URL]) async -> ImportResult {
         guard !busy else { return ImportResult(errors: [L10n.string("已有导入任务正在进行，请稍后再试")] ) }
         busy = true
-        defer { busy = false }
-        let result = await importer.importURLs(urls)
+        localImport = ImportProgress(completed: 0, total: nil)
+        defer { busy = false; localImport = nil; localImportTask = nil }
+        let report: @MainActor @Sendable (ImportProgress) -> Void = { [weak self] value in
+            guard let self, self.localImport != nil else { return }
+            self.localImport = value
+        }
+        let importer = self.importer
+        // A child task keeps the import cancellable from the UI while still
+        // following cancellation of the caller.
+        let task = Task { await importer.importURLs(urls, progress: report) }
+        localImportTask = task
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         addTracks(result.tracks)
         if !result.errors.isEmpty { error = result.errors.prefix(4).joined(separator: "\n") }
         return result
     }
 
+    /// Stops reading further files; tracks already read are still added.
+    func cancelLocalImport() { localImportTask?.cancel() }
+
     func addTracks(_ additions: [Track]) {
         if !ready { startupMutations.append(.add(additions)) }
-        for track in additions {
-            if let index = tracks.firstIndex(where: { $0.id == track.id }) { tracks[index] = track }
-            else if tracks.count < 10000 { tracks.append(track) }
-            else { error = L10n.string("音乐库最多保存 10000 首歌曲"); break }
-        }
+        mergeTracks(additions, preservingAddedAt: false)
         persist()
     }
     func toggleFavorite(_ id: String) {
@@ -196,7 +267,6 @@ private actor LibraryStorage {
         guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
         if !ready { startupMutations.append(.addToPlaylist(id, track)) }
         if !tracks.contains(where: { $0.id == track.id }) {
-            guard tracks.count < 10000 else { error = L10n.string("音乐库最多保存 10000 首歌曲"); return }
             tracks.append(track)
         }
         if !playlists[index].trackIDs.contains(track.id) { playlists[index].trackIDs.append(track.id) }
@@ -218,17 +288,11 @@ private actor LibraryStorage {
             let incomingIDs = Set(unique.map(\.id))
             guard !tracks.contains(where: { incomingIDs.contains($0.id) && $0.source != remote.source }) else { throw MusicError.message(L10n.string("\(remote.source.title) 歌曲标识与其他来源冲突，此次歌单未导入")) }
         }
-        let existingIDs = Set(tracks.map(\.id))
-        guard existingIDs.union(unique.map(\.id)).count <= 10000 else { throw MusicError.message(L10n.string("音乐库最多保存 10000 首；此次歌单未导入")) }
         if !ready { startupMutations.append(.importRemote(remote, accountID, unique)) }
         // Encoding disambiguates arbitrary provider IDs without storing credentials.
         let identity = try JSONEncoder().encode([remote.source.rawValue, accountID, remote.id]).base64EncodedString()
         let id = "imported:\(identity)"
-        for track in unique {
-            if let index = tracks.firstIndex(where: { $0.id == track.id }) {
-                var refreshed = track; refreshed.addedAt = tracks[index].addedAt; tracks[index] = refreshed
-            } else { tracks.append(track) }
-        }
+        mergeTracks(unique, preservingAddedAt: true)
         if let index = playlists.firstIndex(where: { $0.id == id }) {
             let oldIDs = Set(playlists[index].trackIDs)
             playlists[index].trackIDs.append(contentsOf: unique.map(\.id).filter { !oldIDs.contains($0) })
@@ -272,17 +336,8 @@ private actor LibraryStorage {
         guard !unique.contains(where: { track in indices[track.id].map { tracks[$0].source != .appleMusic } ?? false }) else {
             throw MusicError.message(L10n.string("Apple Music 歌曲标识与其他来源冲突，此次歌曲未导入"))
         }
-        guard Set(indices.keys).union(unique.map(\.id)).count <= 10000 else {
-            throw MusicError.message(L10n.string("音乐库最多保存 10000 首；此次 Apple Music 歌曲未导入"))
-        }
         try Task.checkCancellation()
-        for track in unique {
-            if let index = indices[track.id] {
-                var refreshed = track
-                refreshed.addedAt = tracks[index].addedAt
-                tracks[index] = refreshed
-            } else { tracks.append(track) }
-        }
+        mergeTracks(unique, preservingAddedAt: true)
         persist()
         if let result = await saveTask?.value {
             do { try result.get() }
@@ -290,6 +345,50 @@ private actor LibraryStorage {
         }
         return unique.count
     }
+    /// Explicit imports retain the provider's album identity and exact song order.
+    /// Reimporting changes album membership, never favorites or omitted library songs.
+    @discardableResult func importRemoteAlbumAndSave(_ album: RemoteMusicAlbum, tracks incoming: [Track]) async throws -> Int {
+        try Task.checkCancellation()
+        await load()
+        try Task.checkCancellation()
+        guard !persistenceBlocked else { throw MusicError.message(L10n.string("音乐资料库当前无法读取，未导入；请重新打开应用后重试。")) }
+        guard (album.source == .appleMusic || album.source == .netease),
+              !album.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !album.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              incoming.allSatisfy({
+                  $0.source == album.source && !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  !($0.sourceID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  $0.duration.isFinite && $0.duration >= 0
+              }) else { throw MusicError.message(L10n.string("专辑内容无效，未导入")) }
+        var seen = Set<String>()
+        let unique = incoming.filter { seen.insert($0.id).inserted }
+        let indices = Dictionary(uniqueKeysWithValues: tracks.enumerated().map { ($0.element.id, $0.offset) })
+        guard !unique.contains(where: { track in indices[track.id].map { tracks[$0].source != album.source } ?? false }) else {
+            throw MusicError.message(L10n.string("歌曲标识与其他来源冲突，此次专辑未导入"))
+        }
+        let id = AlbumGrouping.importedID(source: album.source, remoteID: album.id)
+        let existingAlbum = storedAlbums.first { $0.id == id }
+        let record = MusicAlbum(id: id, name: album.name,
+            artist: album.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (unique.first?.artist ?? "") : album.artist,
+            source: album.source, trackIDs: unique.map(\.id),
+            artworkURL: album.artworkURL ?? unique.first(where: { $0.artworkURL != nil })?.artworkURL ?? existingAlbum?.artworkURL)
+        try Task.checkCancellation()
+        mergeTracks(unique, preservingAddedAt: true)
+        if record.trackIDs.isEmpty {
+            storedAlbums.removeAll { $0.id == id }
+        } else if let index = storedAlbums.firstIndex(where: { $0.id == id }) {
+            storedAlbums[index] = record
+        } else {
+            storedAlbums.append(record)
+        }
+        persist()
+        if let result = await saveTask?.value {
+            do { try result.get() }
+            catch { throw MusicError.message(L10n.string("专辑歌曲已加入当前会话，但未能保存到磁盘。\(error.localizedDescription)")) }
+        }
+        return unique.count
+    }
+
     func retryPersistence() async {
         guard ready, !persistenceBlocked else { return }
         persist()
@@ -317,19 +416,16 @@ private actor LibraryStorage {
         var seen = Set<String>()
         let unique = incoming.filter { seen.insert($0.id).inserted }
         let indices = Dictionary(uniqueKeysWithValues: tracks.enumerated().map { ($0.element.id, $0.offset) })
-        guard !unique.contains(where: { track in indices[track.id].map { tracks[$0].source != .soda } ?? false }),
-              Set(indices.keys).union(unique.map(\.id)).count <= 10000 else {
-            throw MusicError.message(L10n.string("歌曲标识冲突或音乐库超过 10000 首，此次未导入。"))
+        guard !unique.contains(where: { track in indices[track.id].map { tracks[$0].source != .soda } ?? false }) else {
+            throw MusicError.message(L10n.string("歌曲标识与其他来源冲突，此次未导入。"))
         }
         try Task.checkCancellation()
-        for track in unique {
+        let cleaned = unique.map { track in
             var clean = track
             clean.url = nil
-            if let index = indices[track.id] {
-                clean.addedAt = tracks[index].addedAt
-                tracks[index] = clean
-            } else { tracks.append(clean) }
+            return clean
         }
+        mergeTracks(cleaned, preservingAddedAt: true)
         persist()
         if let result = await saveTask?.value {
             do { try result.get() }
@@ -341,6 +437,10 @@ private actor LibraryStorage {
         if !ready { startupMutations.append(.removeTrack(id)) }
         tracks.removeAll { $0.id == id }; favorites.remove(id)
         for index in playlists.indices { playlists[index].trackIDs.removeAll { $0 == id } }
+        var remainingAlbums = storedAlbums
+        for index in remainingAlbums.indices { remainingAlbums[index].trackIDs.removeAll { $0 == id } }
+        remainingAlbums.removeAll { $0.trackIDs.isEmpty }
+        storedAlbums = remainingAlbums
         // Removing a record never removes or relocates an original music file.
         persist()
     }
@@ -352,6 +452,26 @@ private actor LibraryStorage {
     func flushPersistence() async {
         if !ready { await load() }
         _ = await saveTask?.value
+    }
+
+    /// Merge a batch in linear time and publish one observable array update. This
+    /// avoids repeated scans and copy-on-write snapshots for large cloud libraries.
+    private func mergeTracks(_ incoming: [Track], preservingAddedAt: Bool) {
+        guard !incoming.isEmpty else { return }
+        var merged = tracks
+        var indices = Dictionary(uniqueKeysWithValues: merged.enumerated().map { ($0.element.id, $0.offset) })
+        merged.reserveCapacity(merged.count + incoming.count)
+        for track in incoming {
+            if let index = indices[track.id] {
+                var refreshed = track
+                if preservingAddedAt { refreshed.addedAt = merged[index].addedAt }
+                merged[index] = refreshed
+            } else {
+                indices[track.id] = merged.count
+                merged.append(track)
+            }
+        }
+        tracks = merged
     }
 
     private func persist() {
@@ -366,7 +486,7 @@ private actor LibraryStorage {
             if value.source == .soda { value.url = nil }
             return value
         }
-        let state = LibrarySnapshot(tracks: savedTracks, favorites: favorites, playlists: playlists, sources: sources)
+        let state = LibrarySnapshot(tracks: savedTracks, favorites: favorites, playlists: playlists, albums: storedAlbums, sources: sources)
         let revision = revision, storage = storage
         saveTask = Task { [weak self] in
             do {

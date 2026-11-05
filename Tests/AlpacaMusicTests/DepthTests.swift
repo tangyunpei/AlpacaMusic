@@ -231,6 +231,72 @@ private struct FlatDepthProvider: DepthProvider {
     #expect(reducedA == staticPositions && reducedB == staticPositions)
 }
 
+@Test @MainActor func abstractCloudGPUUsesCoherentVolumeAndFreezesWithoutMotion() throws {
+    let device = try #require(MTLCreateSystemDefaultDevice())
+    let queue = try #require(device.makeCommandQueue())
+    let probe = """
+    kernel void abstractVolumeProbe(const device CloudPoint *points [[buffer(0)]],
+                                   constant CloudUniforms &u [[buffer(1)]],
+                                   device float4 *output [[buffer(2)]], uint id [[thread_position_in_grid]]) {
+        output[id] = float4(cloudPosition(points[id], u), 1.0);
+    }
+    """
+    let library = try device.makeLibrary(source: MetalRenderer.shaderSource() + probe, options: nil)
+    let pipeline = try device.makeComputePipelineState(function: try #require(library.makeFunction(name: "abstractVolumeProbe")))
+    let points: [CloudPoint] = [-0.8 as Float, 0, 0.8].flatMap { x in
+        [-0.8 as Float, 0, 0.8].map { y in
+            CloudPoint(positionDepthSeed: SIMD4(x, y, 0.67, 0.5),
+                       colorLuminance: SIMD4(0.3, 0.5, 0.8, 0.5), scatter: SIMD4(0, 0, 0, 1),
+                       geometryFeatures: SIMD4(0.2, 0.8, (x + y + 2) / 4, 0.55))
+        }
+    }
+    let pointBuffer = try points.withUnsafeBytes {
+        try #require(device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared))
+    }
+    let output = try #require(device.makeBuffer(length: points.count * 16, options: .storageModeShared))
+    func positions(time: Float, beat: Float = 0, enabled: Float = 1, scheme: Float = 0) throws -> [SIMD4<Float>] {
+        var uniforms = CloudUniforms(projection: matrix_identity_float4x4, modelView: matrix_identity_float4x4,
+            motion: SIMD4(time, 1, beat, 1), shape: SIMD4(0.65, 0.4, 0.05, 4),
+            wave: SIMD4(10, 8, 0, scheme), behavior: SIMD4(1, enabled, 0, 1), viewport: SIMD4(900, 0, 1, 3))
+        let command = try #require(queue.makeCommandBuffer())
+        let encoder = try #require(command.makeComputeCommandEncoder())
+        encoder.setComputePipelineState(pipeline)
+        encoder.setBuffer(pointBuffer, offset: 0, index: 0)
+        encoder.setBytes(&uniforms, length: MemoryLayout<CloudUniforms>.stride, index: 1)
+        encoder.setBuffer(output, offset: 0, index: 2)
+        encoder.dispatchThreads(MTLSize(width: points.count, height: 1, depth: 1),
+                                threadsPerThreadgroup: MTLSize(width: points.count, height: 1, depth: 1))
+        encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
+        #expect(command.status == .completed)
+        return Array(UnsafeBufferPointer(start: output.contents().assumingMemoryBound(to: SIMD4<Float>.self), count: points.count))
+    }
+    let resting = try positions(time: 0, enabled: 0)
+    // The resting region volume remains present even when all animation stops.
+    let baselineRelief = (Float(0.67) - 0.5) * 0.65 * 2
+    #expect(resting.contains { abs($0.z - baselineRelief) > 0.02 })
+    let frozenLater = try positions(time: 120, beat: 1, enabled: 0, scheme: 1)
+    #expect(resting == frozenLater)
+    var maximumMovement: Float = 0
+    for frame in 0..<20 {
+        for scheme: Float in [0, 1] {
+            let moving = try positions(time: Float(frame) * 0.4, beat: 1, scheme: scheme)
+            for index in points.indices {
+                let difference = moving[index] - resting[index]
+                maximumMovement = max(maximumMovement, simd_length(SIMD3(difference.x, difference.y, difference.z)))
+                #expect(moving[index].x.isFinite && moving[index].y.isFinite && moving[index].z.isFinite)
+            }
+        }
+    }
+    #expect(maximumMovement > 0.008 && maximumMovement < 0.09)
+    // Region breathing follows the selected continuous axis, rather than an
+    // independently animated random point on all three axes.
+    let early = try positions(time: 0.4), later = try positions(time: 2.4)
+    #expect(zip(early, later).allSatisfy { $0.x.bitPattern == $1.x.bitPattern && $0.z.bitPattern == $1.z.bitPattern })
+    #expect(zip(early, later).contains { abs($0.y - $1.y) > 0.001 })
+    #expect(MemoryLayout<CloudUniforms>.stride == 208)
+    #expect(MemoryLayout<CloudPoint>.stride == 64)
+}
+
 @MainActor
 private final class OffscreenCloud {
     let device: any MTLDevice

@@ -11,11 +11,15 @@
 | 确认登录身份 | `/weapi/w/nuser/account/get` |
 | 搜索歌曲 | `/weapi/cloudsearch/pc` |
 | 用户歌单，逐页读取 | `/weapi/user/playlist` |
+| 当前账号收藏的专辑，逐页读取 | `/weapi/album/sublist` |
+| 专辑与完整曲目 | `/weapi/v1/album/{id}` |
 | 完整歌单曲目 ID | `/weapi/v6/playlist/detail` |
 | 按 ID 分批读取歌曲资料 | `/weapi/v3/song/detail` |
 | 当前账户可用的标准音质地址 | `/weapi/song/enhance/player/url/v1` |
 
-歌单先读取完整 `trackIds`，再每批 200 首获取资料，最终恢复原歌单顺序；缺少资料的 ID 保留为不可用曲目。返回曲目 ID 不完整、分页停滞、请求中断或超过 10000 首时明确报错，不把部分结果当成完整导入。这里只读取账号、搜索及歌单，没有修改网易云收藏或云端歌单的接口。
+歌单先读取完整 `trackIds`，再每批 200 首获取资料，最终恢复原歌单顺序；缺少资料的 ID 保留为不可用曲目。返回曲目 ID 不完整、分页停滞、请求中断或单份歌单超过 10000 首时明确报错，不把部分结果当成完整导入。这个单份网易云歌单限制与已移除的本地音乐库总量限制不同。
+
+“音源 → 网易云音乐 → 导入专辑”读取当前已登录账号的收藏专辑。列表验证重复分页与总数，专辑曲目验证身份、重复项目与完整数量，按平台顺序导入并保留专辑封面。平台明确标记不可用的曲目保留位置；返回数量不足时明确报错，不猜测歌曲已删除。导入后在侧边栏「专辑库」显示封面，点击进入曲目页，可整张按序播放。重复导入更新资料并保留本地收藏，不创建远端歌单副本。请求对照社区上游的[收藏专辑](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced/blob/main/module/album_sublist.js)及[专辑详情](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced/blob/main/module/album.js)，未引入上游代码。没有修改网易云收藏或云端歌单的接口。
 
 播放仅接受网易云返回的 `music.126.net` / `music.163.com` 官方域名地址。按官网 HTTPS 页面播放器的行为，将官方 HTTP 音频地址升级为 HTTPS，移除原 HTTP 80 端口，保留主机、编码后的路径及查询参数；最终仅允许无显式端口或 443，拒绝其他端口。缺少权限、地址为空、仅有试听或触发平台验证时停止并提示；没有解灰、第三方替代音源、IP 伪装、自动完成平台验证或破解下载功能。登录状态、订阅、地区与版权仍由平台决定。
 

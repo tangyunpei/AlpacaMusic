@@ -117,25 +117,27 @@ private func sodaLibraryTrack(_ id: String, title: String = "Fixture song", adde
         #expect(try Data(contentsOf: location) == before)
     }
 
-    @Test func sharedCapacityCountsUniqueIDsAndRejectsAnEntireOverflowBatchBeforeRefreshingAnything() async throws {
-        var existing = (1..<10000).map { sodaLibraryTrack(String($0)) }
+    @Test func sharedLibraryCanExceedTenThousandSongsAndStillRejectAnInvalidBatchAtomically() async throws {
+        var existing = (1..<10_001).map { sodaLibraryTrack(String($0)) }
         existing[1] = Track(id: "netease:fixture", title: "Other platform", artist: "Fixture", album: "Fixture", duration: 15,
                             source: .netease, sourceID: "fixture")
         let directory = try sodaLibraryDirectory(tracks: existing)
         defer { try? FileManager.default.removeItem(at: directory) }
         let library = MusicLibrary(directory: directory)
-        let last = sodaLibraryTrack("10000")
-        #expect(try await library.importSodaSongsAndSave([existing[0], last, last]) == 2)
-        #expect(library.tracks.count == 10000)
+        let next = sodaLibraryTrack("10001")
+        #expect(try await library.importSodaSongsAndSave([existing[0], next, next]) == 2)
+        #expect(library.tracks.count == 10_001)
         let location = directory.appending(path: "library-v1.json")
         let before = try Data(contentsOf: location)
         var changed = existing[0]; changed.title = "Must not change in a rejected batch"
-        await #expect(throws: MusicError.self) { try await library.importSodaSongsAndSave([changed, sodaLibraryTrack("10001")]) }
-        #expect(library.tracks == existing + [last])
+        var invalid = sodaLibraryTrack("10002"); invalid.duration = -1
+        await #expect(throws: MusicError.self) { try await library.importSodaSongsAndSave([changed, invalid]) }
+        #expect(library.tracks == existing + [next])
         #expect(try Data(contentsOf: location) == before)
         let restored = MusicLibrary(directory: directory)
         await restored.load()
-        #expect(restored.tracks == existing + [last])
+        #expect(restored.error == nil)
+        #expect(restored.tracks == existing + [next])
     }
 
     @Test func realDiskWriteFailureCannotReportSuccessAndRetryPersistsTheSession() async throws {

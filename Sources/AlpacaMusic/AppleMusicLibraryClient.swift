@@ -8,24 +8,39 @@ struct AppleMusicLibraryPlaylist: Identifiable, Hashable, Sendable {
     var trackCount: Int? = nil
 }
 
+struct AppleMusicLibraryAlbum: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    var artistName: String = ""
+    var artworkURL: URL? = nil
+    var trackCount: Int? = nil
+}
+
 /// Cloud library reads use MusicKit's automatic token handling. No token is
 /// requested, persisted or logged by the app, and this client only issues GETs.
 @MainActor struct AppleMusicLibraryClient {
     typealias Transport = @MainActor (URLRequest) async throws -> Data
     private let transport: Transport
-    private let maximumItems: Int
+    private let maximumItems: Int?
 
-    init(maximumItems: Int = 10_000, transport: @escaping Transport = Self.musicKitData) {
-        self.maximumItems = min(max(1, maximumItems), 10_000)
+    // Production reads follow every validated page. A finite budget is only an
+    // opt-in for callers/tests; it must not silently truncate a large library.
+    init(maximumItems: Int? = nil, transport: @escaping Transport = Self.musicKitData) {
+        self.maximumItems = maximumItems.map { max(1, $0) }
         self.transport = transport
     }
 
-    func songs(validate: @MainActor () throws -> Void = {}) async throws -> [Track] {
-        try await resources(path: "/v1/me/library/songs", kind: L10n.string("个人歌曲"), unique: true, validate: validate).enumerated().map { try $0.element.track(position: $0.offset + 1) }
+    /// `progress` runs on the main actor before the first page and after each
+    /// accepted page: items read so far, and Apple's `meta.total` when reported.
+    func songs(validate: @MainActor () throws -> Void = {},
+               progress: @MainActor (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
+        try await resources(path: "/v1/me/library/songs", kind: L10n.string("个人歌曲"), unique: true, expectedTotal: nil,
+                            validate: validate, progress: progress).enumerated().map { try $0.element.track(position: $0.offset + 1) }
     }
 
     func playlists(validate: @MainActor () throws -> Void = {}) async throws -> [AppleMusicLibraryPlaylist] {
-        try await resources(path: "/v1/me/library/playlists", kind: L10n.string("歌单列表"), unique: true, validate: validate).map { item in
+        try await resources(path: "/v1/me/library/playlists", kind: L10n.string("歌单列表"), unique: true, expectedTotal: nil,
+                            validate: validate, progress: { _ in }).map { item in
             guard item.type == "library-playlists", Self.validIdentifier(item.id),
                   let name = item.attributes?.name, !name.isEmpty else {
                 throw MusicError.message(L10n.string("Apple Music 返回的歌单资料不完整，本次未导入。"))
@@ -36,9 +51,39 @@ struct AppleMusicLibraryPlaylist: Identifiable, Hashable, Sendable {
         }
     }
 
-    func tracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void = {}) async throws -> [Track] {
+    /// Progress totals fall back to the playlist's `trackCount` when Apple
+    /// omits `meta.total`.
+    func tracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void = {},
+                progress: @MainActor (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
         guard Self.validIdentifier(playlist.id) else { throw MusicError.message(L10n.string("Apple Music 歌单标识无效，请重新读取歌单。")) }
-        return try await resources(path: "/v1/me/library/playlists/\(playlist.id)/tracks", kind: L10n.string("歌单歌曲"), unique: false, validate: validate).enumerated().map { try $0.element.track(position: $0.offset + 1) }
+        return try await resources(path: "/v1/me/library/playlists/\(playlist.id)/tracks", kind: L10n.string("歌单歌曲"), unique: false,
+                                   expectedTotal: playlist.trackCount, validate: validate, progress: progress)
+            .enumerated().map { try $0.element.track(position: $0.offset + 1) }
+    }
+
+    func albums(validate: @MainActor () throws -> Void = {}) async throws -> [AppleMusicLibraryAlbum] {
+        try await resources(path: "/v1/me/library/albums", kind: L10n.string("专辑列表"), unique: true, expectedTotal: nil,
+                            validate: validate, progress: { _ in }).map { item in
+            guard item.type == "library-albums", Self.validIdentifier(item.id),
+                  let name = item.attributes?.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  item.attributes?.trackCount.map({ $0 >= 0 }) ?? true else {
+                throw MusicError.message(L10n.string("Apple Music 返回的专辑资料不完整，本次未导入。"))
+            }
+            return AppleMusicLibraryAlbum(id: item.id, name: name, artistName: item.attributes?.artistName ?? "",
+                                          artworkURL: item.attributes?.artwork?.urlValue,
+                                          trackCount: item.attributes?.trackCount)
+        }
+    }
+
+    /// Progress totals fall back to the album's `trackCount` when Apple omits
+    /// `meta.total`.
+    func tracks(in album: AppleMusicLibraryAlbum, validate: @MainActor () throws -> Void = {},
+                progress: @MainActor (ImportProgress) -> Void = { _ in }) async throws -> [Track] {
+        guard Self.validIdentifier(album.id) else { throw MusicError.message(L10n.string("Apple Music 专辑标识无效，请重新读取专辑。")) }
+        let items = try await resources(path: "/v1/me/library/albums/\(album.id)/tracks", kind: L10n.string("专辑歌曲"), unique: true,
+                                        expectedTotal: album.trackCount, validate: validate, progress: progress)
+        guard album.trackCount == nil || album.trackCount == items.count else { throw paginationError }
+        return try items.enumerated().map { try $0.element.track(position: $0.offset + 1, album: album) }
     }
 
     /// Library IDs must stay in the library namespace, including uploaded or
@@ -84,11 +129,15 @@ struct AppleMusicLibraryPlaylist: Identifiable, Hashable, Sendable {
         } && value != "." && value != ".."
     }
 
-    private func resources(path: String, kind: String, unique: Bool, validate: @MainActor () throws -> Void) async throws -> [Resource] {
+    /// Apple documents 100 as the maximum page size for library resources.
+    private func resources(path: String, kind: String, unique: Bool, expectedTotal: Int?,
+                           validate: @MainActor () throws -> Void,
+                           progress: @MainActor (ImportProgress) -> Void) async throws -> [Resource] {
         var next: URL? = URL(string: "https://api.music.apple.com\(path)?limit=100")!
         var visited = Set<URL>(), identities = Set<String>()
         var output: [Resource] = []
         var total: Int?
+        progress(ImportProgress(completed: 0, total: expectedTotal))
         while let url = next {
             try Task.checkCancellation(); try validate()
             guard visited.insert(url).inserted else { throw paginationError }
@@ -99,9 +148,9 @@ struct AppleMusicLibraryPlaylist: Identifiable, Hashable, Sendable {
             if let reported = page.meta?.total {
                 guard reported >= 0, total == nil || total == reported else { throw paginationError }
                 total = reported
-                guard reported <= maximumItems else { throw limitError }
+                if let maximumItems, reported > maximumItems { throw limitError }
             }
-            guard output.count + page.data.count <= maximumItems else { throw limitError }
+            if let maximumItems, page.data.count > maximumItems - output.count { throw limitError }
             if unique {
                 for item in page.data {
                     guard identities.insert("\(item.type):\(item.id)").inserted else { throw paginationError }
@@ -109,27 +158,28 @@ struct AppleMusicLibraryPlaylist: Identifiable, Hashable, Sendable {
             }
             output.append(contentsOf: page.data)
             if let nextPath = page.next {
-                guard !page.data.isEmpty, output.count < maximumItems,
+                if let maximumItems, output.count >= maximumItems { throw limitError }
+                guard !page.data.isEmpty,
                       let value = URL(string: nextPath, relativeTo: url)?.absoluteURL,
                       let parts = URLComponents(url: value, resolvingAgainstBaseURL: true),
                       parts.scheme == "https", parts.host == "api.music.apple.com", parts.port == nil,
                       parts.user == nil, parts.password == nil, parts.fragment == nil, parts.path == path,
                       let offsets = parts.queryItems?.filter({ $0.name == "offset" }), offsets.count == 1,
                       let offsetValue = offsets.first?.value, let offset = Int(offsetValue), offset == output.count else {
-                    if output.count >= maximumItems { throw limitError }
                     throw paginationError
                 }
                 next = value
             } else { next = nil }
             if let total, output.count > total { throw paginationError }
+            progress(ImportProgress(completed: output.count, total: total ?? expectedTotal))
         }
         guard total == nil || total == output.count else { throw paginationError }
-        try Task.checkCancellation()
+        try Task.checkCancellation(); try validate()
         return output
     }
 
     private var paginationError: MusicError { .message(L10n.string("Apple Music 曲库分页不完整或已发生变化，本次未导入，请重新读取。")) }
-    private var limitError: MusicError { .message(L10n.string("Apple Music 此次读取超过 10,000 条保护上限，本次未导入。请改为导入较小的歌单。")) }
+    private var limitError: MusicError { .message(L10n.string("Apple Music 此次读取超过配置的数量上限，本次未导入。")) }
 
     private func fetch(_ url: URL, context: String = L10n.string("读取曲库歌曲播放资料")) async throws -> Data {
         try Task.checkCancellation()
@@ -142,7 +192,7 @@ struct AppleMusicLibraryPlaylist: Identifiable, Hashable, Sendable {
         } catch is CancellationError { throw CancellationError() }
         catch let error as URLError where error.code == .cancelled { throw CancellationError() }
         catch let error as MusicDataRequest.Error {
-            throw MusicError.message(L10n.string("\(context)：Apple Music 请求失败（HTTP \(String(error.status))，代码 \(String(error.code))），请检查授权后重试。"))
+            throw MusicError.message(L10n.string("\(context)：\(AppleMusicErrorMessage.describe(status: error.status, code: error.code))"))
         } catch let error as MusicTokenRequestError {
             throw MusicError.message(L10n.string("\(context)：\(Self.tokenFailureMessage(error))"))
         } catch let error as MusicError { throw MusicError.message(L10n.string("\(context)：\(error.localizedDescription)")) }
@@ -152,7 +202,7 @@ struct AppleMusicLibraryPlaylist: Identifiable, Hashable, Sendable {
         } catch { throw MusicError.message(L10n.string("\(context)：Apple Music 请求失败，请稍后重试。")) }
     }
 
-    nonisolated private static func tokenFailureMessage(_ error: MusicTokenRequestError) -> String {
+    nonisolated static func tokenFailureMessage(_ error: MusicTokenRequestError) -> String {
         switch error {
         case .unknown:
             L10n.string("系统未说明 Apple Music 认证失败的具体原因，请稍后重试（unknown）。")
@@ -203,7 +253,7 @@ struct AppleMusicLibraryPlaylist: Identifiable, Hashable, Sendable {
         let id: String
         let type: String
         let attributes: Attributes?
-        func track(position: Int) throws -> Track {
+        func track(position: Int, album: AppleMusicLibraryAlbum? = nil) throws -> Track {
             let context = L10n.string("Apple Music 第 \(position) 首歌曲")
             guard type == "library-songs" || type == "songs" else {
                 throw MusicError.message(L10n.string("\(context)是当前不支持的非歌曲项目，本次未导入。"))
@@ -218,13 +268,14 @@ struct AppleMusicLibraryPlaylist: Identifiable, Hashable, Sendable {
             }
             // Artist metadata is not used to identify or resolve the song.
             // Preserve the valid identity/name even when the artist is absent.
-            let artist = attributes.artistName ?? ""
+            let artist = attributes.artistName.flatMap { $0.isEmpty ? nil : $0 } ?? album?.artistName ?? ""
+            let albumName = attributes.albumName.flatMap { $0.isEmpty ? nil : $0 } ?? album?.name ?? ""
             let duration = attributes.durationInMillis ?? 0
             guard duration.isFinite, duration >= 0 else { throw MusicError.message(L10n.string("Apple Music 返回的歌曲时长无效，本次未导入。")) }
-            return Track(id: libraryType ? "appleMusic:library:\(id)" : "appleMusic:\(id)", title: name, artist: artist, album: attributes.albumName ?? "",
+            return Track(id: libraryType ? "appleMusic:library:\(id)" : "appleMusic:\(id)", title: name, artist: artist, album: albumName,
                          duration: duration / 1_000, source: .appleMusic, sourceID: id,
                          appleMusicResourceKind: libraryType ? .librarySong : .catalogSong,
-                         artworkURL: attributes.artwork?.urlValue, format: "Apple Music", unavailable: attributes.playParams == nil)
+                         artworkURL: attributes.artwork?.urlValue ?? album?.artworkURL, format: "Apple Music", unavailable: attributes.playParams == nil)
         }
     }
     private struct Attributes: Decodable {

@@ -15,6 +15,7 @@ struct PanelEntrance: ViewModifier {
     @State private var visible = false
     func body(content: Content) -> some View {
         content.opacity(visible ? 1 : 0).offset(y: visible || reduced || appReduced ? 0 : 7)
+            .environment(\.appReducedMotion, appReduced)
             .transaction { if reduced || appReduced { $0.animation = nil; $0.disablesAnimations = true } }
             .onAppear { withAnimation(reduced || appReduced ? nil : ExperienceMotion.panel) { visible = true } }
     }

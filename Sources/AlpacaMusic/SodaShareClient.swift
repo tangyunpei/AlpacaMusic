@@ -60,7 +60,9 @@ struct SodaShareClient: Sendable {
         return try Self.song(router: Self.routerData(data), expectedID: id)
     }
 
-    func playlist(_ id: String, cookies: [MusicSessionCookie] = []) async throws -> SodaSharePlaylist {
+    /// `progress` reports songs read so far and the playlist's total after each page.
+    func playlist(_ id: String, cookies: [MusicSessionCookie] = [],
+                  progress: @MainActor @Sendable (ImportProgress) -> Void = { _ in }) async throws -> SodaSharePlaylist {
         guard SodaJSON.validID(id) else { throw MusicError.message(L10n.string("汽水音乐歌单标识无效")) }
         var result: [Track] = [], seen = Set<String>(), cursor = "0", visited = Set<String>()
         var name = L10n.string("汽水音乐歌单"), expected: Int?
@@ -86,6 +88,7 @@ struct SodaShareClient: Sendable {
                 if seen.insert(track.id).inserted { result.append(track) }
             }
             guard result.count <= 10_000 else { throw MusicError.message(L10n.string("汽水音乐歌单超过 10000 首，本次未导入")) }
+            await progress(ImportProgress(completed: result.count, total: total))
             if result.count == total { return .init(name: name, tracks: result) }
             guard result.count < total, result.count > before, let next = SodaJSON.string(object["next_cursor"]), next != cursor else {
                 throw MusicError.message(L10n.string("汽水音乐歌单仅返回 \(result.count) / \(total) 首，未导入不完整结果"))
