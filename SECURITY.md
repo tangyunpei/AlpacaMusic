@@ -19,9 +19,9 @@ Test only systems, accounts, and files that you own or have permission to assess
 
 ### Repository and release safeguards
 
-CI uses hosted runners, limited token permissions, and Actions pinned to full commit hashes. Pull request tests do not need account sessions, developer certificates, or notarization credentials. Release installers are published separately; CI does not sign or automatically publish installers. Download installers from this repository's Releases page and retain macOS signature and Gatekeeper checks.
+The repository runs no GitHub Actions workflows. Tests run locally and do not need account sessions, developer certificates, or notarization credentials. Release installers are published separately; nothing signs or publishes installers automatically. Download installers from this repository's Releases page and retain macOS signature and Gatekeeper checks.
 
-Pull requests run the build script tests on GitHub. The Swift tests and SDK API audit run locally with `scripts/check-all.sh`, or on demand on the hosted `xcode-27` runner from the CI workflow. CodeQL scans GitHub Actions and Python scripts weekly. Swift scanning is deferred because the project's Swift 6.4 requirement exceeds the [currently documented CodeQL Swift support range](https://codeql.github.com/docs/codeql-overview/supported-languages-and-frameworks/). Passing checks do not establish that the application or third-party platform integrations have received a complete security audit.
+Every check (build script tests, translations, the Swift tests and the SDK API audit) runs locally with `scripts/check-all.sh` before a merge; GitHub runs no CI or CodeQL scans. GitHub secret scanning and push protection stay enabled. Passing checks do not establish that the application or third-party platform integrations have received a complete security audit.
 
 See the [Disclaimer](DISCLAIMER.md#english) for account, local data, and third-party service boundaries, and the [Third-party notices](THIRD_PARTY_NOTICES.md#english) for external components.
 
@@ -44,8 +44,8 @@ See the [Disclaimer](DISCLAIMER.md#english) for account, local data, and third-p
 
 ### 仓库与发布保护
 
-CI 使用托管运行环境、有限的令牌权限和固定完整提交哈希的 Actions。PR 测试无需账号会话、开发者证书或公证凭据。安装包单独发布，CI 不签名或自动发布安装包。请从本仓库 Releases 下载，并保留 macOS 签名及 Gatekeeper 检查。
+仓库不运行 GitHub Actions 工作流。测试在本机运行，无需账号会话、开发者证书或公证凭据。安装包单独发布，不会被自动签名或发布。请从本仓库 Releases 下载，并保留 macOS 签名及 Gatekeeper 检查。
 
-PR 在 GitHub 上运行构建脚本测试；Swift 测试和 SDK API 审计通过 `scripts/check-all.sh` 在本机运行，也可在 CI 工作流中手动使用托管 `xcode-27` 环境运行。CodeQL 每周扫描 GitHub Actions 和 Python 脚本；由于项目要求 Swift 6.4，超出 [CodeQL 目前文档列出的 Swift 支持范围](https://codeql.github.com/docs/codeql-overview/supported-languages-and-frameworks/)，暂缓启用 Swift 扫描。检查通过不代表应用或第三方平台接入已完成全面安全审计。
+合并前通过 `scripts/check-all.sh` 在本机运行全部检查（构建脚本测试、翻译检查、Swift 测试和 SDK API 审计）；GitHub 不运行 CI 或 CodeQL 扫描。GitHub 机密扫描及推送保护保持启用。检查通过不代表应用或第三方平台接入已完成全面安全审计。
 
 账号、本地数据与第三方服务边界见[免责声明](DISCLAIMER.md#简体中文)，外部组件见[第三方声明](THIRD_PARTY_NOTICES.md#简体中文)。

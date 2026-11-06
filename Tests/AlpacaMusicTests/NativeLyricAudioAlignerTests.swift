@@ -4,8 +4,9 @@ import Testing
 @testable import AlpacaMusic
 
 /// Explicitly enabled runtime QA uses original generated speech and synthesized
-/// instrument-only audio, never private libraries/accounts. Ordinary CI exercises
-/// the deterministic matcher and quality gates without downloading model assets.
+/// instrument-only audio, never private libraries/accounts. Ordinary test runs
+/// exercise the deterministic matcher and quality gates without downloading
+/// model assets.
 @Suite(.serialized) struct NativeLyricAudioAlignerTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ALPACA_RUN_NATIVE_ALIGNMENT_QA"] == "1"))
     func originalVoiceIsDetectedAndActuallyAlignedOnDevice() async throws {
