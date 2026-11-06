@@ -183,4 +183,110 @@ struct MenuBarLyricsTests {
         _ = MenuBarLyricsView(model: model)
         #expect(model.showsMenuBarLyrics)
     }
+
+    /// The default panel on a 1512 × 982 screen, and a 300 × 50 capsule
+    /// centered in it, 4 points from its top (the panel's SwiftUI space).
+    private let panel: CGRect = CGRect(x: 376, y: 869, width: 760, height: 72)
+    private let capsule: CGRect = CGRect(x: 230, y: 4, width: 300, height: 50)
+
+    @Test func theCapsuleMapsFromThePanelsTopLeftSpaceToTheScreen() {
+        let onScreen: CGRect = MenuBarLyricsFade.screenRect(of: capsule, inPanel: panel)
+        #expect(onScreen == CGRect(x: 606, y: 887, width: 300, height: 50))
+        // The capsule's top edge sits 4 points under the panel's top edge.
+        #expect(onScreen.maxY == panel.maxY - 4)
+        #expect(onScreen.midX == panel.midX)
+    }
+
+    @Test func onlyAPointerOnOrNextToTheCapsuleFadesTheLyric() {
+        func over(_ x: CGFloat, _ y: CGFloat, wasOver: Bool = false) -> Bool {
+            MenuBarLyricsFade.isPointerOver(CGPoint(x: x, y: y), capsule: capsule, panelFrame: panel, wasOver: wasOver)
+        }
+        // On the capsule (screen x 606...906, y 887...937).
+        #expect(over(756, 912))
+        #expect(over(607, 888))
+        // Within the small margin just outside its left edge.
+        #expect(over(606 - MenuBarLyricsFade.enterMargin + 1, 912))
+        // In the panel but well clear of a short capsule: nothing to hide.
+        #expect(!over(400, 912))
+        #expect(!over(1100, 912))
+        // Above the panel, in the menu bar itself.
+        #expect(!over(756, 960))
+    }
+
+    @Test func aFadedLyricWaitsForTheWiderMarginBeforeReturning() {
+        let enter: CGFloat = MenuBarLyricsFade.enterMargin
+        let exit: CGFloat = MenuBarLyricsFade.exitMargin
+        #expect(exit > enter)
+        // Between the two margins below the capsule (its bottom edge is y 887):
+        // a pointer arriving there does not fade the lyric, but one that was
+        // already over it keeps it faded, so an edge never makes it flicker.
+        let between: CGPoint = CGPoint(x: 756, y: 887 - (enter + exit) / 2)
+        #expect(!MenuBarLyricsFade.isPointerOver(between, capsule: capsule, panelFrame: panel, wasOver: false))
+        #expect(MenuBarLyricsFade.isPointerOver(between, capsule: capsule, panelFrame: panel, wasOver: true))
+        let beyond: CGPoint = CGPoint(x: 756, y: 887 - exit - 1)
+        #expect(!MenuBarLyricsFade.isPointerOver(beyond, capsule: capsule, panelFrame: panel, wasOver: true))
+    }
+
+    @Test func withoutACapsuleOrWithUnusableGeometryNothingFades() {
+        let center: CGPoint = CGPoint(x: 756, y: 912)
+        let nan: CGFloat = CGFloat.nan
+        #expect(!MenuBarLyricsFade.isPointerOver(center, capsule: nil, panelFrame: panel, wasOver: true))
+        let capsules: [CGRect] = [
+            CGRect.zero, CGRect.null, CGRect.infinite,
+            CGRect(x: 230, y: 4, width: 0, height: 50),
+            CGRect(x: nan, y: 4, width: 300, height: 50),
+            CGRect(x: 230, y: 4, width: 300, height: CGFloat.infinity)
+        ]
+        for bad in capsules {
+            #expect(!MenuBarLyricsFade.isPointerOver(center, capsule: bad, panelFrame: panel, wasOver: true))
+        }
+        for badPanel in [CGRect.zero, CGRect.null, CGRect(x: nan, y: 869, width: 760, height: 72)] {
+            #expect(!MenuBarLyricsFade.isPointerOver(center, capsule: capsule, panelFrame: badPanel, wasOver: true))
+        }
+        for pointer in [CGPoint(x: nan, y: 912), CGPoint(x: 756, y: CGFloat.infinity)] {
+            #expect(!MenuBarLyricsFade.isPointerOver(pointer, capsule: capsule, panelFrame: panel, wasOver: true))
+        }
+    }
+
+    @Test func theFadeLeavesAFaintTraceOfTheLyric() {
+        #expect(MenuBarLyricsFade.opacity > 0)
+        #expect(MenuBarLyricsFade.opacity <= 0.25)
+    }
+
+    @Test func theHoverStateReportsOnlyRealChanges() {
+        let hover = MenuBarLyricsHover()
+        let line: UUID = UUID()
+        var changes: Int = 0
+        hover.capsuleChanged = { changes += 1 }
+        #expect(hover.capsule == nil)
+        #expect(!hover.isPointerOver)
+        hover.setCapsule(capsule, from: line)
+        hover.setCapsule(capsule, from: line)
+        #expect(changes == 1)
+        #expect(hover.capsule == capsule)
+        hover.setCapsule(capsule.offsetBy(dx: 10, dy: 0), from: line)
+        #expect(changes == 2)
+        hover.clearCapsule(from: line)
+        hover.clearCapsule(from: line)
+        #expect(changes == 3)
+        #expect(hover.capsule == nil)
+        hover.setPointerOver(true)
+        #expect(hover.isPointerOver)
+        hover.setPointerOver(false)
+        #expect(!hover.isPointerOver)
+    }
+
+    @Test func aCapsuleFadingOutCannotClearTheOneThatReplacedIt() {
+        let hover = MenuBarLyricsHover()
+        let old: UUID = UUID()
+        let new: UUID = UUID()
+        hover.setCapsule(capsule, from: old)
+        // The next line's capsule appears while the old one is still leaving.
+        let wider: CGRect = capsule.insetBy(dx: -40, dy: 0)
+        hover.setCapsule(wider, from: new)
+        hover.clearCapsule(from: old)
+        #expect(hover.capsule == wider)
+        hover.clearCapsule(from: new)
+        #expect(hover.capsule == nil)
+    }
 }
