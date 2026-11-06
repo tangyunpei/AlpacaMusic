@@ -131,10 +131,15 @@ import Testing
     @Test func longWordCueLeavesATailWithoutDelayingEveryWordAndSeeksWithoutHistory() throws {
         let fast = LyricLine(id: 107, text: "quiet ocean returns", start: 10, end: 13)
         let slow = LyricLine(id: 108, text: fast.text, start: 10, end: 22)
+        let slower = LyricLine(id: 109, text: fast.text, start: 10, end: 40)
         for text in ["quiet", "ocean", "returns"] {
             let a = try #require(Self.word(text, in: fast).first)
             let b = try #require(Self.word(text, in: slow).first)
-            #expect(b.revealStart <= a.revealStart + 0.5)
+            let c = try #require(Self.word(text, in: slower).first)
+            // A longer cue may sing a little slower, up to a capped pace, and a
+            // longer tail beyond that never moves a word later.
+            #expect(b.revealStart >= a.revealStart && b.revealStart <= a.revealStart + 0.65)
+            #expect(c.revealStart == b.revealStart)
             #expect(b.revealStart < 13)
         }
         #expect(try Self.word("returns", in: slow).last?.revealEnd == 22)

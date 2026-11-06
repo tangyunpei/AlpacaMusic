@@ -43,7 +43,9 @@ import Testing
         #expect(wideEvents == narrowEvents)
         #expect(!wideEvents.isEmpty)
         #expect(wideEvents.count <= 2)
-        #expect(wideEvents.values.contains { $0 > 12 })
+        // Accents follow their syllables' estimated onsets, not the line start.
+        #expect(wideEvents.values.contains { $0 > 11 })
+        #expect(wideEvents.values.allSatisfy { $0 > 10.2 })
         let early = LyricTypography.layout(line: line, index: 0, in: CGSize(width: 1000, height: 600), position: 10, reduceMotion: false)
         #expect(early.allSatisfy { $0.accent == nil && $0.scale == 1 })
         let sample = LyricTypography.layout(line: line, index: 0, in: CGSize(width: 1000, height: 600), position: 14.3, reduceMotion: false)
