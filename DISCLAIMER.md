@@ -44,6 +44,7 @@ The following describes the current repository implementation; it does not cover
 - Using online music sources, artwork, web logins, or lyrics queries sends corresponding network requests to the relevant platforms and their content services. The project is not fully offline software and cannot promise that third-party services do not record request information.
 - Background audio lyric alignment is enabled by default and can be disabled in Settings. It may download an Apple language model. For readable media, the app reads ahead from the current local file or resolved direct audio URL; online analysis temporarily transfers media without copying platform login cookies. Temporary media/PCM is deleted at job completion/cancellation. Voice detection and recognition run on-device; derived character ranges/times and identity hashes are cached locally without raw audio or lyric plaintext. Singing recognition may fail; protected Apple Music/Spotify playback is not analyzed. See [implementation and limits](docs/lyric-audio-alignment.md).
 - Automatic lyrics matching for Apple Music is currently enabled by default and can be disabled in the lyrics menu. LRCLIB queries send the song title, artist, album, and track duration. The application does not attach platform login cookies or Spotify tokens to these queries. LRCLIB results may not match the current recording version, and character-by-character or word-by-word timing derived from line-level lyrics may be estimated.
+- When you are signed in to NetEase Cloud Music or QQ Music, Apple Music songs first look for the same recording there to use its word timing. This is on by default and can be turned off in the lyrics menu. The search sends the song title and first artist to that platform with your signed-in session, the same way an in-app search does. Results stay in memory for the session and are not saved to disk. A match needs the title, artist and duration to agree, but it may still come from a different release of the song.
 - Users configure custom services and decide whether to trust them. Their operators are responsible for their data-handling rules. Login credentials for native music sources are not automatically forwarded to a custom service when a direct connection fails.
 
 ### No warranty and scope of liability
@@ -100,6 +101,7 @@ Apple Music 通过 MusicKit 接入，Spotify 通过官方授权与 Web API 接�
 - 使用在线音源、封面、网页登录或歌词查询时，相关平台及其内容服务会接收相应网络请求。项目不是完全离线软件，不能承诺第三方服务不记录请求信息。
 - 后台音频字幕对齐默认开启，可在设置关闭；首次可能下载 Apple 语言模型。应用提前读取当前可访问的本地文件或播放器解析的直接音频地址；在线分析临时传输媒体，不复制平台登录 Cookie。任务完成／取消后删除临时媒体与 PCM。人声检测与识别在本机运行；本地只缓存派生字词范围／时间及身份摘要，不保存原始音频或歌词原文。歌唱识别可能失败；不分析 Apple Music／Spotify 受保护音频。见[实现与限制](docs/lyric-audio-alignment.md)。
 - 自动匹配 Apple Music 歌词目前默认开启，可在歌词菜单关闭。LRCLIB 查询发送歌名、歌手、专辑及曲目时长；本应用不会把平台登录 Cookie 或 Spotify 令牌附加到该查询。LRCLIB 的结果可能不匹配当前录音版本，整句歌词的逐字／逐词时间可能为估算。
+- 已登录网易云音乐或 QQ 音乐时，Apple Music 歌曲会先在该平台查找同一录音，以使用其逐字时间。此功能默认开启，可在歌词菜单关闭。查询以已登录会话向该平台发送歌名和第一位歌手，与应用内搜索相同；结果只保留在本次运行的内存中，不写入磁盘。匹配要求歌名、歌手和时长一致，但仍可能来自同一歌曲的其他发行版本。
 - 自定义服务由用户配置并决定是否信任，其处理规则由服务运营方负责。原生音源登录凭证不会因直连失败自动转交自定义服务。
 
 ### 无担保与责任范围

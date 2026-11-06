@@ -89,6 +89,17 @@ final class AppModel {
             }
         }
     }
+    /// Use word timing from a signed-in NetEase or QQ account for Apple Music.
+    var appleMusicPlatformWordLyrics: Bool {
+        didSet {
+            preferences.set(appleMusicPlatformWordLyrics, forKey: "apple-music-platform-word-lyrics")
+            let enabled = appleMusicPlatformWordLyrics
+            Task { [weak self] in
+                guard let self, self.appleMusicPlatformWordLyrics == enabled else { return }
+                await self.lyrics.setPlatformWordLyrics(enabled)
+            }
+        }
+    }
     var showLyricsImporter = false
     var lyricImportTarget: Track?
     var visualMode: VisualizationMode { didSet { preferences.set(visualMode.rawValue, forKey: "visualization-mode") } }
@@ -127,9 +138,12 @@ final class AppModel {
         accounts = ConnectedMusicAccounts(client: native)
         let automaticLyrics = preferences.object(forKey: "apple-music-online-lyrics") as? Bool ?? true
         automaticAppleMusicLyrics = automaticLyrics
+        let platformWords = preferences.object(forKey: "apple-music-platform-word-lyrics") as? Bool ?? true
+        appleMusicPlatformWordLyrics = platformWords
         let audioAlignment = preferences.object(forKey: "lyrics-audio-alignment") as? Bool ?? true
         automaticLyricAudioAlignment = audioAlignment
-        lyrics = LyricsController(client: native, directory: directory, automaticAppleMusicLookup: automaticLyrics, automaticAudioAlignment: audioAlignment)
+        lyrics = LyricsController(client: native, directory: directory, automaticAppleMusicLookup: automaticLyrics,
+                                  platformWordLyrics: platformWords, automaticAudioAlignment: audioAlignment)
         visualMode = preferences.string(forKey: "visualization-mode").flatMap(VisualizationMode.init(rawValue:)) ?? .pointCloud
         lyricPresentation = preferences.string(forKey: "lyrics-presentation").flatMap(LyricPresentationMode.init(rawValue:)) ?? .scroll
         sourceService = SourceService(native: native)

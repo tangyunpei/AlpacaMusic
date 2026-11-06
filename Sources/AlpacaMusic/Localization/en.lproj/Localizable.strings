@@ -1174,3 +1174,6 @@
 "在菜单栏下方显示歌词" = "Show Lyrics Below Menu Bar";
 "播放时在菜单栏下方显示当前歌词。" = "Shows the current lyric just below the menu bar while music plays.";
 "菜单栏歌词" = "Menu Bar Lyrics";
+"%@ · 逐字" = "%@ · Word Timing";
+"Apple Music 使用网易云/QQ 逐字时间" = "Use NetEase/QQ Word Timing for Apple Music";
+"已登录网易云音乐或 QQ 音乐时，按歌名、歌手和时长查找同一录音的逐字歌词；找不到时使用 LRCLIB。" = "When you're signed in to NetEase Cloud Music or QQ Music, finds the same recording by title, artist and duration and uses its word-timed lyrics. Uses LRCLIB when there's no match.";
