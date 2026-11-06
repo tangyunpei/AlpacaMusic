@@ -43,21 +43,6 @@ struct LyricsPresentationView: View {
                 }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .topTrailing) {
-                if status == .ready, let document, !document.sourceDescription.isEmpty {
-                    let currentIndex = document.activeIndex(at: position)
-                    let audioAligned = currentIndex.map { document.lines[$0].wordTimingOrigin == .audioEstimate } == true
-                    let estimated = currentIndex.map { index in
-                        LyricReveal.timeline(for: document.lines[index],
-                            context: LyricSingingTiming.context(for: index, in: document.lines)).isEstimated
-                    } == true
-                    Text(audioAligned ? L10n.string("歌词 · \(document.sourceDescription) · 本机人声时间（含估算）")
-                         : estimated ? L10n.string("歌词 · \(document.sourceDescription) · 字词时间含估算") : L10n.string("歌词 · \(document.sourceDescription)"))
-                        .font(.system(size: 10, weight: .medium)).foregroundStyle(palette.text.opacity(0.5))
-                        .lineLimit(1).padding(.horizontal, 22).padding(.top, 13)
-                        .accessibilityLabel(audioAligned ? L10n.string("歌词来源：\(document.sourceDescription)，使用本机人声识别时间，部分字词仍为估算") : estimated ? L10n.string("歌词来源：\(document.sourceDescription)，部分字词时间根据歌词时间与语句长度估算") : L10n.string("歌词来源：\(document.sourceDescription)")).allowsHitTesting(false)
-                }
-            }
     }
 }
 

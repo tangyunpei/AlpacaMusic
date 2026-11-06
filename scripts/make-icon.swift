@@ -1,18 +1,49 @@
+import AppKit
 import Foundation
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 
 // Source artwork is a build-time asset; only the generated ICNS enters the app.
+// An SVG source is drawn as vectors at every size; a PNG must be a square of
+// at least 1024 pixels.
 guard CommandLine.arguments.count == 3 else {
-    fatalError("Usage: make-icon.swift OUTPUT_DIRECTORY SOURCE_PNG")
+    fatalError("Usage: make-icon.swift OUTPUT_DIRECTORY SOURCE_SVG_OR_PNG")
 }
 let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 let sourceURL = URL(fileURLWithPath: CommandLine.arguments[2])
-guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
-      let artwork = CGImageSourceCreateImageAtIndex(source, 0, nil),
-      artwork.width == artwork.height, artwork.width >= 1024 else {
-    fatalError("App icon artwork must be a square image of at least 1024 pixels: \(sourceURL.path)")
+
+enum Artwork {
+    case vector(NSImage)
+    case bitmap(CGImage)
+
+    func draw(in context: CGContext, rect: CGRect) {
+        switch self {
+        case .bitmap(let image):
+            context.draw(image, in: rect)
+        case .vector(let image):
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+    }
+}
+
+let artwork: Artwork
+if sourceURL.pathExtension.lowercased() == "svg" {
+    guard let image = NSImage(contentsOf: sourceURL), image.size.width > 0,
+          abs(image.size.width - image.size.height) < 0.5 else {
+        fatalError("App icon SVG must be square and readable: \(sourceURL.path)")
+    }
+    artwork = .vector(image)
+} else {
+    guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+          image.width == image.height, image.width >= 1024 else {
+        fatalError("App icon artwork must be a square image of at least 1024 pixels: \(sourceURL.path)")
+    }
+    artwork = .bitmap(image)
 }
 guard let space = CGColorSpace(name: CGColorSpace.sRGB) else {
     fatalError("Unable to create sRGB icon color space")
@@ -27,7 +58,7 @@ for (size, name) in [(16,"icon_16x16"),(32,"icon_16x16@2x"),(32,"icon_32x32"),(6
     let shape = CGPath(roundedRect: bounds, cornerWidth: 204, cornerHeight: 204, transform: nil)
     ctx.addPath(shape); ctx.clip()
     ctx.interpolationQuality = .high
-    ctx.draw(artwork, in: bounds)
+    artwork.draw(in: ctx, rect: bounds)
     guard let image = ctx.makeImage(), let destination = CGImageDestinationCreateWithURL(folder.appending(path: name + ".png") as CFURL, UTType.png.identifier as CFString, 1, nil) else { fatalError("Unable to save icon") }
     CGImageDestinationAddImage(destination, image, nil)
     guard CGImageDestinationFinalize(destination) else { fatalError("Unable to finalize icon") }

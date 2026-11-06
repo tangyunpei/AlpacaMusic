@@ -42,7 +42,15 @@ struct MiniPlayerTests {
         #expect(MiniPlayerTiming.remainingText(position: 30, duration: .infinity) == formattedTime(.infinity))
     }
 
-    @Test func statusItemSymbolFollowsPlaybackOnly() {
+    /// The menu bar artwork is the brand SVG as a template image; without it
+    /// (a bare SwiftPM build) the symbol follows playback.
+    @Test @MainActor func statusItemShowsTheAlpacaTemplateOrFallsBackToASymbol() throws {
+        let brand = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Resources/Brand/MenuBarIcon-Headphones.svg")
+        let artwork = try #require(MenuBarPlayerIcon.artwork(at: brand))
+        #expect(artwork.isTemplate && artwork.size == MenuBarPlayerIcon.artworkSize)
+        #expect(MenuBarPlayerIcon.artwork(at: nil) == nil)
+        #expect(MenuBarPlayerIcon.artwork(at: brand.deletingLastPathComponent().appending(path: "missing.svg")) == nil)
         #expect(MenuBarPlayerIcon.symbol(for: .playing) == "waveform")
         #expect(MenuBarPlayerIcon.symbol(for: .paused) == "music.note")
         #expect(MenuBarPlayerIcon.symbol(for: .idle) == "music.note")
@@ -96,12 +104,9 @@ struct MiniPlayerTests {
         #expect(delegate.applicationShouldTerminateAfterLastWindowClosed(application))
         delegate.model = model
         #expect(model.showsMenuBarPlayer)
-        #expect(model.showsMenuBarControls)
         #expect(model.showsMenuBarLyrics)
         #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(application))
         model.showsMenuBarPlayer = false
-        #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(application))
-        model.showsMenuBarControls = false
         #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(application))
         model.showsMenuBarLyrics = false
         #expect(delegate.applicationShouldTerminateAfterLastWindowClosed(application))

@@ -350,7 +350,7 @@ private struct MiniLyricsLayout: View {
             MiniArtworkButton(track: track, side: 56, radius: 8)
             Group {
                 if track != nil {
-                    CompactLyricLines(model: model, primarySize: 15, secondarySize: 11, showsNextLine: true,
+                    CompactLyricLines(model: model, primarySize: 16, secondarySize: 12, showsNextLine: true,
                                       alignment: .leading, fallback: .trackInfo)
                 } else {
                     Text(L10n.string("未选择歌曲")).font(.system(size: 13, weight: .medium))
@@ -401,7 +401,7 @@ private struct MiniCardLayout: View {
                     .font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1)
             }
             // A fixed height keeps the card still while lyrics come and go.
-            CompactLyricLines(model: model, primarySize: 13, secondarySize: 10, showsNextLine: true,
+            CompactLyricLines(model: model, primarySize: 14, secondarySize: 11, showsNextLine: true,
                               alignment: .leading, fallback: .hidden)
                 .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36, alignment: .leading)
                 .padding(.vertical, 10)

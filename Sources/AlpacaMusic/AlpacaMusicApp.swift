@@ -103,18 +103,14 @@ struct AlpacaMusicApp: App {
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
     private var terminating = false
-    private var transportController: MenuBarTransportController?
     private var lyricsOverlayController: MenuBarLyricsOverlayController?
-    /// Connects the model; the first time it also starts the menu bar
-    /// playback controls and the lyrics shown below the menu bar.
+    /// Connects the model; the first time it also starts the lyrics shown
+    /// below the menu bar. Playback controls live in the menu bar panel.
     func attach(_ model: AppModel) {
         self.model = model
-        guard transportController == nil else { return }
-        let transport = MenuBarTransportController(model: model)
+        guard lyricsOverlayController == nil else { return }
         let overlay = MenuBarLyricsOverlayController(model: model)
-        transportController = transport
         lyricsOverlayController = overlay
-        transport.start()
         overlay.start()
     }
     /// While any menu bar item is shown, closing the last window keeps the
@@ -127,7 +123,6 @@ struct AlpacaMusicApp: App {
         guard !terminating else { return .terminateLater }
         terminating = true
         model.player.pause()
-        transportController?.stop()
         lyricsOverlayController?.stop()
         model.stopLyricsSync()
         Task {

@@ -47,8 +47,8 @@ enum MenuBarLyricsPresentation {
     }
 }
 
-/// The current lyric just below the menu bar, in a quiet capsule that hugs
-/// the line: karaoke ink follows playback, the translation sits underneath
+/// The current lyric just below the menu bar, on a transparent background
+/// with a soft text shadow: karaoke ink follows playback, the translation sits underneath
 /// and new lines cross-fade in. It shows only while timed lyrics play, and it
 /// never takes clicks or VoiceOver focus.
 struct MenuBarLyricsView: View {
@@ -71,7 +71,7 @@ struct MenuBarLyricsView: View {
     }
 }
 
-/// Shows the capsule only for a cue at the player's position, so it fades in
+/// Shows the lyric only for a cue at the player's position, so it fades in
 /// as a line starts and out on a pause, an interlude or the end of the lyrics.
 private struct MenuBarLyricsStage: View {
     let model: AppModel
@@ -94,7 +94,7 @@ private struct MenuBarLyricsStage: View {
                     .transition(appearance)
             }
         }
-        // Room for the capsule's shadow inside the panel.
+        // Room for the text shadow inside the panel.
         .padding(.top, 4)
         .padding(.horizontal, 12)
         .animation(isReduced ? nil : ExperienceMotion.panel, value: hidden)
@@ -116,15 +116,15 @@ private struct MenuBarLyricsStage: View {
         let lowPower: Bool = CompactLyricsMotion.lowPower(model.visual)
         return ProjectedLyricTime(position: position, isPlaying: playing, cueEnd: cueEnd,
                                   animates: playing && !isReduced, lowPower: lowPower) { (time: Double) in
-            MenuBarLyricsCapsule(document: document, fallback: cue, status: status, time: time, reduced: isReduced)
+            MenuBarLyricsLine(document: document, fallback: cue, status: status, time: time, reduced: isReduced)
         }
     }
 }
 
-/// One projected moment: the sung line and its translation in a capsule
-/// that resizes with the text. A new line drifts up as it fades in, and the
+/// One projected moment: the sung line and its translation, on a transparent
+/// background that sizes to the text. A new line drifts up as it fades in, and the
 /// old one drifts up as it fades out.
-private struct MenuBarLyricsCapsule: View {
+private struct MenuBarLyricsLine: View {
     @Environment(\.appPalette) private var palette
     let document: LyricDocument
     /// The cue at the player's position, kept if the smooth time briefly
@@ -150,8 +150,10 @@ private struct MenuBarLyricsCapsule: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 7)
-        .clipShape(Capsule(style: .continuous))
-        .background { MenuBarLyricsBackdrop() }
+        // No backdrop: the lyric floats on whatever is below the menu bar. The
+        // line's halo and these shadows keep it readable over bright windows.
+        .shadow(color: Color.black.opacity(0.7), radius: 2.5, y: 1)
+        .shadow(color: Color.black.opacity(0.35), radius: 8)
         .animation(reduced ? nil : ExperienceMotion.panel, value: key)
     }
 
@@ -168,35 +170,39 @@ private struct MenuBarLyricsCapsule: View {
         return VStack(spacing: 2) {
             LyricProgressText(line: line, text: text, position: time, appearance: .highlight,
                               reduceMotion: reduced, timingContext: context)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .truncationMode(.tail)
+                .background {
+                    // A halo from an opaque copy of the line: unsung words are
+                    // faint ink, so a shadow of the ink alone would vanish over
+                    // a bright window. The copy lays out exactly like the line.
+                    Text(verbatim: text)
+                        .font(.system(size: 17, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .truncationMode(.tail)
+                        .foregroundStyle(Color.black.opacity(0.6))
+                        .blur(radius: 3)
+                        .accessibilityHidden(true)
+                }
             if let translation {
                 Text(verbatim: translation)
-                    .font(.system(size: 11))
-                    .foregroundStyle(palette.text.opacity(0.62))
+                    .font(.system(size: 12))
+                    .foregroundStyle(palette.text.opacity(0.75))
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .background {
+                        Text(verbatim: translation)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .foregroundStyle(Color.black.opacity(0.55))
+                            .blur(radius: 2.5)
+                            .accessibilityHidden(true)
+                    }
             }
-        }
-    }
-}
-
-/// Frosted glass with a dark tint and a hairline edge, legible over any
-/// wallpaper or window. The tint is deep enough that the glass stays dark
-/// over a bright window too, where the unsung words (a quarter of the text
-/// color) would otherwise fade into it. Only the glass casts the shadow.
-private struct MenuBarLyricsBackdrop: View {
-    var body: some View {
-        ZStack {
-            Capsule(style: .continuous)
-                .fill(.ultraThinMaterial)
-                .shadow(color: Color.black.opacity(0.25), radius: 7, y: 3)
-            Capsule(style: .continuous)
-                .fill(Color.black.opacity(0.6))
-            Capsule(style: .continuous)
-                .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5)
         }
     }
 }

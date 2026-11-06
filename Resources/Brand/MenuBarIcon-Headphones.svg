@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="95 60 1120 1120" role="img" aria-labelledby="title desc">
+<title id="title">Original alpaca with outline headphones</title>
+<desc id="desc">Original full-length alpaca proportions, black silhouette, outline-only headphones and transparent negative spaces. Menu bar template artwork.</desc>
+<defs>
+<mask id="headphone-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="1254" height="1254" style="mask-type:luminance">
+<rect width="1254" height="1254" fill="white" />
+<path d="M457 479V426C457 344 519 270 594 253C625 246 656 249 685 253C732 258 771 285 790 329C749 296 705 278 666 284C594 294 531 362 531 435V486Z" fill="black" stroke="black" stroke-width="86" stroke-linejoin="round" />
+<path d="M493 474C558 474 604 529 606 602C610 677 559 747 485 753C416 760 344 709 335 635C326 561 383 493 453 477C467 474 480 473 493 474Z" fill="black" stroke="black" stroke-width="104" stroke-linejoin="round" />
+</mask>
+<mask id="earcup-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="1254" height="1254" style="mask-type:luminance">
+<rect width="1254" height="1254" fill="white" />
+<path d="M493 474C558 474 604 529 606 602C610 677 559 747 485 753C416 760 344 709 335 635C326 561 383 493 453 477C467 474 480 473 493 474Z" fill="black" stroke="black" stroke-width="86" />
+</mask>
+</defs>
+<g id="alpaca" fill="#000000" mask="url(#headphone-clearance)">
+    <path id="left-ear" d="M443 411C415 366 400 308 403 249C405 189 423 130 449 92C454 84 461 84 467 91C508 137 535 204 545 275L516 410Z" />
+    <path id="right-ear" d="M710 263C726 192 756 127 793 88C799 81 807 82 811 91C837 148 836 249 812 332L773 355Z" />
+    <path id="head-and-neck" d="M443 410C402 421 376 466 390 508L408 735C374 779 379 820 424 848C377 872 362 924 397 967C347 993 336 1050 375 1093C357 1108 348 1127 345 1149H850C805 1047 789 909 779 783H748C668 784 627 740 627 666V572C629 511 590 470 537 450C533 408 570 360 615 379C635 326 704 321 731 379C774 336 849 365 840 431C866 426 889 447 892 472C895 500 875 526 842 526L889 559C891 548 896 540 901 536C946 497 935 428 877 404C873 370 850 340 812 331C759 282 714 267 664 272C568 274 495 323 443 410Z" />
+    <ellipse id="eye" cx="717.5" cy="584.5" rx="40" ry="40.5" />
+    <path id="nose" d="M900 625H959C971 625 979 634 977 645C975 658 965 669 951 676L929 675L891 654C884 650 881 644 883 637C885 629 891 625 900 625Z" />
+    <path id="smile" d="M940 670V693C940 717 926 733 906 733C889 733 876 724 868 711" fill="none" stroke="#000000" stroke-width="25" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+  
+<g id="headphones" fill="none" stroke="#000000" stroke-linejoin="round" stroke-linecap="round">
+<path id="headband-outline" d="M457 479V426C457 344 519 270 594 253C625 246 656 249 685 253C732 258 771 285 790 329C749 296 705 278 666 284C594 294 531 362 531 435V486Z" stroke-width="44" mask="url(#earcup-clearance)" />
+<path id="earcup-outline" d="M493 474C558 474 604 529 606 602C610 677 559 747 485 753C416 760 344 709 335 635C326 561 383 493 453 477C467 474 480 473 493 474Z" stroke-width="62" />
+</g>
+</svg>

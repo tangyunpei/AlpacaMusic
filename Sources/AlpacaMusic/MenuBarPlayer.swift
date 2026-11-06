@@ -1,20 +1,40 @@
 import AppKit
 import SwiftUI
 
-/// The status item symbol: a waveform while playing, a note otherwise.
+/// The status item artwork: the alpaca the build copies into the app bundle
+/// (Resources/Brand/MenuBarIcon-Headphones.svg), drawn as a template so it
+/// follows the menu bar's color. A bare SwiftPM build has no bundle resources
+/// and shows a symbol instead: a waveform while playing, a note otherwise.
 enum MenuBarPlayerIcon {
+    static let artworkSize = NSSize(width: 18, height: 18)
+
+    @MainActor static let artwork: NSImage? = artwork(at: Bundle.main.url(forResource: "MenuBarIcon", withExtension: "svg"))
+
     static func symbol(for status: PlaybackStatus) -> String {
         status == .playing ? "waveform" : "music.note"
     }
+
+    /// A template image at menu bar size, or nil when the file is missing or unreadable.
+    static func artwork(at url: URL?) -> NSImage? {
+        guard let url, let image = NSImage(contentsOf: url), image.size.width > 0, image.size.height > 0 else { return nil }
+        image.size = artworkSize
+        image.isTemplate = true
+        return image
+    }
 }
 
-/// The status bar item: a template SF Symbol only, with no text or motion.
+/// The status bar item: a template image only, with no text or motion.
 struct MenuBarPlayerLabel: View {
     @Bindable var model: AppModel
     var body: some View {
-        Image(systemName: MenuBarPlayerIcon.symbol(for: model.player.status))
-            .renderingMode(.template)
-            .accessibilityLabel(Text(verbatim: "AlpacaMusic"))
+        Group {
+            if let artwork = MenuBarPlayerIcon.artwork {
+                Image(nsImage: artwork).renderingMode(.template)
+            } else {
+                Image(systemName: MenuBarPlayerIcon.symbol(for: model.player.status)).renderingMode(.template)
+            }
+        }
+        .accessibilityLabel(Text(verbatim: "AlpacaMusic"))
     }
 }
 
