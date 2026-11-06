@@ -49,10 +49,6 @@ final class AppModel {
     var showsMenuBarPlayer: Bool {
         didSet { preferences.set(showsMenuBarPlayer, forKey: "menu-bar-player") }
     }
-    /// Shows previous, play and next buttons in the menu bar.
-    var showsMenuBarControls: Bool {
-        didSet { preferences.set(showsMenuBarControls, forKey: "menu-bar-controls") }
-    }
     /// Shows the current lyric just below the menu bar while music plays.
     var showsMenuBarLyrics: Bool {
         didSet { preferences.set(showsMenuBarLyrics, forKey: "menu-bar-lyrics") }
@@ -63,7 +59,7 @@ final class AppModel {
     }
     /// True while any menu bar item is shown; closing the last window then
     /// keeps the app (and playback) running.
-    var hasMenuBarPresence: Bool { showsMenuBarPlayer || showsMenuBarControls || showsMenuBarLyrics }
+    var hasMenuBarPresence: Bool { showsMenuBarPlayer || showsMenuBarLyrics }
     var sourceFilter: MusicSource? = nil
     var queueOpen = false
     var immersive = false {
@@ -129,7 +125,6 @@ final class AppModel {
         language = L10n.preference(in: preferences)
         sodaPublicSearch = preferences.object(forKey: "soda-public-search") as? Bool ?? true
         showsMenuBarPlayer = preferences.object(forKey: "menu-bar-player") as? Bool ?? true
-        showsMenuBarControls = preferences.object(forKey: "menu-bar-controls") as? Bool ?? true
         showsMenuBarLyrics = preferences.object(forKey: "menu-bar-lyrics") as? Bool ?? true
         miniPlayerStyle = preferences.string(forKey: "mini-player-style").flatMap(MiniPlayerStyle.init(rawValue:)) ?? .lyrics
         library = MusicLibrary(directory: directory)

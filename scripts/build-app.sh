@@ -156,8 +156,10 @@ fi
 cp "$binary_dir/AlpacaMusic" "$alpaca_app/Contents/MacOS/AlpacaMusic"
 ditto "$binary_dir/AlpacaMusic_AlpacaMusic.bundle" "$alpaca_app/Contents/Resources/AlpacaMusic_AlpacaMusic.bundle"
 ditto "$PWD/Resources/Localization" "$alpaca_app/Contents/Resources"
-swift scripts/make-icon.swift "$alpaca_staging" "$PWD/Resources/Brand/AppIcon-Bauhaus.png"
+swift scripts/make-icon.swift "$alpaca_staging" "$PWD/Resources/Brand/AppIcon-Headphones.svg"
 iconutil -c icns "$alpaca_staging/AppIcon.iconset" -o "$alpaca_app/Contents/Resources/AppIcon.icns"
+# The menu bar shows this template artwork; the app falls back to a symbol without it.
+cp "$PWD/Resources/Brand/MenuBarIcon-Headphones.svg" "$alpaca_app/Contents/Resources/MenuBarIcon.svg"
 alpaca_sign_flags=(--force --sign "$alpaca_identity" --identifier "$alpaca_bundle_id")
 if [[ "$alpaca_sandbox" == 1 || -n "$alpaca_profile" ]]; then
   alpaca_sign_flags+=(--entitlements "$alpaca_staging/signing.entitlements")

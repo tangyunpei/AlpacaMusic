@@ -16,7 +16,6 @@ struct MenuBarPresenceTests {
         let model = AppModel(directory: directory, preferences: defaults, ephemeralAccounts: true)
         defer { model.player.shutdown() }
         #expect(model.miniPlayerStyle == .lyrics)
-        #expect(model.showsMenuBarControls)
         #expect(model.showsMenuBarLyrics)
         #expect(model.hasMenuBarPresence)
     }
@@ -66,22 +65,17 @@ struct MenuBarPresenceTests {
         let model = AppModel(directory: first, preferences: defaults, ephemeralAccounts: true)
         defer { model.player.shutdown() }
         model.miniPlayerStyle = .card
-        model.showsMenuBarControls = false
         model.showsMenuBarLyrics = false
         #expect(defaults.string(forKey: "mini-player-style") == "card")
-        #expect(defaults.object(forKey: "menu-bar-controls") as? Bool == false)
         #expect(defaults.object(forKey: "menu-bar-lyrics") as? Bool == false)
 
         let reloaded = AppModel(directory: second, preferences: defaults, ephemeralAccounts: true)
         defer { reloaded.player.shutdown() }
         #expect(reloaded.miniPlayerStyle == .card)
-        #expect(!reloaded.showsMenuBarControls)
         #expect(!reloaded.showsMenuBarLyrics)
         reloaded.miniPlayerStyle = .artwork
-        reloaded.showsMenuBarControls = true
         reloaded.showsMenuBarLyrics = true
         #expect(defaults.string(forKey: "mini-player-style") == "artwork")
-        #expect(defaults.object(forKey: "menu-bar-controls") as? Bool == true)
         #expect(defaults.object(forKey: "menu-bar-lyrics") as? Bool == true)
     }
 
@@ -111,14 +105,10 @@ struct MenuBarPresenceTests {
         defer { model.player.shutdown() }
         let states: [Bool] = [false, true]
         for showsPlayer in states {
-            for showsControls in states {
-                for showsLyrics in states {
-                    model.showsMenuBarPlayer = showsPlayer
-                    model.showsMenuBarControls = showsControls
-                    model.showsMenuBarLyrics = showsLyrics
-                    let expected: Bool = showsPlayer || showsControls || showsLyrics
-                    #expect(model.hasMenuBarPresence == expected)
-                }
+            for showsLyrics in states {
+                model.showsMenuBarPlayer = showsPlayer
+                model.showsMenuBarLyrics = showsLyrics
+                #expect(model.hasMenuBarPresence == (showsPlayer || showsLyrics))
             }
         }
     }
@@ -140,7 +130,6 @@ struct MenuBarPresenceTests {
         delegate.model = model
         #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(application))
         model.showsMenuBarPlayer = false
-        model.showsMenuBarControls = false
         #expect(model.showsMenuBarLyrics)
         #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(application))
         model.showsMenuBarLyrics = false
