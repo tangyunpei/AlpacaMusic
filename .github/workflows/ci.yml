@@ -1,8 +1,9 @@
 name: CI
 
+# Pull requests run only the quick build script tests. The full macOS checks
+# (Swift tests, compiler-extracted translations and the SDK audit) run locally
+# with scripts/check-all.sh, or here on demand from the Actions tab.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -31,6 +32,7 @@ jobs:
 
   swift-tests:
     name: Swift tests and SDK audit
+    if: github.event_name == 'workflow_dispatch'
     runs-on: xcode-27
     timeout-minutes: 35
     env:
@@ -40,31 +42,5 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check required Swift and SDK versions
-        run: |
-          xcodebuild -version
-          xcrun swift --version
-          xcrun --sdk macosx --show-sdk-version
-          python3 - <<'PY'
-          import re
-          import subprocess
-          swift = subprocess.check_output(["xcrun", "swift", "--version"], text=True)
-          match = re.search(r"Swift version (\d+)\.(\d+)", swift)
-          if match is None or tuple(map(int, match.groups())) < (6, 4):
-              raise SystemExit("CI requires Swift 6.4 or newer.")
-          sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-version"], text=True).strip()
-          if int(sdk.split(".")[0]) < 27:
-              raise SystemExit("CI requires macOS SDK 27 or newer.")
-          PY
-      # These suites drive the analyzer by hand (a manual clock and on-demand
-      # analysis), so a starved worker on a shared runner no longer affects
-      # them; they keep their own step so their results are easy to find.
-      # Both steps together cover the full suite.
-      - name: Test audio analysis with fresh PCM
-        run: swift test --filter 'AudioAnalyzerTests|AudioWaveformTests' -Xswiftc -emit-localized-strings
-      - name: Run remaining Swift tests without account credentials
-        run: swift test --skip 'AudioAnalyzerTests|AudioWaveformTests' -Xswiftc -emit-localized-strings
-      - name: Check compiler-extracted translations
-        run: python3 scripts/check-localizations.py --extracted-dir .build
-      - name: Audit APIs against the current SDK
-        run: ./scripts/check-sdk-apis.sh
+      - name: Run every check
+        run: ./scripts/check-all.sh
