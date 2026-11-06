@@ -59,13 +59,18 @@ import Testing
         let fast = LyricReveal.timeline(for: .init(id: 3, text: "你好世界", start: 10, end: 12))
         let slow = LyricReveal.timeline(for: .init(id: 4, text: "你好世界", start: 10, end: 18))
         #expect(fast.isEstimated && slow.isEstimated)
-        #expect(fast.units.map(\.start) == [10, 10.5, 11, 11.5])
-        #expect(slow.units.map(\.start) == [10, 10.55, 11.1, 11.65])
+        func close(_ values: [Double], _ expected: [Double]) -> Bool {
+            values.count == expected.count && zip(values, expected).allSatisfy { abs($0 - $1) < 0.000_1 }
+        }
+        // A two-second cue for four characters is sung fast; a long one at the
+        // capped pace, with the last character holding the rest.
+        #expect(close(fast.units.map(\.start), [10, 10.3299, 10.6597, 10.9896]))
+        #expect(close(slow.units.map(\.start), [10, 10.5177, 11.0353, 11.5530]))
         #expect(slow.units.last?.end == 18)
         #expect(slow.units.allSatisfy { $0.opacity(at: 12) == 1 })
         let latin = LyricReveal.timeline(for: .init(id: 5, text: "I ocean", start: 0, end: 3))
         let ocean = try #require(latin.fragments(["I ", "ocean"]).last)
-        #expect(abs((ocean.first?.start ?? -1) - 0.55) < 0.000_001)
+        #expect(abs((ocean.first?.start ?? -1) - 0.5177) < 0.000_1)
     }
 
     @Test func estimatesShareEmphasisPronunciationAndPunctuationAllocation() throws {

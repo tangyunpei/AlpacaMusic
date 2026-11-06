@@ -23,16 +23,16 @@ import Testing
         let context = LyricSingingTiming.context(for: index, in: lines)
         let timeline = LyricReveal.timeline(for: line, context: context)
         let final = try #require(timeline.units.last)
-        #expect(abs(final.start - 25.008) < 0.002)
+        #expect(abs(final.start - 25.444) < 0.002)
         #expect(final.end == 26.54)
         // The old equal distribution held the last syllable until 26.11.
-        #expect(final.start < 22.68 + (26.54 - 22.68) * 8 / 9 - 0.9)
-        let frame = LyricTypography.frame(document: document, position: 25.2,
+        #expect(final.start < 22.68 + (26.54 - 22.68) * 8 / 9 - 0.6)
+        let frame = LyricTypography.frame(document: document, position: 25.6,
                                          in: CGSize(width: 960, height: 540), reduceMotion: false)
         let primary = frame.fragments.filter { $0.role == .primary }
         #expect(primary.map(\.text).joined() == line.text)
         #expect(primary.flatMap(\.revealUnits).map(\.start) == timeline.units.map(\.start))
-        #expect(primary.flatMap { LyricGlyphRenderer.samples(for: $0, position: 25.2) }.allSatisfy { $0.opacity == 1 })
+        #expect(primary.flatMap { LyricGlyphRenderer.samples(for: $0, position: 25.6) }.allSatisfy { $0.opacity == 1 })
         for piece in primary {
             let first = try #require(piece.revealUnits.first)
             let before = LyricTypography.frame(document: document, position: first.revealStart - 0.001,

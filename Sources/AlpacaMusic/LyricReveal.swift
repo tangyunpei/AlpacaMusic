@@ -145,10 +145,10 @@ struct LyricRevealTimeline: Equatable, Sendable {
         guard !source.isEmpty, let start = line.start, validTime(start) else { return readable() }
         if let end = line.end, !validTime(end) || end <= start || end - start > 120 { return readable() }
         if let supplied = suppliedTimeline(line, context: context) { return supplied }
-        let duration = line.end.map { $0 - start } ?? conservativeDuration(line.text, maximum: 12)
+        let duration = line.end.map { $0 - start } ?? LyricSingingTiming.openCueDuration(line.text, context: context)
         let end = start + duration
         guard validTime(end), end > start else { return readable() }
-        let units = subdivide(line.text, start: start, end: end, context: context)
+        let units = subdivide(line.text, start: start, end: end, context: context, closesLine: true)
         return .init(units: units, isTimed: true, isEstimated: true)
     }
 
@@ -185,25 +185,36 @@ struct LyricRevealTimeline: Equatable, Sendable {
         return .init(units: mapped, isTimed: true, isEstimated: estimated)
     }
 
-    private static func subdivide(_ text: String, start: Double, end: Double, context: LyricTimingContext) -> [LyricRevealUnit] {
+    /// `closesLine`: the text is a whole line-only cue and `end` is where it
+    /// ends; otherwise it is one provider-timed word inside its window.
+    private static func subdivide(_ text: String, start: Double, end: Double, context: LyricTimingContext,
+                                  closesLine: Bool = false) -> [LyricRevealUnit] {
         let characters = Array(text)
         guard !characters.isEmpty else { return [] }
         if characters.count == 1 { return [.init(text: String(characters[0]), start: start, end: end)] }
         guard end > start else { return characters.map { .init(text: String($0), start: start, end: start) } }
         let texts = characters.map(String.init)
-        let schedule = LyricSingingTiming.schedule(text: text, duration: end - start, context: context)
+        let schedule = closesLine
+            ? LyricSingingTiming.schedule(text: text, duration: end - start, context: context)
+            : LyricSingingTiming.wordSchedule(text: text, duration: end - start, context: context)
         let timings = schedule?.characters ?? Array(repeating: nil, count: characters.count)
-        var precedingEnd = start
+        var precedingEnd = start, precedingOnset = start
         return characters.indices.map { index in
             if let window = timings[index] {
                 let onset = min(end, max(start, start + window.startOffset))
                 let ending = min(end, max(onset, start + window.endOffset))
-                precedingEnd = ending
+                precedingEnd = ending; precedingOnset = onset
                 return .init(text: texts[index], start: onset, end: ending)
             }
             // A held final vowel keeps its singing progress, but closing
             // punctuation must not wait for the instrumental/cue tail.
-            let displayAt = min(precedingEnd, start + (schedule?.articulationEnd ?? end - start))
+            var displayAt = min(precedingEnd, start + (schedule?.articulationEnd ?? end - start))
+            // When singing fills a line-only cue, that is its very end, where the
+            // line stops being shown: let the mark follow the last syllable.
+            // Allow for rounding: articulation may fall a few ulps short of the end.
+            if closesLine, displayAt >= end - 0.000_000_001, end > precedingOnset {
+                displayAt = precedingOnset + min(0.12, (end - precedingOnset) / 2)
+            }
             return .init(text: texts[index], start: displayAt, end: displayAt)
         }
     }

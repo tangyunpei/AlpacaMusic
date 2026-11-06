@@ -366,9 +366,11 @@ import Testing
     let light = try #require(choices[2]?.window)
     let returns = try #require(choices[4]?.window)
     // The=1, light=1, returns=2 syllables: function words still occupy time.
-    #expect(abs(light.startOffset - 0.55) < 0.000_001)
-    #expect(abs(light.endOffset - 1.1) < 0.000_001)
-    #expect(abs(returns.startOffset - 1.1) < 0.000_001)
+    // Positions are measured in units of the line's pace, whatever it is.
+    let unit = light.startOffset
+    #expect(unit > 0.2 && unit < 0.6)
+    #expect(abs(light.endOffset - 2 * unit) < 0.000_001)
+    #expect(abs(returns.startOffset - 2 * unit) < 0.000_001)
     #expect(abs(returns.endOffset - 8) < 0.000_001)
     for (index, choice) in choices {
         let window = try #require(choice.window)
@@ -388,9 +390,10 @@ import Testing
     let source = LyricLine(id: 2, text: texts.joined(), start: 5, end: 11)
     let plain = LyricEmphasis.choices(texts: texts, line: source, suppliedWordTiming: false, seed: 2)
     #expect(Set(plain.keys) == Set([1, 3]))
-    let stars = try #require(plain[1]?.window)
-    #expect(abs(stars.startOffset - 0.55) < 0.000_001 && abs(stars.endOffset - 1.65) < 0.000_001)
-    #expect(plain[3]?.window == .init(startOffset: 2.2, endOffset: 6))
+    let stars = try #require(plain[1]?.window), echo = try #require(plain[3]?.window)
+    let unit = stars.startOffset
+    #expect(unit > 0.2 && unit < 0.6 && abs(stars.endOffset - 3 * unit) < 0.000_001)
+    #expect(abs(echo.startOffset - 4 * unit) < 0.000_001 && echo.endOffset == 6)
     let decoratedTexts = ["的", " \n👨‍👩‍👧‍👦 ", "星光", "了", "🌙\t", "回声"]
     let decorated = LyricLine(id: 3, text: decoratedTexts.joined(), start: 5, end: 11)
     let estimates = LyricEmphasis.choices(texts: decoratedTexts, line: decorated, suppliedWordTiming: false, seed: 2)
@@ -404,28 +407,36 @@ import Testing
     let plainTexts = ["love", " ", "beautiful"]
     let line = LyricLine(id: 0, text: plainTexts.joined(), start: 0, end: 4)
     let plain = LyricEmphasis.choices(texts: plainTexts, line: line, suppliedWordTiming: false, seed: 0)
-    #expect(plain[0]?.window == .init(startOffset: 0, endOffset: 0.55))
-    #expect(plain[2]?.window == .init(startOffset: 0.55, endOffset: 4))
+    let love = try #require(plain[0]?.window), beautiful = try #require(plain[2]?.window)
+    #expect(love.startOffset == 0 && love.endOffset > 0.2 && love.endOffset < 0.6)
+    #expect(beautiful.startOffset == love.endOffset && beautiful.endOffset == 4)
+    #expect(abs((LyricEmphasis.estimatedPronunciation("beautiful")?.speech.reduce(0, +) ?? 0) - 3) < 0.000_001)
     let punctuatedTexts = ["love", ",…!!!", " ", "beautiful"]
     let punctuated = LyricLine(id: 0, text: punctuatedTexts.joined(), start: 0, end: 4)
     let schedule = LyricEmphasis.choices(texts: punctuatedTexts, line: punctuated, suppliedWordTiming: false, seed: 0)
     let first = try #require(schedule[0]?.window), last = try #require(schedule[3]?.window)
+    // However many marks, a punctuation run is one phrase break of two units.
     let gap = last.startOffset - first.endOffset
-    #expect(gap > 0 && gap <= 4 * 0.14 + 0.000_001)
+    #expect(abs(gap - 2 * first.endOffset) < 0.000_001)
     #expect(last.startOffset > first.endOffset)
     #expect(last.endOffset <= 4)
     let longLine = LyricLine(id: 0, text: punctuated.text, start: 0, end: 60)
     let longSchedule = LyricEmphasis.choices(texts: punctuatedTexts, line: longLine, suppliedWordTiming: false, seed: 0)
     let longFirst = try #require(longSchedule[0]?.window), longLast = try #require(longSchedule[3]?.window)
-    #expect(longLast.startOffset - longFirst.endOffset <= 0.9 + 0.000_001)
+    // An instrumental tail cannot stretch the break: the pace is capped.
+    #expect(abs(longLast.startOffset - longFirst.endOffset - 2 * longFirst.endOffset) < 0.000_001)
+    #expect(longFirst.endOffset <= 0.55)
 }
 
 @Test @MainActor func lyricEstimatedAccentsAccountForDigitsAndPreserveRepeatedWordPositions() throws {
     let numericTexts = ["light", " ", "2026", " ", "rain"]
     let numeric = LyricLine(id: 0, text: numericTexts.joined(), start: 2, end: 8)
     let numberSchedule = LyricEmphasis.choices(texts: numericTexts, line: numeric, suppliedWordTiming: false, seed: 1)
-    #expect(numberSchedule[0]?.window == .init(startOffset: 0, endOffset: 0.55))
-    #expect(numberSchedule[4]?.window == .init(startOffset: 2.75, endOffset: 6))
+    let light = try #require(numberSchedule[0]?.window), rain = try #require(numberSchedule[4]?.window)
+    let unit = light.endOffset
+    #expect(light.startOffset == 0 && unit > 0.2 && unit < 0.6)
+    // light = 1 and each digit of 2026 = 1: rain starts five units in.
+    #expect(abs(rain.startOffset - 5 * unit) < 0.000_001 && rain.endOffset == 6)
     let texts = ["night", " ", "night"]
     let line = LyricLine(id: 0, text: texts.joined(), start: 12, end: 18)
     for seed in 0..<30 {
@@ -433,8 +444,9 @@ import Testing
         #expect(Set(choices.keys) == Set([0, 2]))
         let earlierWindow = try #require(choices[0]?.window)
         let laterWindow = try #require(choices[2]?.window)
-        #expect(abs(earlierWindow.startOffset) < 0.000_001 && abs(earlierWindow.endOffset - 0.55) < 0.000_001)
-        #expect(abs(laterWindow.startOffset - 0.55) < 0.000_001 && abs(laterWindow.endOffset - 6) < 0.000_001)
+        let pace = earlierWindow.endOffset
+        #expect(abs(earlierWindow.startOffset) < 0.000_001 && pace > 0.2 && pace < 0.6)
+        #expect(abs(laterWindow.startOffset - pace) < 0.000_001 && abs(laterWindow.endOffset - 6) < 0.000_001)
         let later = try #require(choices[2])
         #expect(LyricEmphasis.state(choice: later, line: line, unitIndex: 2, position: 12.1) == nil)
         #expect(LyricEmphasis.state(choice: later, line: line, unitIndex: 2, position: 12.61) != nil)

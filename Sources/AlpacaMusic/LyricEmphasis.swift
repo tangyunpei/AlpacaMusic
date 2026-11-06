@@ -43,7 +43,7 @@ struct LyricAccentState: Equatable, Sendable {
 /// metadata, but neither is a claim that vocal stress has been recognized.
 /// Every envelope is reconstructed from playback position, never frame history.
 @MainActor enum LyricEmphasis {
-    private static let joining = Set<Character>("-'’‐‑")
+    private static let joining = Set<Character>("-'’‐‑ʼʻ")
     private static let englishFunctionWords: Set<String> = [
         "a", "an", "the", "and", "or", "but", "nor", "so", "yet", "if", "then", "than", "that", "this", "these", "those",
         "i", "me", "my", "mine", "we", "us", "our", "ours", "you", "your", "yours", "he", "him", "his", "she", "her", "hers", "it", "its", "they", "them", "their", "theirs",
@@ -371,38 +371,55 @@ struct LyricAccentState: Equatable, Sendable {
 
     /// Shared visual estimate used by both emphasis and gradual glyph reveal.
     /// These weights describe text only; they are never provider/audio timing.
-    static func estimatedPronunciation(_ text: String) -> (speech: [Double], pauses: [Double])? {
+    ///
+    /// Each grapheme is classified by its base scalar, so a variation selector
+    /// or combining mark never turns a symbol into a sung unit. `speech` is the
+    /// number of sung units, `pauses` a breath after the grapheme, and
+    /// `attached` marks a grapheme sung together with the unit before it (small
+    /// kana in きゃ, a voicing mark), which shares that unit's window.
+    static func estimatedPronunciation(_ text: String) -> (speech: [Double], pauses: [Double], attached: [Bool])? {
         guard text.utf8.count <= 16_384 else { return nil }
         let source = Array(text)
         guard !source.isEmpty, source.count <= 1_024 else { return nil }
         var speech = Array(repeating: 0.0, count: source.count)
         var pauses = Array(repeating: 0.0, count: source.count)
+        var attached = Array(repeating: false, count: source.count)
         var cursor = 0
         while cursor < source.count {
             let character = source[cursor]
-            if character.isWhitespace { cursor += 1 }
-            else if isCJK(character) {
+            let kind = script(character)
+            let previous = cursor > 0 ? script(source[cursor - 1]) : nil
+            switch kind {
+            case .space: cursor += 1
+            case .han, .kana, .hangul, .digit, .otherLetter:
                 speech[cursor] = 1; cursor += 1
-            } else if isLatinLetter(character) {
+            case .smallKana, .voicingMark:
+                // Sung with the kana before it; on its own it is a mora.
+                if previous == .kana || previous == .smallKana { attached[cursor] = true }
+                else if kind == .smallKana { speech[cursor] = 1 }
+                cursor += 1
+            case .prolonged:
+                // ー holds the previous vowel for a beat; a run of dashes after a
+                // symbol, as in Morse 「・・・ーーー・・・」, is not sung. At the start
+                // of a text (a provider word such as "ー、") it continues the word before.
+                let held = cursor == 0 || speech[cursor - 1] > 0 || attached[cursor - 1]
+                if held, previous != .space { speech[cursor] = 1 }
+                cursor += 1
+            case .latin, .greekCyrillic:
                 let beginning = cursor
                 cursor += 1
                 while cursor < source.count {
-                    if isLatinLetter(source[cursor]) { cursor += 1 }
+                    if script(source[cursor]) == kind { cursor += 1 }
                     else if joining.contains(source[cursor]), cursor + 1 < source.count,
-                            isLatinLetter(source[cursor + 1]) { cursor += 1 }
+                            script(source[cursor + 1]) == kind { cursor += 1 }
                     else { break }
                 }
                 let word = String(source[beginning..<cursor])
-                let letterCount = source[beginning..<cursor].filter(isLatinLetter).count
-                let weight = pronunciationSyllables(word) / Double(max(1, letterCount))
-                for index in beginning..<cursor where isLatinLetter(source[index]) { speech[index] = weight }
-            } else if character.unicodeScalars.allSatisfy({ CharacterSet.decimalDigits.contains($0) }) {
-                // Digits may be sung as a number or read separately. A digit
-                // unit is a bounded, language-neutral default for counters.
-                speech[cursor] = 1; cursor += 1
-            } else if character.unicodeScalars.contains(where: { CharacterSet.letters.contains($0) }) {
-                speech[cursor] = 1; cursor += 1
-            } else {
+                let letters = (beginning..<cursor).filter { script(source[$0]) == kind }
+                let syllables = kind == .latin ? pronunciationSyllables(word) : vowelGroups(word)
+                let weight = syllables / Double(max(1, letters.count))
+                for index in letters { speech[index] = weight }
+            case .other:
                 var pause = punctuationPause(character)
                 let beginning = cursor
                 cursor += 1
@@ -414,35 +431,124 @@ struct LyricAccentState: Equatable, Sendable {
                 if speech[..<beginning].contains(where: { $0 > 0 }) { pauses[cursor - 1] = pause }
             }
         }
-        return (speech, pauses)
+        return (speech, pauses, attached)
     }
 
-    private static func isCJK(_ character: Character) -> Bool {
-        character.unicodeScalars.contains {
-            (0x3400...0x4DBF).contains($0.value) || (0x4E00...0x9FFF).contains($0.value)
-                || (0x20000...0x323AF).contains($0.value) || (0xF900...0xFAFF).contains($0.value)
-                || (0x3040...0x30FF).contains($0.value) || (0xAC00...0xD7AF).contains($0.value)
+    /// Weights for a whole line-only cue. Measured against word-timed lyrics,
+    /// a kanji in a Japanese line lasts about 1.5 kana, and phrase breaks (a
+    /// punctuation run, or a space between two Chinese/Japanese phrases) take
+    /// about as long as two sung units. `breaks` holds those units at the last
+    /// grapheme before each break; `speech` and `attached` follow
+    /// estimatedPronunciation.
+    static func cadenceAllocation(_ text: String) -> (speech: [Double], breaks: [Double], attached: [Bool])? {
+        guard let allocation = estimatedPronunciation(text) else { return nil }
+        let source = Array(text), scripts = source.map(script)
+        var speech = allocation.speech
+        // Two kana make the line Japanese; a lone の in Chinese text does not.
+        if scripts.filter({ $0 == .kana }).count >= 2 {
+            for index in speech.indices where scripts[index] == .han && speech[index] > 0 { speech[index] = 1.5 }
+        }
+        var breaks = allocation.pauses.map { $0 > 0 ? LyricSingingTiming.phraseBreakUnits : 0 }
+        let phrase: Set<Script> = [.han, .kana, .smallKana, .voicingMark, .prolonged]
+        /// Sung graphemes in the run of Chinese/Japanese text next to `index`.
+        func sung(from index: Int, step: Int) -> Int {
+            var cursor = index, count = 0
+            while source.indices.contains(cursor), phrase.contains(scripts[cursor]) {
+                if speech[cursor] > 0 { count += 1 }
+                cursor += step
+            }
+            return count
+        }
+        var cursor = 0
+        while cursor < source.count {
+            guard scripts[cursor] == .space else { cursor += 1; continue }
+            let beginning = cursor
+            while cursor < source.count, scripts[cursor] == .space { cursor += 1 }
+            // A space between two phrases of at least two syllables is a breath;
+            // text that spaces out every character is not.
+            guard beginning > 0, cursor < source.count,
+                  phrase.contains(scripts[beginning - 1]), phrase.contains(scripts[cursor]),
+                  sung(from: beginning - 1, step: -1) >= 2, sung(from: cursor, step: 1) >= 2 else { continue }
+            breaks[cursor - 1] = max(breaks[cursor - 1], LyricSingingTiming.phraseBreakUnits)
+        }
+        return (speech, breaks, allocation.attached)
+    }
+
+    private enum Script: Equatable {
+        case space, han, kana, smallKana, voicingMark, prolonged, hangul, latin, greekCyrillic, digit, otherLetter, other
+    }
+
+    private static func script(_ character: Character) -> Script {
+        if character.isWhitespace { return .space }
+        guard let base = character.unicodeScalars.first else { return .other }
+        let value = base.value
+        switch value {
+        case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0x20000...0x323AF, 0xF900...0xFAFF, 0x3005...0x3007:
+            return .han
+        case 0x3041, 0x3043, 0x3045, 0x3047, 0x3049, 0x3083, 0x3085, 0x3087, 0x308E, 0x3095, 0x3096,
+             0x30A1, 0x30A3, 0x30A5, 0x30A7, 0x30A9, 0x30E3, 0x30E5, 0x30E7, 0x30EE, 0x30F5, 0x30F6,
+             0x31F0...0x31FF, 0xFF67...0xFF6E:
+            return .smallKana
+        case 0x3042...0x3094, 0x309D...0x309F, 0x30A2...0x30FA, 0x30FD...0x30FF, 0xFF66, 0xFF6F, 0xFF71...0xFF9D:
+            return .kana
+        case 0x309B, 0x309C, 0xFF9E, 0xFF9F: return .voicingMark
+        case 0x30FC, 0xFF70: return .prolonged
+        case 0xAC00...0xD7AF, 0x1100...0x11FF, 0xA960...0xA97F, 0xD7B0...0xD7FF: return .hangul
+        default: break
+        }
+        // Fullwidth digits are Nd too; a keycap (1️⃣) keeps its digit base.
+        if CharacterSet.decimalDigits.contains(base) { return .digit }
+        // Emoji shown with a variation selector (ℹ️), modifier letters (ʼ ʻ ˈ)
+        // and letterlike symbols (™ ℃) are not sung, whatever their category.
+        if character.unicodeScalars.contains(where: { $0.value == 0xFE0F })
+            || (0x02B0...0x02FF).contains(value) || (0x2100...0x214F).contains(value) { return .other }
+        guard base.properties.isAlphabetic, CharacterSet.letters.contains(base),
+              !CharacterSet.nonBaseCharacters.contains(base) else { return .other }
+        switch value {
+        case 0x0000..<0x0250, 0x1E00...0x1EFF, 0x2C60...0x2C7F, 0xA720...0xA7FF, 0xFF21...0xFF3A, 0xFF41...0xFF5A:
+            return .latin
+        case 0x0370...0x03FF, 0x1F00...0x1FFF, 0x0400...0x052F: return .greekCyrillic
+        // Standalone compatibility jamo (ㅠㅠ, ㅋㅋ) are not sung syllables.
+        case 0x3131...0x318E: return .other
+        default: return .otherLetter
         }
     }
-    private static func isLatinLetter(_ character: Character) -> Bool {
-        character.unicodeScalars.contains { $0.value < 0x0250 && CharacterSet.letters.contains($0) }
-            && character.unicodeScalars.allSatisfy {
-                ($0.value < 0x0250 && CharacterSet.letters.contains($0)) || CharacterSet.nonBaseCharacters.contains($0)
-            }
+
+    /// Greek and Cyrillic syllables. Every Cyrillic vowel letter is a syllable
+    /// of its own (мо-я, ра-йон), so only case is folded and й stays a
+    /// consonant; Greek vowel digraphs (ου, αι) count once.
+    private static func vowelGroups(_ text: String) -> Double {
+        let lowered = text.lowercased()
+        let cyrillic = Set<Character>("аеёиоуыэюяіїє")
+        if lowered.unicodeScalars.contains(where: { (0x0400...0x052F).contains($0.value) }) {
+            return Double(min(12, max(1, lowered.filter { cyrillic.contains($0) }.count)))
+        }
+        let folded = lowered.folding(options: [.diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        let vowels = Set<Character>("αεηιουω")
+        var count = 0, previousVowel = false
+        for character in folded where character.isLetter {
+            let vowel = vowels.contains(character)
+            if vowel, !previousVowel { count += 1 }
+            previousVowel = vowel
+        }
+        return Double(min(12, max(1, count)))
     }
+    private static let syllableExceptions: [String: Double] = [
+        "every": 2, "hour": 1, "our": 1, "quiet": 2, "beautiful": 3,
+        "people": 2, "business": 2, "one": 1, "once": 1, "eyes": 1,
+        "ocean": 2, "heaven": 2, "evening": 2
+    ]
+    private static let englishVowels = Set<Character>("aeiouy")
     private static func pronunciationSyllables(_ text: String) -> Double {
-        let letters = text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        // Width folding reads fullwidth ＬＯＶＥ as LOVE, not as an acronym.
+        let letters = text.folding(options: [.diacriticInsensitive, .caseInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .filter { $0.isLetter }
         guard !letters.isEmpty else { return 0 }
-        let exceptions: [String: Double] = [
-            "every": 2, "hour": 1, "our": 1, "quiet": 2, "beautiful": 3,
-            "people": 2, "business": 2, "one": 1, "once": 1, "eyes": 1,
-            "ocean": 2, "heaven": 2, "evening": 2
-        ]
-        if let count = exceptions[letters] { return count }
-        let vowels = Set<Character>("aeiouy")
+        if let count = syllableExceptions[letters] { return count }
+        let vowels = englishVowels
         let characters = Array(letters)
-        if text == text.uppercased(), text != text.lowercased(), characters.count <= 6,
+        let narrow = text.folding(options: [.widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        if narrow == narrow.uppercased(), narrow != narrow.lowercased(), characters.count <= 6,
            !characters.contains(where: { vowels.contains($0) }) { return Double(characters.count) }
         var count = 0
         for index in characters.indices where vowels.contains(characters[index]) {
