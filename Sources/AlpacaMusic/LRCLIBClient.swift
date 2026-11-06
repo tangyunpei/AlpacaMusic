@@ -186,7 +186,8 @@ actor LRCLIBClient {
         if compatible.count != 1 || values.count >= 20 { return .ambiguous }
         return .found(compatible[0])
     }
-    private static func hasEditionMarker(_ value: String) -> Bool {
+    /// Shared with platform lyric matching: a live, remix or other edition label.
+    static func hasEditionMarker(_ value: String) -> Bool {
         let pattern = #"\b(live|remix|acoustic|instrumental|karaoke|remaster(?:ed)?|demo|radio\s+edit|extended|sped\s+up|slowed|re-?recorded|mono|stereo)\b|现场|演唱会|混音|伴奏|纯音乐|不插电|重制|重录|加速|慢速"#
         return value.range(of: pattern, options: .regularExpression) != nil
     }
@@ -201,7 +202,8 @@ actor LRCLIBClient {
         }
         return values
     }
-    private static func normalized(_ value: String) -> String {
+    /// Case-, width- and script-folded metadata, also used for platform matching.
+    static func normalized(_ value: String) -> String {
         let folded = value.precomposedStringWithCanonicalMapping.folding(options: [.caseInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
         let simplified = folded.applyingTransform(.init("Hant-Hans"), reverse: false) ?? folded
         return simplified.split(whereSeparator: \.isWhitespace).joined(separator: " ")

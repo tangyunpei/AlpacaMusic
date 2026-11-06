@@ -108,7 +108,7 @@ struct LyricAccentState: Equatable, Sendable {
 
     /// The last cue may legitimately have no end. Its supplied word onsets
     /// remain usable, with a bounded window for conservative visual cleanup.
-    static func hasUsableWordTiming(_ line: LyricLine) -> Bool {
+    nonisolated static func hasUsableWordTiming(_ line: LyricLine) -> Bool {
         guard let start = line.start, start.isFinite, start >= 0,
               !line.words.isEmpty, line.words.count <= 48,
               removingWhitespace(line.words.map(\.text).joined()) == removingWhitespace(line.text) else { return false }
@@ -477,7 +477,7 @@ struct LyricAccentState: Equatable, Sendable {
             return !englishFunctionWords.contains(lexical) && !chineseFunctionWords.contains(lexical)
         }
     }
-    private static func removingWhitespace(_ text: String) -> String { String(text.filter { !$0.isWhitespace }) }
+    nonisolated private static func removingWhitespace(_ text: String) -> String { String(text.filter { !$0.isWhitespace }) }
     private static func isLatinWordEdge(_ character: Character) -> Bool {
         character.unicodeScalars.contains { $0.value < 0x0250 && CharacterSet.alphanumerics.contains($0) }
             && character.unicodeScalars.allSatisfy {

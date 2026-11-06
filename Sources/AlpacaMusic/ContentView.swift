@@ -504,6 +504,8 @@ private struct ImmersiveChrome: View {
                     Button(L10n.string("导入本地歌词…")) { model.beginLyricsImport() }
                     Button(L10n.string("在 LRCLIB 查找歌词")) { lookupLyrics() }.disabled(model.player.current == nil)
                     Toggle(L10n.string("自动匹配 Apple Music 歌词（LRCLIB）"), isOn: $model.automaticAppleMusicLyrics)
+                    Toggle(L10n.string("Apple Music 使用网易云/QQ 逐字时间"), isOn: $model.appleMusicPlatformWordLyrics)
+                        .help(L10n.string("已登录网易云音乐或 QQ 音乐时，按歌名、歌手和时长查找同一录音的逐字歌词；找不到时使用 LRCLIB。"))
                     Toggle(L10n.string("后台音频字幕对齐"), isOn: $model.automaticLyricAudioAlignment)
                         .help(L10n.string("在本机提前分析人声；首次可能下载语言模型。只缓存时间，不保存音频。"))
                     Text(model.lyrics.audioAlignmentStatus.description).font(.caption)

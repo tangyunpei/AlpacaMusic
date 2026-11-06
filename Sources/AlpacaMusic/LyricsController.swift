@@ -186,6 +186,8 @@ actor LyricsStorage {
     private(set) var status: LyricsStatus = .idle
     private(set) var error: String?
     private(set) var automaticAppleMusicLookup: Bool
+    /// Word timing for Apple Music songs from a signed-in NetEase or QQ account.
+    private(set) var platformWordLyrics: Bool
     private(set) var automaticAudioAlignment: Bool
     private(set) var audioAlignmentStatus: LyricAudioAlignmentStatus = .waitingAudio
     @ObservationIgnored private let alignmentCache: LyricAlignmentCache
@@ -202,20 +204,32 @@ actor LyricsStorage {
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var current: Track?
     @ObservationIgnored private var manualDocument = false
+    /// The current Apple Music lyrics came from automatic matching, so a
+    /// NetEase or QQ sign-in change can replace them.
+    @ObservationIgnored private var followsPlatformAccounts = false
+    @ObservationIgnored private var platformWordCache: [CacheKey: LyricDocument] = [:]
+    @ObservationIgnored private var platformWordMisses: Set<CacheKey> = []
+    @ObservationIgnored private let platformLookupDeadline: Duration
     @ObservationIgnored private var request: Task<LoadResult, Error>?
     @ObservationIgnored private var accountObserver: Task<Void, Never>?
     @ObservationIgnored private var cache: [CacheKey: LyricDocument] = [:]
     @ObservationIgnored private var publicSodaCache: [String: LyricDocument] = [:]
     private struct CacheKey: Hashable { let track: String; let scope: LyricsSessionScope }
-    private struct LoadResult { var document: LyricDocument?; var manual = false; var explanation: String? = nil }
+    private struct LoadResult {
+        var document: LyricDocument?; var manual = false; var explanation: String? = nil
+        var followsPlatformAccounts = false
+    }
 
-    init(client: NativeMusicClient, directory: URL? = nil, online: LRCLIBClient = LRCLIBClient(), automaticAppleMusicLookup: Bool = true, automaticAudioAlignment: Bool = true,
+    init(client: NativeMusicClient, directory: URL? = nil, online: LRCLIBClient = LRCLIBClient(), automaticAppleMusicLookup: Bool = true,
+         platformWordLyrics: Bool = true, platformLookupDeadline: Duration = .seconds(6), automaticAudioAlignment: Bool = true,
          alignmentOperation: @escaping LyricAlignmentRunner.Operation = { source, track, document, cache, position, progress, publish in
              await LyricAlignmentRunner.run(source: source, track: track, document: document, cache: cache, position: position, progress: progress, publish: publish)
          }) {
         self.client = client
         self.online = online
         self.automaticAppleMusicLookup = automaticAppleMusicLookup
+        self.platformWordLyrics = platformWordLyrics
+        self.platformLookupDeadline = platformLookupDeadline
         self.automaticAudioAlignment = automaticAudioAlignment
         self.alignmentOperation = alignmentOperation
         audioAlignmentStatus = automaticAudioAlignment ? .waitingAudio : .off
@@ -302,13 +316,17 @@ actor LyricsStorage {
         automaticAppleMusicLookup = enabled
         if let current, current.source == .appleMusic { await load(track: current) }
     }
+    func setPlatformWordLyrics(_ enabled: Bool) async {
+        platformWordLyrics = enabled
+        if let current, current.source == .appleMusic, followsPlatformAccounts || request != nil { await load(track: current) }
+    }
 
     func load(track: Track?) async {
         generation = UUID(); let token = generation
         request?.cancel(); request = nil
         cancelAlignment(); originalDocument = nil
         audioAlignmentStatus = automaticAudioAlignment ? .waitingAudio : .off
-        current = track; document = nil; manualDocument = false; error = nil
+        current = track; document = nil; manualDocument = false; followsPlatformAccounts = false; error = nil
         guard let track else { status = .idle; return }
         status = .loading
         let pending = Task { try await self.read(track) }
@@ -318,6 +336,7 @@ actor LyricsStorage {
             try Task.checkCancellation()
             guard generation == token else { return }
             installedDocument(result.document); manualDocument = result.manual
+            followsPlatformAccounts = result.followsPlatformAccounts
             status = result.document == nil ? .unavailable : .ready
             error = result.explanation
         } catch is CancellationError {
@@ -334,7 +353,7 @@ actor LyricsStorage {
         guard current.map({ LyricsIdentity.key(for: $0) }) == LyricsIdentity.key(for: track) else { return }
         generation = UUID(); let token = generation
         request?.cancel(); request = nil
-        document = nil; manualDocument = false; status = .loading; error = nil
+        document = nil; manualDocument = false; followsPlatformAccounts = false; status = .loading; error = nil
         cancelAlignment(); originalDocument = nil
         let pending = Task { [online, storage] in
             let value = try await online.lookup(track)
@@ -362,7 +381,7 @@ actor LyricsStorage {
         try Task.checkCancellation()
         guard current.map({ LyricsIdentity.key(for: $0) }) == LyricsIdentity.key(for: track) else { return }
         generation = UUID(); request?.cancel(); request = nil
-        installedDocument(imported); status = .ready; error = nil; manualDocument = true
+        installedDocument(imported); status = .ready; error = nil; manualDocument = true; followsPlatformAccounts = false
     }
     func activeIndex(at seconds: Double) -> Int? { document?.activeIndex(at: seconds) }
 
@@ -371,7 +390,14 @@ actor LyricsStorage {
         try Task.checkCancellation()
         if let value = try await storage.sidecar(for: track) { return .init(document: value, manual: true) }
         try Task.checkCancellation()
-        if let value = await storage.cachedOnline(for: track) { return .init(document: value, manual: true) }
+        let automatic = track.source == .appleMusic
+        if automatic, let value = await platformWordDocument(for: track) {
+            return .init(document: value, followsPlatformAccounts: true)
+        }
+        try Task.checkCancellation()
+        if let value = await storage.cachedOnline(for: track) {
+            return .init(document: value, manual: true, followsPlatformAccounts: automatic)
+        }
         if track.source == .appleMusic, automaticAppleMusicLookup {
             guard !track.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -382,7 +408,8 @@ actor LyricsStorage {
             if let value { try? await storage.cacheOnline(value, for: track) }
             try Task.checkCancellation()
             return .init(document: value, manual: true, explanation: value == nil
-                ? L10n.string("LRCLIB 未找到与这首歌的歌名、歌手和时长匹配的歌词。可重新查找或导入歌词文件。") : nil)
+                ? L10n.string("LRCLIB 未找到与这首歌的歌名、歌手和时长匹配的歌词。可重新查找或导入歌词文件。") : nil,
+                followsPlatformAccounts: true)
         }
         if track.source == .soda {
             guard track.sodaPlayback != nil else {
@@ -406,7 +433,7 @@ actor LyricsStorage {
         guard DirectMusicAccess.sources.contains(track.source) else {
             if track.source == .spotify { return .init(document: nil, explanation: L10n.string("Spotify 接口不提供歌词，可在 LRCLIB 查找或导入歌词文件。")) }
             let explanation = track.source == .appleMusic ? L10n.string("Apple Music 自动查词已关闭，可在线查找或导入歌词文件。") : L10n.string("没有找到同名歌词文件，可手动导入 LRC、SRT 或 TXT 歌词。")
-            return .init(document: nil, explanation: explanation)
+            return .init(document: nil, explanation: explanation, followsPlatformAccounts: automatic)
         }
         let scope = try await client.lyricsScope(for: track.source)
         let key = CacheKey(track: LyricsIdentity.key(for: track), scope: scope)
@@ -422,14 +449,51 @@ actor LyricsStorage {
         cache[key] = value
         return .init(document: value)
     }
+    /// Measured word timing for an Apple Music song from the same recording on
+    /// a signed-in platform. Results stay in memory for that session only, like
+    /// other signed-in lyrics; every failure quietly falls back to LRCLIB.
+    private func platformWordDocument(for track: Track) async -> LyricDocument? {
+        guard platformWordLyrics, PlatformLyricMatch.canSearch(track) else { return nil }
+        let connected = await client.connectedSources()
+        let trackKey = LyricsIdentity.key(for: track)
+        // One time budget for all platforms, so LRCLIB is never held back long.
+        let clock = ContinuousClock(), ends = clock.now.advanced(by: platformLookupDeadline)
+        for source in PlatformLyricMatch.sources where connected.contains(source) {
+            guard !Task.isCancelled, let scope = try? await client.lyricsScope(for: source) else { continue }
+            let key = CacheKey(track: trackKey, scope: scope)
+            if let value = platformWordCache[key] { return value }
+            if platformWordMisses.contains(key) { continue }
+            let remaining = clock.now.duration(to: ends)
+            guard remaining > .zero else { return nil }
+            let outcome = await PlatformLyricMatch.lookup(track, scope: scope, client: client, deadline: remaining)
+            guard !Task.isCancelled else { return nil }
+            switch outcome {
+            case .found(let value):
+                if platformWordCache.count >= 32 { platformWordCache.removeAll(keepingCapacity: true) }
+                platformWordCache[key] = value
+                return value
+            case .missing:
+                if platformWordMisses.count >= 256 { platformWordMisses.removeAll(keepingCapacity: true) }
+                platformWordMisses.insert(key)
+            case .failed: continue
+            }
+        }
+        return nil
+    }
     private func accountChanged(_ source: MusicSource) {
         cache = cache.filter { $0.key.scope.source != source }
+        platformWordCache = platformWordCache.filter { $0.key.scope.source != source }
+        platformWordMisses = platformWordMisses.filter { $0.scope.source != source }
         if source == .soda { publicSodaCache.removeAll(keepingCapacity: true) }
         if current?.source == source {
             audioSource = nil; cancelAlignment(); document = originalDocument
             audioAlignmentStatus = automaticAudioAlignment ? .waitingAudio : .off
         }
-        guard let track = current, track.source == source, !manualDocument else { return }
+        // Signing in may add word timing to an Apple Music song; signing out
+        // must drop lyrics read with that account.
+        let platformChange = PlatformLyricMatch.sources.contains(source) && current?.source == .appleMusic
+            && platformWordLyrics && (followsPlatformAccounts || request != nil)
+        guard let track = current, platformChange || (track.source == source && !manualDocument) else { return }
         generation = UUID(); let token = generation
         request?.cancel(); request = nil
         document = nil; status = .loading; error = nil
