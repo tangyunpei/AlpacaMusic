@@ -1,9 +1,8 @@
 #!/bin/zsh
-# Runs every check before a pull request, on this Mac: build script tests,
+# Runs every check before a merge, on this Mac: build script tests,
 # translations, the full Swift suite, compiler-extracted translations and the
-# SDK API audit. GitHub only runs the quick build script tests on pull
-# requests; the macOS checks run here (or by hand with the CI workflow's
-# "Run workflow" button). Requires Swift 6.4+ and the macOS 27 SDK.
+# SDK API audit. GitHub runs no CI, so this is the only check a branch gets.
+# Requires Swift 6.4+ and the macOS 27 SDK.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

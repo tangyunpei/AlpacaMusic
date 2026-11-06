@@ -80,7 +80,7 @@ Each successful release build increments the third component of `CFBundleShortVe
 
 ### Verification
 
-Run `./scripts/check-all.sh` before opening a pull request. It runs the build script tests, translation checks, the full Swift suite and the SDK API audit on your Mac; GitHub only runs the quick build script tests on pull requests. See [API compatibility](docs/api-compatibility.md) and [verification records](docs/verification.md) for scope and limitations. The historical `prototype/point-cloud-mode.html` is a design reference and is not loaded by the native app.
+Run `./scripts/check-all.sh` before opening a pull request. It runs the build script tests, translation checks, the full Swift suite and the SDK API audit on your Mac. GitHub runs no CI, so this script is the only check before a merge, including for pull requests from others. See [API compatibility](docs/api-compatibility.md) and [verification records](docs/verification.md) for scope and limitations. The historical `prototype/point-cloud-mode.html` is a design reference and is not loaded by the native app.
 
 ### License
 
@@ -184,7 +184,7 @@ open build/AlpacaMusic.app
 
 ### 验证
 
-提交 PR 前运行 `./scripts/check-all.sh`，在本机完成构建脚本测试、翻译检查、完整 Swift 测试和 SDK API 审计；GitHub 在 PR 上只运行快速的构建脚本测试。检查范围与限制见 [API 兼容性](docs/api-compatibility.md)和[验证记录](docs/verification.md)。`prototype/point-cloud-mode.html` 仅作历史设计参考，不由原生应用加载。
+提交 PR 前运行 `./scripts/check-all.sh`，在本机完成构建脚本测试、翻译检查、完整 Swift 测试和 SDK API 审计。GitHub 不运行 CI，因此合并任何 PR（包括他人提交的 PR）前，这个脚本是唯一的检查。检查范围与限制见 [API 兼容性](docs/api-compatibility.md)和[验证记录](docs/verification.md)。`prototype/point-cloud-mode.html` 仅作历史设计参考，不由原生应用加载。
 
 ### 开源许可
 

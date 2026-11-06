@@ -154,7 +154,7 @@ private final class AudioHTTPFixture: @unchecked Sendable {
     }
 }
 
-/// Real AVPlayer playback. On a loaded CI runner these tests take 20-40 s
+/// Real AVPlayer playback. On a loaded machine these tests take 20-40 s
 /// and the player can need several seconds to start, so each wait allows up
 /// to 20 s and returns as soon as its condition holds. The analysis waits run
 /// the analyzer themselves: they depend on AVPlayer and its audio tap, not on
