@@ -157,6 +157,112 @@ struct NeteaseDirectProvider: DirectMusicProvider {
         }
     }
 
+    /// One request. Charts are playlists; links to web pages (`H5`, id 0) and
+    /// charts repeated across groups are left out, in the platform's order.
+    func charts(cookies: [MusicSessionCookie]) async throws -> [BrowseCollection] {
+        let route = "toplist/detail/v2"
+        let response: NEChartsResponse = try await request(route, payload: [:], cookies: cookies)
+        var result: [BrowseCollection] = [], seen = Set<String>()
+        for chart in response.data.compactMap(\.value).flatMap({ $0.list?.compactMap(\.value) ?? [] }) where result.count < 30 {
+            guard chart.targetType == "PLAYLIST", let id = chart.id, isValidID(id), seen.insert(id).inserted else { continue }
+            result.append(BrowseCollection(source: .netease, kind: .chart, remoteID: id,
+                title: chart.name?.nonempty ?? L10n.string("未命名歌单"), caption: chart.updateFrequency ?? "",
+                artworkURL: Self.coverURL(chart.coverUrl), preview: chart.preview))
+        }
+        // NetEase always lists charts; none readable means the format moved.
+        guard !result.isEmpty else {
+            throw MusicError.message(L10n.string("网易云响应格式已变化（阶段：\(Self.phase(for: route))；接口码：200），请稍后重试"))
+        }
+        return result
+    }
+
+    /// Recommended playlists and the daily songs load together. Either half
+    /// may fail alone; only both failing is an error, and it is the playlists'.
+    func recommendations(cookies: [MusicSessionCookie]) async throws -> BrowseRecommendations {
+        async let playlists = Self.outcome { try await recommendedPlaylists(cookies: cookies) }
+        async let songs = Self.outcome { try await dailySongs(cookies: cookies) }
+        let (lists, picks) = await (playlists, songs)
+        // A cancelled half never turns into a partial result.
+        if case .failure(let error) = lists, error is CancellationError { throw CancellationError() }
+        if case .failure(let error) = picks, error is CancellationError { throw CancellationError() }
+        try Task.checkCancellation()
+        if case .failure(let error) = lists, case .failure = picks { throw error }
+        // A half that failed is reported, so the page says so and asks again
+        // after the usual retry delay instead of keeping the gap for hours.
+        var partial: String?
+        if case .failure(let error) = lists { partial = error.localizedDescription }
+        if case .failure(let error) = picks { partial = error.localizedDescription }
+        return BrowseRecommendations(collections: (try? lists.get()) ?? [], songs: (try? picks.get()) ?? [], partialError: partial)
+    }
+
+    private func recommendedPlaylists(cookies: [MusicSessionCookie]) async throws -> [BrowseCollection] {
+        let response: NEPersonalizedResponse = try await request("personalized/playlist", payload: Self.recommendedPlaylistsPayload(), cookies: cookies)
+        var seen = Set<String>()
+        return response.result.compactMap(\.value).compactMap { item in
+            guard isValidID(item.id), seen.insert(item.id).inserted else { return nil }
+            return BrowseCollection(source: .netease, kind: .playlist, remoteID: item.id,
+                title: item.name?.nonempty ?? L10n.string("未命名歌单"), caption: item.copywriter ?? "",
+                artworkURL: Self.coverURL(item.picUrl), trackCount: item.trackCount.flatMap { $0 >= 0 ? $0 : nil })
+        }
+    }
+
+    private func dailySongs(cookies: [MusicSessionCookie]) async throws -> [Track] {
+        let response: NEDailySongsResponse = try await request("v3/discovery/recommend/songs", payload: [:], cookies: cookies)
+        return browseTracks(response.data.songs, privileges: response.data.privileges, limit: .max)
+    }
+
+    /// One `v6/playlist/detail` request asks for only the first `limit` songs.
+    /// The import path above stays separate: it must read every song.
+    func tracks(in collection: BrowseCollection, limit: Int, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        guard collection.source == .netease, [.chart, .playlist].contains(collection.kind) else {
+            throw MusicError.message(L10n.string("该歌单不是网易云歌单"))
+        }
+        try requireID(collection.remoteID)
+        // Each song row is about 2.5 KB; this keeps a reply far below 8 MB.
+        let limit = min(limit, 1000)
+        guard limit > 0 else { return [] }
+        let response: NEPlaylistTracksResponse = try await request("v6/playlist/detail", payload: Self.collectionTracksPayload(id: collection.remoteID, limit: limit), cookies: cookies)
+        guard let detail = response.playlist else { throw MusicError.message(L10n.string("无法读取网易云歌单，请检查登录状态或歌单权限")) }
+        var seen = Set<String>()
+        let wanted = Array(detail.trackIds.filter { isValidID($0) && seen.insert($0).inserted }.prefix(limit))
+        let present = Set(detail.tracks.map(\.id.value))
+        let missing = wanted.filter { !present.contains($0) }
+        // The id list is complete, but NetEase can send fewer song rows (it
+        // does for signed-out reads): one batch fills only the missing ones.
+        guard !missing.isEmpty else { return browseTracks(detail.tracks, privileges: response.privileges, limit: limit) }
+        let extra: NESongRows = try await request("v3/song/detail", payload: try Self.songDetailPayload(missing), cookies: cookies)
+        let byID = Dictionary((detail.tracks + extra.songs).map { ($0.id.value, $0) }, uniquingKeysWith: { first, _ in first })
+        return browseTracks(wanted.compactMap { byID[$0] }, privileges: response.privileges + extra.privileges, limit: limit)
+    }
+
+    /// Request bodies of the Now page's lists, before `requestPayload` adds the CSRF token.
+    static func recommendedPlaylistsPayload() -> [String: Any] { ["limit": 12, "total": true, "n": 1000] }
+    static func collectionTracksPayload(id: String, limit: Int) -> [String: Any] { ["id": id, "n": limit, "s": 0] }
+    static func songDetailPayload(_ ids: [String]) throws -> [String: Any] {
+        let c = try JSONSerialization.data(withJSONObject: ids.map { ["id": $0] }, options: [.sortedKeys])
+        return ["c": String(decoding: c, as: UTF8.self)]
+    }
+
+    /// A song is unavailable when its row says so, or when its privilege marks
+    /// it grey (negative `st`) and grants no play level. Real rows always carry
+    /// `st: 0`, so the privilege is what usually decides.
+    private func browseTracks(_ songs: [NESong], privileges: [NEPrivilege], limit: Int) -> [Track] {
+        let rights = Dictionary(privileges.map { ($0.id.value, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [Track] = [], seen = Set<String>()
+        for song in songs where result.count < limit {
+            guard isValidID(song.id.value), seen.insert(song.id.value).inserted else { continue }
+            var track = song.track
+            let right = song.privilege ?? rights[song.id.value]
+            if (song.st ?? 0) < 0 || ((right?.st ?? 0) < 0 && (right?.pl ?? 0) <= 0) { track.unavailable = true }
+            result.append(track)
+        }
+        return result
+    }
+
+    private static func outcome<T: Sendable>(_ operation: () async throws -> T) async -> Result<T, any Error> {
+        do { return .success(try await operation()) } catch { return .failure(error) }
+    }
+
     func resolve(_ track: Track, cookies: [MusicSessionCookie]) async throws -> URL {
         guard track.source == .netease, let id = track.sourceID else { throw MusicError.message(L10n.string("歌曲缺少网易云标识")) }
         try requireID(id)
@@ -241,6 +347,7 @@ struct NeteaseDirectProvider: DirectMusicProvider {
             throw MusicError.message(L10n.string("网易云资源标识无效"))
         }
     }
+    private func isValidID(_ id: String) -> Bool { (try? requireID(id)) != nil }
     private func request<T: Decodable>(_ route: String, payload: [String: Any], cookies: [MusicSessionCookie], phase: String? = nil, timeout: TimeInterval = 15) async throws -> T {
         try Task.checkCancellation()
         let phase = phase ?? Self.phase(for: route)
@@ -297,12 +404,27 @@ struct NeteaseDirectProvider: DirectMusicProvider {
         case "v6/playlist/detail": L10n.string("读取歌单曲目")
         case "v3/song/detail": L10n.string("读取歌曲资料")
         case "song/enhance/player/url/v1": L10n.string("获取播放地址")
+        case "toplist/detail/v2": L10n.string("读取榜单")
+        case "personalized/playlist": L10n.string("读取推荐歌单")
+        case "v3/discovery/recommend/songs": L10n.string("读取每日推荐")
         default: L10n.string("读取平台数据")
         }
     }
     private static func artworkURL(_ value: String?) -> URL? {
         guard let value, let url = URL(string: value), ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.user == nil, url.password == nil else { return nil }
         return url
+    }
+    /// Covers on NetEase's image hosts load over HTTPS as 300-pixel thumbnails.
+    /// Any other address, or one already carrying a query, stays as sent.
+    private static func coverURL(_ value: String?) -> URL? {
+        guard let url = artworkURL(value?.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        guard let host = url.host?.lowercased(), host == "music.126.net" || host.hasSuffix(".music.126.net"),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              [nil, 80, 443].contains(components.port) else { return url }
+        components.scheme = "https"
+        components.port = nil
+        if (components.percentEncodedQuery ?? "").isEmpty, components.fragment == nil { components.percentEncodedQuery = "param=300y300" }
+        return components.url ?? url
     }
     private static func mediaURL(_ value: String) -> URL? {
         guard let url = URL(string: value), ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
@@ -424,6 +546,92 @@ private struct NEURLsResponse: Decodable {
                 trial = .unknown
             }
         }
+    }
+}
+/// One list element that may be unreadable; the rest of the list still decodes.
+private struct NELossy<Value: Decodable>: Decodable {
+    let value: Value?
+    init(from decoder: any Decoder) throws { value = try? Value(from: decoder) }
+}
+private extension KeyedDecodingContainer {
+    /// The readable elements of an optional list. A missing or odd list is nil.
+    func readable<T: Decodable>(_ type: T.Type, forKey key: Key) -> [T]? {
+        (try? decodeIfPresent([NELossy<T>].self, forKey: key))?.compactMap(\.value)
+    }
+    func text(_ key: Key) -> String? {
+        (try? decodeIfPresent(String.self, forKey: key))?.trimmingCharacters(in: .whitespacesAndNewlines).nonempty
+    }
+}
+/// `toplist/detail/v2`. The v1 routes repeat `updateFrequency` and `tracks`
+/// in every item, and Foundation keeps the first copy, which is null.
+private struct NEChartsResponse: Decodable {
+    var data: [NELossy<Group>]
+    struct Group: Decodable { var list: [NELossy<NEChart>]? }
+}
+private struct NEChart: Decodable {
+    var id: String?; var targetType: String?; var name: String?; var updateFrequency: String?; var coverUrl: String?
+    var preview: [BrowsePreviewLine]
+    private enum CodingKeys: String, CodingKey { case id, targetType, name, updateFrequency, coverUrl, tracks, trackRankList }
+    private struct Line: Decodable { var first: String?; var second: String? }
+    private struct Rank: Decodable { var songName: String?; var artistName: String? }
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? container.decodeIfPresent(NEID.self, forKey: .id))?.value
+        targetType = container.text(.targetType); name = container.text(.name)
+        updateFrequency = container.text(.updateFrequency); coverUrl = container.text(.coverUrl)
+        let lines = Self.preview((container.readable(Line.self, forKey: .tracks) ?? []).map { ($0.first, $0.second) })
+        preview = lines.isEmpty ? Self.preview((container.readable(Rank.self, forKey: .trackRankList) ?? []).map { ($0.songName, $0.artistName) }) : lines
+    }
+    private static func preview(_ rows: [(String?, String?)]) -> [BrowsePreviewLine] {
+        Array(rows.compactMap { title, artist in
+            (title?.trimmingCharacters(in: .whitespacesAndNewlines).nonempty).map {
+                BrowsePreviewLine(title: $0, artist: artist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+            }
+        }.prefix(3))
+    }
+}
+private struct NEPersonalizedResponse: Decodable {
+    var result: [NELossy<Item>]
+    struct Item: Decodable {
+        var id: String; var name: String?; var copywriter: String?; var picUrl: String?; var trackCount: Int?
+        private enum CodingKeys: String, CodingKey { case id, name, copywriter, picUrl, trackCount }
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(NEID.self, forKey: .id).value
+            name = container.text(.name); copywriter = container.text(.copywriter); picUrl = container.text(.picUrl)
+            trackCount = try? container.decodeIfPresent(Int.self, forKey: .trackCount)
+        }
+    }
+}
+/// Song rows with the account's rights for them: `v3/song/detail` calls the
+/// list `songs`, the daily recommendation `dailySongs`. Odd rows are skipped.
+private struct NESongRows: Decodable {
+    var songs: [NESong]; var privileges: [NEPrivilege]
+    private enum CodingKeys: String, CodingKey { case songs, dailySongs, privileges }
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        songs = try container.decode([NELossy<NESong>].self, forKey: container.contains(.dailySongs) ? .dailySongs : .songs).compactMap(\.value)
+        privileges = container.readable(NEPrivilege.self, forKey: .privileges) ?? []
+    }
+}
+private struct NEDailySongsResponse: Decodable { var data: NESongRows }
+/// `v6/playlist/detail` read for browsing: rights sit beside the playlist.
+private struct NEPlaylistTracksResponse: Decodable {
+    var playlist: Playlist?; var privileges: [NEPrivilege]
+    private enum CodingKeys: String, CodingKey { case playlist, privileges }
+    struct Playlist: Decodable {
+        var tracks: [NESong]; var trackIds: [String]
+        private enum CodingKeys: String, CodingKey { case tracks, trackIds }
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            tracks = container.readable(NESong.self, forKey: .tracks) ?? []
+            trackIds = (container.readable(NEPlaylist.TrackID.self, forKey: .trackIds) ?? []).map(\.id.value)
+        }
+    }
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        playlist = try container.decodeIfPresent(Playlist.self, forKey: .playlist)
+        privileges = container.readable(NEPrivilege.self, forKey: .privileges) ?? []
     }
 }
 private extension String { var nonempty: String? { isEmpty ? nil : self } }

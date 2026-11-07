@@ -67,8 +67,25 @@ protocol DirectMusicProvider: Sendable {
     func preparePlayback(_ track: Track, cookies: [MusicSessionCookie]) async throws -> Track
     func resolve(_ track: Track, cookies: [MusicSessionCookie]) async throws -> URL
     func lyrics(_ track: Track, cookies: [MusicSessionCookie]) async throws -> LyricsPayload?
+    /// The platform's current charts, without their songs.
+    func charts(cookies: [MusicSessionCookie]) async throws -> [BrowseCollection]
+    /// Playlists, and songs where the platform has them, recommended to the
+    /// signed-in account.
+    func recommendations(cookies: [MusicSessionCookie]) async throws -> BrowseRecommendations
+    /// At most `limit` songs from the top of a chart or recommended list, in
+    /// as few requests as the platform allows.
+    func tracks(in collection: BrowseCollection, limit: Int, cookies: [MusicSessionCookie]) async throws -> [Track]
 }
 extension DirectMusicProvider {
+    func charts(cookies: [MusicSessionCookie]) async throws -> [BrowseCollection] {
+        throw MusicError.message(L10n.string("此音源暂不提供榜单与推荐。"))
+    }
+    func recommendations(cookies: [MusicSessionCookie]) async throws -> BrowseRecommendations {
+        throw MusicError.message(L10n.string("此音源暂不提供榜单与推荐。"))
+    }
+    func tracks(in collection: BrowseCollection, limit: Int, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        throw MusicError.message(L10n.string("此音源暂不提供榜单与推荐。"))
+    }
     func albums(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicAlbum] {
         throw MusicError.message(L10n.string("此音源暂不支持专辑导入。"))
     }

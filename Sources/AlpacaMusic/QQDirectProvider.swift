@@ -304,6 +304,116 @@ struct QQDirectProvider: DirectMusicProvider {
         guard let item = track(info) else { throw MusicError.message(L10n.string("平台详情缺少可用标题或曲目结构不受支持。")) }
         return item
     }
+
+    // MARK: Charts and recommendations for the Now page
+
+    /// Every chart with its three-song preview, in one request. Songs load only
+    /// when a chart is opened, through `tracks(in:limit:cookies:)`.
+    func charts(cookies: [MusicSessionCookie]) async throws -> [BrowseCollection] {
+        let account = try session(cookies)
+        let data = try await rpc(module: "musicToplist.ToplistInfoServer", method: "GetAll", parameters: [:], account: account, cookies: cookies)
+        guard let groups = data["group"] as? [Any] else { throw malformed() }
+        var output: [BrowseCollection] = [], seen = Set<Int64>()
+        for case let group as [String: Any] in groups {
+            for case let item as [String: Any] in group["toplist"] as? [Any] ?? [] {
+                // 201 lists music videos: its detail call returns no songs.
+                guard output.count < 30, let topID = positiveSongID(item["topId"]), topID != 201, !seen.contains(topID),
+                      let rawTitle = string(item["title"]) else { continue }
+                let title = plain(rawTitle).trimmingCharacters(in: .whitespacesAndNewlines)
+                let preview = (item["song"] as? [Any] ?? []).compactMap { value -> BrowsePreviewLine? in
+                    guard let song = value as? [String: Any], let name = string(song["title"]).map(plain), !name.isEmpty else { return nil }
+                    return BrowsePreviewLine(title: name, artist: plain(string(song["singerName"]) ?? ""))
+                }.prefix(3)
+                guard !title.isEmpty, !preview.isEmpty else { continue }
+                let caption = switch integer(item["updateType"]) {
+                case 1: L10n.string("每日更新")
+                case 0: L10n.string("每周更新")
+                default: ""
+                }
+                let total = integer(item["totalNum"]) ?? 0
+                seen.insert(topID)
+                output.append(BrowseCollection(source: .qq, kind: .chart, remoteID: String(topID), title: title, caption: caption,
+                                               artworkURL: artwork(string(item["frontPicUrl"])) ?? artwork(string(item["headPicUrl"])),
+                                               preview: Array(preview), trackCount: total > 0 ? total : nil))
+            }
+        }
+        return output
+    }
+    /// Recommended playlists and the account's 猜你喜欢 radio in one signed
+    /// request. The playlists are required; the radio is best effort.
+    func recommendations(cookies: [MusicSessionCookie]) async throws -> BrowseRecommendations {
+        let account = try session(cookies)
+        let replies = try await batch([
+            RPCCall(module: "music.playlist.PlaylistSquare", method: "GetRecommendFeed", parameters: ["From": 0, "Size": 12]),
+            // Public radios answer five songs per call whatever `num` asks for;
+            // the larger ask costs nothing if the personal radio honours it.
+            RPCCall(module: "music.radioProxy.MbTrackRadioSvr", method: "get_radio_track", parameters: ["id": 99, "num": 10, "from": 0, "scene": 0, "song_ids": [Int]()]),
+        ], account: account, cookies: cookies)
+        let feed = try replies[0].data.get()
+        guard let list = feed["List"] as? [Any] else { throw malformed() }
+        var collections: [BrowseCollection] = [], seen = Set<Int64>()
+        for case let entry as [String: Any] in list {
+            guard let basic = (entry["Playlist"] as? [String: Any])?["basic"] as? [String: Any],
+                  let tid = positiveSongID(basic["tid"]), !seen.contains(tid),
+                  let title = string(basic["title"]).map({ plain($0).trimmingCharacters(in: .whitespacesAndNewlines) }), !title.isEmpty else { continue }
+            let cover = basic["cover"] as? [String: Any] ?? [:], count = integer(basic["song_cnt"]) ?? 0
+            let creator = string((basic["creator"] as? [String: Any])?["nick"]).map(plain) ?? ""
+            seen.insert(tid)
+            collections.append(BrowseCollection(source: .qq, kind: .playlist, remoteID: String(tid), title: title,
+                                                caption: creator.trimmingCharacters(in: .whitespacesAndNewlines),
+                                                artworkURL: artwork(string(cover["medium_url"])) ?? artwork(string(cover["big_url"])) ?? artwork(string(cover["small_url"])),
+                                                trackCount: count > 0 ? count : nil))
+        }
+        var songs: [Track] = []
+        switch replies[1].data {
+        case .success(let radio):
+            songs = uniqueTracks((radio["tracks"] as? [Any] ?? []).compactMap { ($0 as? [String: Any]).flatMap(track) })
+        case .failure(let error) where error is CancellationError:
+            throw error
+        case .failure:
+            // The session passed the local check, so a login code here means QQ
+            // turned the cookies down for this radio. Whether QQ serves this
+            // radio to web logins at all is unconfirmed, so any radio failure
+            // leaves the playlists usable and the page shows no songs, rather
+            // than a sign-in warning that might never clear.
+            break
+        }
+        return BrowseRecommendations(collections: collections, songs: songs)
+    }
+    /// The first `limit` songs of a chart or recommended playlist, in one request.
+    func tracks(in collection: BrowseCollection, limit: Int, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        guard collection.source == .qq else { throw MusicError.message(L10n.string("不支持的音源类型")) }
+        switch collection.kind {
+        case .chart:
+            guard let topID = positiveSongID(collection.remoteID) else { throw MusicError.message(L10n.string("QQ 音乐榜单标识无效，请刷新榜单。")) }
+            let account = try session(cookies)
+            guard limit > 0 else { return [] }
+            // topId must be a JSON number (a string is rejected with 10006). No
+            // `period`: without it QQ answers the current edition, while an old
+            // edition from an earlier chart list is served without complaint.
+            let parameters: [String: Any] = ["topId": topID, "offset": 0, "num": min(limit, 300)]
+            let data = try await rpc(module: "musicToplist.ToplistInfoServer", method: "GetDetail", parameters: parameters, account: account, cookies: cookies)
+            guard let rows = data["songInfoList"] as? [Any] else { throw malformed() }
+            return try browseTracks(rows, limit: limit)
+        case .playlist:
+            // The official page sends parseInt(id, 10); a JSON string is rejected.
+            guard let identifier = positiveSongID(collection.remoteID) else { throw MusicError.message(L10n.string("QQ 音乐歌单标识无效，请刷新歌单列表。")) }
+            let account = try session(cookies)
+            guard limit > 0 else { return [] }
+            let data = try await rpc(module: "music.srfDissInfo.aiDissInfo", method: "uniform_get_Dissinfo", parameters: ["disstid": identifier, "userinfo": 1, "tag": 1, "orderlist": 1, "song_begin": 0, "song_num": min(limit, 300), "onlysonglist": 1, "enc_host_uin": ""], account: account, cookies: cookies)
+            guard let rows = data["songlist"] as? [Any] else { throw malformed() }
+            return try browseTracks(rows, limit: limit)
+        case .album:
+            throw MusicError.message(L10n.string("QQ 音乐暂不支持在此打开专辑。"))
+        }
+    }
+    /// Browse lists skip rows without a usable identity instead of spending a
+    /// detail request on each; a page where nothing maps means the format moved.
+    private func browseTracks(_ rows: [Any], limit: Int) throws -> [Track] {
+        let tracks = uniqueTracks(rows.compactMap { ($0 as? [String: Any]).flatMap(track) })
+        if tracks.isEmpty, !rows.isEmpty { throw malformed() }
+        return Array(tracks.prefix(limit))
+    }
     /// Static field categories and row counts only: never echo track/account data.
     private func playlistFieldType(_ value: Any?) -> String {
         guard let value else { return L10n.string("缺失") }
@@ -444,18 +554,43 @@ struct QQDirectProvider: DirectMusicProvider {
         return data
     }
     private func rpc(module: String, method: String, parameters: [String: Any], account: Session, cookies: [MusicSessionCookie], timeout: TimeInterval? = nil) async throws -> [String: Any] {
+        try await batch([RPCCall(module: module, method: method, parameters: parameters)], account: account, cookies: cookies, timeout: timeout)[0].data.get()
+    }
+    private struct RPCCall {
+        var module: String
+        var method: String
+        var parameters: [String: Any]
+    }
+    /// One `req_N` of a signed call. `code` is the request's own platform code
+    /// (nil when absent), kept so callers can react to a specific rejection.
+    private struct RPCReply {
+        var code: Int?
+        var data: Result<[String: Any], any Error>
+    }
+    /// One signed musics.fcg POST carrying req_0…req_N. The root code fails the
+    /// whole call; each request's code only fails its own reply.
+    private func batch(_ calls: [RPCCall], account: Session, cookies: [MusicSessionCookie], timeout: TimeInterval? = nil) async throws -> [RPCReply] {
         // Metadata keeps the browser cookie + UIN/CSRF contract. Playback uses
         // its separate ticket-authenticated request above; do not mix the two.
-        let payload: [String: Any] = ["comm": ["ct": 24, "cv": 4747474, "uin": account.commUin, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "g_tk": account.legacyCSRF, "g_tk_new_20200303": account.csrf], "req_0": ["module": module, "method": method, "param": parameters]]
+        var payload: [String: Any] = ["comm": ["ct": 24, "cv": 4747474, "uin": account.commUin, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "g_tk": account.legacyCSRF, "g_tk_new_20200303": account.csrf]]
+        for (index, call) in calls.enumerated() { payload["req_\(index)"] = ["module": call.module, "method": call.method, "param": call.parameters] }
         let body = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes])
         var url = URLComponents(string: "https://u.y.qq.com/cgi-bin/musics.fcg")!
         url.queryItems = [URLQueryItem(name: "sign", value: QQWebSigning.signature(for: body))]
         var request = request(url.url!); if let timeout { request.timeoutInterval = timeout }; request.httpMethod = "POST"; request.httpBody = body; request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        let operation = ["uniform_get_Dissinfo": L10n.string("读取歌单曲目"), "get_song_detail_yqq": L10n.string("读取歌曲资料"), "DoSearchForQQMusicDesktop": L10n.string("搜索歌曲"), "GetPlayLyricInfo": L10n.string("读取歌词")][method] ?? L10n.string("完成请求")
-        let root = try json(await http.data(for: request, source: .qq, cookies: cookies)); try check(root, operation: operation)
-        guard let result = root["req_0"] as? [String: Any] else { throw malformed() }; try check(result, operation: operation)
-        guard let data = result["data"] as? [String: Any] else { throw malformed() }
-        if data["code"] != nil { try check(data, operation: operation) }; return data
+        let root = try json(await http.data(for: request, source: .qq, cookies: cookies)); try check(root, operation: operation(calls.first?.method ?? ""))
+        return calls.enumerated().map { index, call in
+            let result = root["req_\(index)"] as? [String: Any], label = operation(call.method)
+            return RPCReply(code: integer(result?["code"]), data: Result<[String: Any], any Error> {
+                guard let result else { throw malformed() }; try check(result, operation: label)
+                guard let data = result["data"] as? [String: Any] else { throw malformed() }
+                if data["code"] != nil { try check(data, operation: label) }; return data
+            })
+        }
+    }
+    private func operation(_ method: String) -> String {
+        ["uniform_get_Dissinfo": L10n.string("读取歌单曲目"), "get_song_detail_yqq": L10n.string("读取歌曲资料"), "DoSearchForQQMusicDesktop": L10n.string("搜索歌曲"), "GetPlayLyricInfo": L10n.string("读取歌词"),
+         "GetAll": L10n.string("读取榜单"), "GetDetail": L10n.string("读取榜单曲目"), "GetRecommendFeed": L10n.string("读取推荐歌单"), "get_radio_track": L10n.string("读取推荐歌曲")][method] ?? L10n.string("完成请求")
     }
     private func get(path: String, query: [String: String], account: Session, cookies: [MusicSessionCookie]) async throws -> [String: Any] {
         var parameters = query

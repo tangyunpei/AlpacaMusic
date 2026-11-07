@@ -262,6 +262,7 @@ struct HomeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 25) {
             HeroView(model: model)
+            NowBrowseSection(model: model)
             if model.library.tracks.contains(where: { $0.source == .demo }) {
                 VStack(alignment: .leading, spacing: 18) {
                 HStack {

@@ -115,6 +115,9 @@ final class PlayerController {
     var error: String? { failure?.message }
     var supportsVolumeControl: Bool { current?.source != .appleMusic && current?.source != .spotify }
     var sourceConfigurations = SourceConfiguration.defaults
+    /// Counts plays, skips and toggles the listener asked for (automatic
+    /// advances excluded), so a list still loading can tell it was overtaken.
+    @ObservationIgnored private(set) var listenerRevision: UInt64 = 0
     @ObservationIgnored private let sources: SourceService
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let spotify: SpotifyService?
@@ -188,6 +191,7 @@ final class PlayerController {
             recordFailure(MusicError.message(message), track: track, stage: .preparing, fallback: message)
             return
         }
+        listenerRevision &+= 1
         navigation.select(track, context: context); queue = navigation.tracks
         await activate(track)
     }
@@ -314,7 +318,7 @@ final class PlayerController {
         endObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, generation == token, wantsPlayback else { return }
-                if repeatMode == .one, let current { await activate(current) } else { await next() }
+                if repeatMode == .one, let current { await activate(current) } else { await next(automatic: true) }
             }
         }
         failedObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main) { [weak self] notification in
@@ -364,7 +368,7 @@ final class PlayerController {
                 Task { [weak self] in
                     guard let self, generation == token else { return }
                     if repeatMode == .one, let current { await activate(current) }
-                    else { await next(); if generation == token { appleEndPending = false } }
+                    else { await next(automatic: true); if generation == token { appleEndPending = false } }
                 }
                 return
             }
@@ -447,7 +451,7 @@ final class PlayerController {
                         Task { [weak self] in
                             guard let self, generation == session, spotifySession == session else { return }
                             if repeatMode == .one, let current { await activate(current) }
-                            else { await next() }
+                            else { await next(automatic: true) }
                         }
                         return
                     case .changedTrack:
@@ -477,6 +481,7 @@ final class PlayerController {
     }
 
     func toggle() async {
+        listenerRevision &+= 1
         if wantsPlayback && (status == .playing || status == .loading) { pause(); return }
         guard let current else { if let first = queue.first(where: { !$0.unavailable }) { await play(first) }; return }
         if current.source == .spotify {
@@ -558,11 +563,14 @@ final class PlayerController {
         media.pause(); appleMusic.pausePlayback(); if current != nil { status = .paused }
         persistQueue(); publishNowPlaying()
     }
-    func next() async {
+    /// `automatic` marks the end of a song advancing on its own.
+    func next(automatic: Bool = false) async {
+        if !automatic { listenerRevision &+= 1 }
         guard let track = navigation.next(shuffle: shuffle, repeatMode: repeatMode) else { pause(); return }
         await activate(track)
     }
     func previous() async {
+        listenerRevision &+= 1
         if position > 3 && duration.isFinite { seek(to: 0); return }
         if let track = navigation.previous(repeatMode: repeatMode) { await activate(track) } else { seek(to: 0) }
     }

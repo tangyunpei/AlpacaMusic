@@ -34,6 +34,22 @@
 			<string>%lld playlists</string>
 		</dict>
 	</dict>
+	<key>%lld 个榜单</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld chart</string>
+			<key>other</key>
+			<string>%lld charts</string>
+		</dict>
+	</dict>
 	<key>%lld 首</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
