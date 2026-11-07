@@ -160,7 +160,7 @@ private struct BrowseSourceContent: View {
             } else {
                 VStack(alignment: .leading, spacing: 22) {
                     BrowseShelfTitle(title: L10n.string("榜单"), detail: L10n.string("正在连接\(source.title)…"))
-                    BrowseCardSkeletons(kind: .chart, queueOpen: model.queueOpen, label: L10n.string("正在读取榜单"))
+                    BrowseCardSkeletons(queueOpen: model.queueOpen, label: L10n.string("正在读取榜单"))
                 }
             }
         case .ready:
@@ -179,14 +179,14 @@ private struct BrowseSourceContent: View {
                 if charts.isEmpty {
                     BrowseQuietLine(text: L10n.string("暂无榜单"))
                 } else {
-                    BrowseCardRow(model: model, collections: charts, style: .chart)
+                    BrowseCardRow(model: model, collections: charts, shelf: .charts)
                     openPanel(in: charts, shelf: .charts)
                 }
                 if let error = shelf?.error { failure(error) }
             } else if let error = shelf?.error, shelf?.loading != true {
                 failure(error)
             } else {
-                BrowseCardSkeletons(kind: .chart, queueOpen: model.queueOpen, label: L10n.string("正在读取榜单"))
+                BrowseCardSkeletons(queueOpen: model.queueOpen, label: L10n.string("正在读取榜单"))
             }
         }
     }
@@ -199,7 +199,7 @@ private struct BrowseSourceContent: View {
                     BrowseQuietLine(text: L10n.string("暂无推荐"))
                 }
                 if !picks.collections.isEmpty {
-                    BrowseCardRow(model: model, collections: picks.collections, style: .pick)
+                    BrowseCardRow(model: model, collections: picks.collections, shelf: .picks)
                     openPanel(in: picks.collections, shelf: .picks)
                 }
                 if !picks.songs.isEmpty {
@@ -210,7 +210,7 @@ private struct BrowseSourceContent: View {
             } else if let error = shelf?.error, shelf?.loading != true {
                 failure(error)
             } else {
-                BrowseCardSkeletons(kind: .pick, queueOpen: model.queueOpen, label: L10n.string("正在读取推荐"))
+                BrowseCardSkeletons(queueOpen: model.queueOpen, label: L10n.string("正在读取推荐"))
                 // NetEase always sends its daily songs; QQ's radio may send none.
                 if source == .netease { BrowseSongListSkeleton() }
             }
@@ -287,99 +287,102 @@ private struct BrowseConnectPrompt: View {
 
 // MARK: Cards
 
-enum BrowseCardStyle {
-    case chart, pick
-    func width(queueOpen: Bool) -> CGFloat {
-        switch self { case .chart: queueOpen ? 146 : 176; case .pick: queueOpen ? 116 : 136 }
-    }
-    func coverHeight(queueOpen: Bool) -> CGFloat {
-        switch self { case .chart: queueOpen ? 118 : 142; case .pick: width(queueOpen: queueOpen) }
-    }
-    /// Fixed text heights, shared with the placeholders so a shelf keeps its
-    /// height when its list arrives. Room for CJK line heights.
-    var textHeight: CGFloat { switch self { case .chart: 34; case .pick: 52 } }
-    static let previewRowHeight: CGFloat = 14
-    static let previewSpacing: CGFloat = 4
-    static var previewHeight: CGFloat { previewRowHeight * 3 + previewSpacing * 2 }
+/// Poster geometry, shared with the placeholders so a shelf keeps its size
+/// when its list arrives.
+enum BrowsePoster {
+    static func width(queueOpen: Bool) -> CGFloat { queueOpen ? 196 : 240 }
+    static func height(queueOpen: Bool) -> CGFloat { (width(queueOpen: queueOpen) * 4 / 3).rounded() }
+    /// How far the colour fade reaches up into the artwork.
+    static func fade(queueOpen: Bool) -> CGFloat { (width(queueOpen: queueOpen) * 0.36).rounded() }
+    static let radius: CGFloat = 16
+    static let spacing: CGFloat = 18
+    static let badge: CGFloat = 34
 }
 
 private struct BrowseCardRow: View {
     @Bindable var model: AppModel
     let collections: [BrowseCollection]
-    let style: BrowseCardStyle
+    let shelf: BrowseStore.ShelfKind
     /// Cards that appear soon after the row cascade in; cards scrolled into
     /// view later appear at once.
     @State private var shownAt = Date()
     var body: some View {
         ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: style == .chart ? 16 : 14) {
+            LazyHStack(alignment: .top, spacing: BrowsePoster.spacing) {
                 ForEach(Array(collections.enumerated()), id: \.element.id) { index, collection in
-                    BrowseCard(model: model, collection: collection, index: index, style: style, rowShownAt: shownAt)
+                    BrowsePosterCard(model: model, collection: collection, index: index, shelf: shelf, rowShownAt: shownAt)
                 }
             }
-            .padding(.vertical, 2).padding(.horizontal, 1)
+            // Room for the posters' shadow inside the scroll view.
+            .padding(.vertical, 8).padding(.horizontal, 1)
         }
         .scrollIndicators(.hidden)
+        .padding(.vertical, -6)
     }
 }
 
-private struct BrowseCard: View {
+/// A list as a poster, after Apple Music's: the square artwork at full
+/// width, the card continuing below it in the artwork's colour, and the text
+/// set on a fade from the artwork into that colour. Apple Music supplies the
+/// colours; for other platforms they are sampled from the cover's lower edge.
+private struct BrowsePosterCard: View {
     @Environment(\.appPalette) private var palette
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     @Environment(\.appReducedMotion) private var appReduced
     @Bindable var model: AppModel
     let collection: BrowseCollection
     let index: Int
-    let style: BrowseCardStyle
+    let shelf: BrowseStore.ShelfKind
     let rowShownAt: Date
     @State private var hovered = false
     @State private var appeared = false
+    @State private var sampled: BrowseArtworkColors?
 
     var body: some View {
         let store = model.browse
         let reduced = systemReduced || appReduced
-        let width = style.width(queueOpen: model.queueOpen)
+        let width = BrowsePoster.width(queueOpen: model.queueOpen), height = BrowsePoster.height(queueOpen: model.queueOpen)
         let isOpen = store.opened?.id == collection.id && store.openedShelf == shelf
-        VStack(alignment: .leading, spacing: 9) {
-            ZStack(alignment: .bottomTrailing) {
-                Button { open() } label: {
+        let colors = collection.colors ?? sampled
+        let ink = PosterInk(colors)
+        let shape = RoundedRectangle(cornerRadius: BrowsePoster.radius, style: .continuous)
+        Button { open() } label: {
+            ZStack(alignment: .bottomLeading) {
+                ink.background
+                VStack(spacing: 0) {
                     ArtworkView(track: collection.coverTrack, radius: 0, highResolution: true)
-                        .frame(width: width, height: style.coverHeight(queueOpen: model.queueOpen)).clipped()
-                        .overlay(alignment: .topLeading) {
-                            if style == .chart, !collection.caption.isEmpty {
-                                Text(collection.caption).font(.system(size: 9, weight: .medium)).lineLimit(1)
-                                    .foregroundStyle(.white.opacity(0.92)).padding(.horizontal, 7).padding(.vertical, 4)
-                                    .background(.black.opacity(0.34), in: .capsule).padding(9)
-                            }
-                        }
+                        .frame(width: width, height: width).clipped()
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isOpen ? L10n.string("收起 \(collection.title)") : L10n.string("打开 \(collection.title)"))
-                .accessibilityAddTraits(isOpen ? .isSelected : [])
-                // The badge shows only under the pointer; this keeps playing
-                // reachable from the keyboard and VoiceOver.
-                .accessibilityAction(named: L10n.string("播放")) { model.play(collection) }
-                BrowsePlayBadge(model: model, collection: collection, size: style == .chart ? 33 : 28)
-                    .padding(style == .chart ? 10 : 8)
-                    .opacity(hovered || store.pendingPlay == collection.id || isOpen ? 1 : 0)
+                // Clear over the artwork, the card's colour where the artwork ends.
+                LinearGradient(stops: [.init(color: ink.background.opacity(0), location: 0),
+                                       .init(color: ink.background.opacity(0.8), location: 0.62),
+                                       .init(color: ink.background, location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(width: width, height: BrowsePoster.fade(queueOpen: model.queueOpen))
+                    .offset(y: -(height - width))
+                text(ink).padding(.horizontal, 14).padding(.bottom, 14)
             }
-            .clipShape(.rect(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(isOpen ? palette.accent.opacity(0.6) : hovered ? palette.accent.opacity(0.35) : palette.line))
-            Group {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(collection.title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
-                        .lineLimit(style == .chart ? 1 : 2)
-                    if let subtitle { Text(subtitle).font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1) }
-                }
-                .frame(width: width, height: style.textHeight, alignment: .topLeading)
-                if style == .chart { previewLines }
-            }
-            // The whole card opens its list, not only the cover.
-            .contentShape(.rect)
-            .onTapGesture { open() }
+            .frame(width: width, height: height)
+            .clipShape(shape)
+            .contentShape(shape)
+            .animation(reduced ? nil : .easeOut(duration: 0.3), value: colors)
         }
-        .frame(width: width, alignment: .leading)
-        .contentShape(.rect)
+        .buttonStyle(.plain)
+        .accessibilityLabel(isOpen ? L10n.string("收起 \(collection.title)") : L10n.string("打开 \(collection.title)"))
+        .accessibilityAddTraits(isOpen ? .isSelected : [])
+        .accessibilityAction(named: L10n.string("播放")) { model.play(collection) }
+        .overlay(alignment: .topTrailing) {
+            BrowsePlayBadge(model: model, collection: collection, size: BrowsePoster.badge)
+                .padding(12)
+                .opacity(hovered || store.pendingPlay == collection.id || isOpen ? 1 : 0)
+        }
+        .overlay {
+            shape.strokeBorder(isOpen ? palette.accent.opacity(0.85) : Color.black.opacity(0.07), lineWidth: isOpen ? 2 : 1)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: .black.opacity(hovered ? 0.24 : 0.12), radius: hovered ? 14 : 7, y: hovered ? 7 : 3)
+        .scaleEffect(hovered && !reduced ? 1.012 : 1)
         .onHover { hovered = $0 }
         .animation(reduced ? nil : ExperienceMotion.control, value: hovered)
         .animation(reduced ? nil : ExperienceMotion.control, value: isOpen)
@@ -390,43 +393,116 @@ private struct BrowseCard: View {
             let firstBatch = Date().timeIntervalSince(rowShownAt) < 0.6
             withAnimation(.smooth(duration: 0.36).delay(firstBatch ? Double(min(index, 8)) * 0.045 : 0)) { appeared = true }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("now-browse-\(style == .chart ? "chart" : "pick")-\(collection.remoteID)")
-    }
-    private var subtitle: String? {
-        if style == .chart {
-            return collection.trackCount.map { L10n.string("\($0) 首") }
+        .task(id: collection.artworkURL) {
+            guard collection.colors == nil else { return }
+            sampled = await PosterColors.sample(collection.coverTrack)
         }
-        return collection.caption.isEmpty ? collection.trackCount.map { L10n.string("\($0) 首") } : collection.caption
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("now-browse-\(shelf == .charts ? "chart" : "pick")-\(collection.remoteID)")
     }
-    /// Three fixed rows so a chart with a shorter preview keeps the shelf aligned.
-    private var previewLines: some View {
-        VStack(alignment: .leading, spacing: BrowseCardStyle.previewSpacing) {
-            ForEach(0..<3, id: \.self) { row in
-                Group {
-                    if row < collection.preview.count {
-                        let line = collection.preview[row]
+
+    /// A label, the title, then a chart's top three or the list's own line.
+    private func text(_ ink: PosterInk) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !collection.caption.isEmpty {
+                Text(collection.caption).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(ink.secondary).lineLimit(1)
+            }
+            Text(collection.title).font(.system(size: 15, weight: .bold)).foregroundStyle(ink.primary)
+                .lineLimit(collection.preview.isEmpty ? 2 : 1)
+            if collection.preview.isEmpty {
+                if let line = detailLine {
+                    Text(line).font(.system(size: 11)).foregroundStyle(ink.secondary).lineLimit(2)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(collection.preview.prefix(3).enumerated()), id: \.offset) { rank, line in
                         HStack(spacing: 6) {
-                            Text(String(row + 1)).font(.system(size: 9, weight: .medium, design: .monospaced))
-                                .foregroundStyle(row == 0 ? palette.primary : palette.faint).frame(width: 9, alignment: .leading)
+                            Text(String(rank + 1)).font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundStyle(ink.primary).frame(width: 9, alignment: .leading)
                             Text(verbatim: line.artist.isEmpty ? line.title : "\(line.title) · \(line.artist)")
-                                .font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1)
+                                .font(.system(size: 11)).foregroundStyle(ink.secondary).lineLimit(1)
                         }
-                    } else {
-                        Color.clear
                     }
                 }
-                .frame(height: BrowseCardStyle.previewRowHeight, alignment: .leading)
+                .padding(.top, 2)
+                .accessibilityElement(children: .combine)
             }
         }
-        .frame(height: BrowseCardStyle.previewHeight, alignment: .topLeading)
-        .accessibilityElement(children: .combine)
+        .shadow(color: ink.background.opacity(0.45), radius: 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    /// The editorial line or artist, else the song count.
+    private var detailLine: String? {
+        if !collection.detail.isEmpty { return collection.detail }
+        return collection.trackCount.map { L10n.string("\($0) 首") }
     }
     private func open() {
         let reduced = systemReduced || appReduced
         withAnimation(reduced ? nil : ExperienceMotion.panel) { model.browse.open(collection, from: shelf) }
     }
-    private var shelf: BrowseStore.ShelfKind { style == .chart ? .charts : .picks }
+}
+
+/// A poster's colours: the platform's own for its artwork, else a dark card
+/// until the cover's colour is sampled.
+private struct PosterInk {
+    let background: Color
+    let primary: Color
+    let secondary: Color
+    init(_ colors: BrowseArtworkColors?) {
+        guard let colors else {
+            background = Color(.sRGB, red: 0.16, green: 0.16, blue: 0.18); primary = .white; secondary = .white.opacity(0.74)
+            return
+        }
+        let light = colors.background.luminance > 0.6
+        background = Color(colors.background)
+        primary = colors.primary.map { Color($0) } ?? (light ? Color(.sRGB, red: 0.08, green: 0.08, blue: 0.09) : .white)
+        secondary = colors.secondary.map { Color($0) } ?? (light ? Color(.sRGB, red: 0.08, green: 0.08, blue: 0.09).opacity(0.68) : .white.opacity(0.76))
+    }
+}
+
+/// Card colours for covers that come without them (NetEase, QQ): the average
+/// of the cover's bottom edge, read from the pixels the artwork view decodes.
+@MainActor enum PosterColors {
+    private static var cache: [String: BrowseArtworkColors] = [:]
+    private static var order: [String] = []
+
+    static func sample(_ track: Track) async -> BrowseArtworkColors? {
+        let key = Artwork.key(for: track)
+        if let hit = cache[key] { return hit }
+        let result = await Artwork.raster(for: track)
+        guard !Task.isCancelled, let colors = edge(result.pixels) else { return nil }
+        cache[key] = colors; order.append(key)
+        while order.count > 160 { cache.removeValue(forKey: order.removeFirst()) }
+        return colors
+    }
+
+    /// The bottom rows' average colour. Rows run top to bottom.
+    nonisolated static func edge(_ pixels: ArtworkPixels) -> BrowseArtworkColors? {
+        let rows = max(1, pixels.height / 16), bytesPerRow = pixels.width * 4
+        guard pixels.width > 0, pixels.rgba.count >= pixels.height * bytesPerRow else { return nil }
+        var red = 0.0, green = 0.0, blue = 0.0, weight = 0.0
+        for row in (pixels.height - rows)..<pixels.height {
+            for column in 0..<pixels.width {
+                let index = row * bytesPerRow + column * 4
+                let alpha = Double(pixels.rgba[index + 3]) / 255
+                guard alpha > 0.05 else { continue }
+                // Premultiplied: dividing by alpha restores the colour.
+                red += Double(pixels.rgba[index]) / 255; green += Double(pixels.rgba[index + 1]) / 255
+                blue += Double(pixels.rgba[index + 2]) / 255; weight += alpha
+            }
+        }
+        guard weight > 0 else { return nil }
+        let clamp = { (value: Double) in min(1, max(0, value / weight)) }
+        return BrowseArtworkColors(background: BrowseColor(red: clamp(red), green: clamp(green), blue: clamp(blue)), primary: nil, secondary: nil)
+    }
+}
+
+private extension Color {
+    init(_ color: BrowseColor) { self.init(.sRGB, red: color.red, green: color.green, blue: color.blue) }
+}
+
+extension BrowseColor {
+    var luminance: Double { 0.2126 * red + 0.7152 * green + 0.0722 * blue }
 }
 
 private struct BrowsePlayBadge: View {
@@ -551,7 +627,7 @@ private struct BrowseCollectionPanel: View {
     }
     private func detail(_ state: BrowseStore.TracksState?) -> String {
         let count: Int? = if case .loaded(let tracks) = state { tracks.count } else { collection.trackCount }
-        let parts = [collection.caption, count.map { L10n.string("\($0) 首") } ?? ""].filter { !$0.isEmpty }
+        let parts = [collection.detail.isEmpty ? collection.caption : collection.detail, count.map { L10n.string("\($0) 首") } ?? ""].filter { !$0.isEmpty }
         return parts.joined(separator: " · ")
     }
     /// Off only once the songs are known and none can play.
@@ -622,46 +698,49 @@ private struct BrowsePulsePhase {
 }
 
 private struct BrowseCardSkeletons: View {
-    @Environment(\.appPalette) private var palette
-    let kind: BrowseCardStyle
     let queueOpen: Bool
     let label: String
     var body: some View {
-        let width = kind.width(queueOpen: queueOpen), height = kind.coverHeight(queueOpen: queueOpen)
         // The same scroll container as the real row, so a row wider than the
         // page is cut off at its edge instead of widening the whole section.
         ScrollView(.horizontal) {
-        BrowsePulse { phase in
-            HStack(alignment: .top, spacing: kind == .chart ? 16 : 14) {
-                ForEach(0..<7, id: \.self) { index in
-                    let tint = palette.accent.opacity(0.05 + 0.07 * phase(index))
-                    VStack(alignment: .leading, spacing: 9) {
-                        RoundedRectangle(cornerRadius: 9).fill(tint).frame(width: width, height: height)
-                        VStack(alignment: .leading, spacing: 7) {
-                            Capsule().fill(tint).frame(width: width * 0.7, height: 9)
-                            Capsule().fill(tint.opacity(0.7)).frame(width: width * 0.4, height: 7)
-                        }
-                        .padding(.top, 3)
-                        .frame(width: width, height: kind.textHeight, alignment: .topLeading)
-                        if kind == .chart {
-                            VStack(alignment: .leading, spacing: BrowseCardStyle.previewSpacing) {
-                                ForEach(0..<3, id: \.self) { row in
-                                    Capsule().fill(tint.opacity(0.6)).frame(width: width * [0.85, 0.7, 0.78][row], height: 6)
-                                        .frame(height: BrowseCardStyle.previewRowHeight)
-                                }
-                            }
-                            .frame(height: BrowseCardStyle.previewHeight, alignment: .topLeading)
-                        }
+            BrowsePulse { phase in
+                HStack(alignment: .top, spacing: BrowsePoster.spacing) {
+                    ForEach(0..<7, id: \.self) { index in
+                        BrowsePosterSkeleton(queueOpen: queueOpen, phase: phase(index))
                     }
-                    .frame(width: width, alignment: .leading)
                 }
+                .padding(.vertical, 8).padding(.horizontal, 1)
             }
-            .padding(.vertical, 2).padding(.horizontal, 1)
-        }
         }
         .scrollDisabled(true).scrollIndicators(.hidden)
+        .padding(.vertical, -6)
         .accessibilityElement()
         .accessibilityLabel(label)
+    }
+}
+
+/// A poster's shape while its list loads: the artwork square, the card below
+/// it, and the text lines where the real ones will sit.
+private struct BrowsePosterSkeleton: View {
+    @Environment(\.appPalette) private var palette
+    let queueOpen: Bool
+    let phase: Double
+    var body: some View {
+        let width = BrowsePoster.width(queueOpen: queueOpen), height = BrowsePoster.height(queueOpen: queueOpen)
+        let tint = palette.accent.opacity(0.05 + 0.07 * phase)
+        ZStack(alignment: .bottomLeading) {
+            tint.opacity(0.6)
+            VStack(spacing: 0) { tint.frame(width: width, height: width); Spacer(minLength: 0) }
+            VStack(alignment: .leading, spacing: 9) {
+                Capsule().fill(tint).frame(width: width * 0.32, height: 7)
+                Capsule().fill(tint).frame(width: width * 0.7, height: 11)
+                Capsule().fill(tint.opacity(0.8)).frame(width: width * 0.55, height: 7)
+            }
+            .padding(14).padding(.bottom, 22)
+        }
+        .frame(width: width, height: height)
+        .clipShape(.rect(cornerRadius: BrowsePoster.radius, style: .continuous))
     }
 }
 

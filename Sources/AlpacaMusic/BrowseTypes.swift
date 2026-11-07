@@ -13,7 +13,13 @@ struct BrowseCollection: Identifiable, Sendable, Hashable {
     /// One short line under the title, such as how often a chart updates or
     /// who curates a playlist. Empty when the platform gives nothing useful.
     var caption: String = ""
+    /// A longer line where the platform has one: an editorial description,
+    /// or an album's artist. Shown on poster cards and the opened list.
+    var detail: String = ""
     var artworkURL: URL? = nil
+    /// Colours the platform picked for this artwork (Apple Music), used to
+    /// tint a poster card's text panel so it continues the artwork.
+    var colors: BrowseArtworkColors? = nil
     /// The first entries as the platform lists them, so a card can show what
     /// is inside before any song request.
     var preview: [BrowsePreviewLine] = []
@@ -22,6 +28,20 @@ struct BrowseCollection: Identifiable, Sendable, Hashable {
     /// charts. Opening such a list needs no further request.
     var tracks: [Track]? = nil
     var id: String { "\(source.rawValue):\(kind.rawValue):\(remoteID)" }
+}
+
+/// An artwork's background colour and the text colours that read on it.
+struct BrowseArtworkColors: Sendable, Hashable {
+    var background: BrowseColor
+    var primary: BrowseColor?
+    var secondary: BrowseColor?
+}
+
+/// An sRGB colour with components from 0 to 1.
+struct BrowseColor: Sendable, Hashable {
+    var red: Double
+    var green: Double
+    var blue: Double
 }
 
 struct BrowsePreviewLine: Sendable, Hashable {
