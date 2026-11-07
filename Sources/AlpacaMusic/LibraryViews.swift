@@ -49,8 +49,16 @@ struct TrackList: View {
     var showsHeader = true
     /// Rows are online search results rather than library songs.
     var online = false
+    /// What a row's play button queues; the shown rows unless a longer list
+    /// is only partly shown.
+    var queue: [Track]? = nil
+    /// Builds compact rows only as they scroll into view, for long lists.
+    var lazy = false
     var body: some View {
-        if compact {
+        if compact && lazy {
+            LazyVStack(spacing: 0) { rows }
+                .accessibilityElement(children: .contain)
+        } else if compact {
             VStack(spacing: 0) { rows }
                 .accessibilityElement(children: .contain)
         } else {
@@ -70,7 +78,7 @@ struct TrackList: View {
     }
     private var rows: some View {
         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-            TrackRow(track: track, index: index, tracks: tracks, model: model, compact: compact, online: online)
+            TrackRow(track: track, index: index, tracks: queue ?? tracks, model: model, compact: compact, online: online)
         }
     }
 }

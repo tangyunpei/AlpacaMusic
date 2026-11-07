@@ -27,6 +27,8 @@ final class AppModel {
     let lyrics: LyricsController
     /// Imports a newly connected account's collections in the background (C4).
     let autoImport: AutoImportCoordinator
+    /// Charts and recommendations shown on the Now page.
+    let browse: BrowseStore
     var language: AppLanguage {
         didSet {
             preferences.set(language.rawValue, forKey: L10n.preferenceKey)
@@ -117,9 +119,14 @@ final class AppModel {
     @ObservationIgnored private var searchSectionCache: (key: VisibleTrackKey, sections: SearchSections)?
     @ObservationIgnored private var libraryIndexCache: (revision: UInt64, ids: Set<String>, keys: Set<String>)?
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
+    /// The listener's latest play request. A list still loading its songs
+    /// plays only if nothing was chosen after it.
+    @ObservationIgnored private var playIntent = UUID()
     @ObservationIgnored private var lyricsSync: LyricsSync?
 
-    init(directory suppliedDirectory: URL? = nil, preferences suppliedDefaults: UserDefaults? = nil, ephemeralAccounts: Bool? = nil) {
+    /// `browseLoader` replaces the platforms behind the Now page's charts in tests.
+    init(directory suppliedDirectory: URL? = nil, preferences suppliedDefaults: UserDefaults? = nil, ephemeralAccounts: Bool? = nil,
+         browseLoader: (any BrowseLoading)? = nil) {
         let directory = suppliedDirectory ?? ProcessInfo.processInfo.environment["ALPACA_DATA_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         preferences = suppliedDefaults ?? ProcessInfo.processInfo.environment["ALPACA_PREFERENCES_DOMAIN"].flatMap(UserDefaults.init(suiteName:)) ?? .standard
         language = L10n.preference(in: preferences)
@@ -146,6 +153,7 @@ final class AppModel {
         spotify = SpotifyService(defaults: preferences, credentials: isolatedAccounts ? MemorySpotifyCredentialStore() : SpotifyCredentialStore())
         player = PlayerController(sources: sourceService, defaults: preferences, appleMusic: appleMusic, spotify: spotify)
         autoImport = AutoImportCoordinator(library: library, accounts: accounts, appleMusic: appleMusic, spotify: spotify)
+        browse = BrowseStore(loader: browseLoader ?? PlatformBrowseLoader(accounts: accounts, appleMusic: appleMusic), defaults: preferences)
         visual = (preferences.data(forKey: "visual-settings").flatMap { try? JSONDecoder().decode(VisualSettings.self, from: $0) } ?? .standard).validated()
         presets = preferences.data(forKey: "visual-presets").flatMap { try? JSONDecoder().decode([VisualPreset].self, from: $0) }?.map { VisualPreset(id: $0.id, name: $0.name, settings: $0.settings.validated()) } ?? []
         autoImport.onNotice = { [weak self] message in self?.notify(message) }
@@ -359,9 +367,31 @@ final class AppModel {
         notify(result.errors.isEmpty ? L10n.string("已导入 \(result.tracks.count) 首音乐") : L10n.string("已导入 \(result.tracks.count) 首。\(result.errors.first ?? "")"))
     }
     func play(_ track: Track, context: [Track]? = nil) {
+        playIntent = UUID()
         Task { await player.play(track, context: context ?? visibleTracks) }
     }
+    /// Plays a chart or recommended list from its first playable song, with
+    /// the whole list as the queue. Its songs load once if not read yet.
+    func play(_ collection: BrowseCollection) {
+        let intent = UUID(); playIntent = intent
+        let revision = player.listenerRevision
+        Task {
+            let tracks = await browse.tracksForPlayback(collection)
+            // Anything the listener started meanwhile (a row, a key, next or
+            // previous, play or pause) wins over this list.
+            guard playIntent == intent, player.listenerRevision == revision else { return }
+            guard let tracks else {
+                if case .failed(let message) = browse.tracksState(for: collection) { notify(message) }
+                return
+            }
+            guard let first = tracks.first(where: { !$0.unavailable }) else {
+                notify(L10n.string("这个列表暂时没有可播放的歌曲。")); return
+            }
+            await player.play(first, context: tracks)
+        }
+    }
     func playAlbum() async {
+        playIntent = UUID()
         let tracks = albumTracks
         guard let first = tracks.first(where: { !$0.unavailable }) else { return }
         if player.shuffle { player.toggleShuffle() }
@@ -496,6 +526,7 @@ final class AppModel {
         autoImport.cancel(source)
         if player.current?.source == source { player.pause() }
         clearSearchResults(for: source)
+        browse.forget(source)
         await accounts.disconnect(source)
         notify(accounts.state(source).error ?? L10n.string("已退出\(source.title)，已导入的歌单保留"))
     }
@@ -504,6 +535,7 @@ final class AppModel {
         if player.current?.source == .appleMusic { player.pause() }
         appleMusic.disconnect()
         clearSearchResults(for: .appleMusic)
+        browse.forget(.appleMusic)
         notify(L10n.string("Apple Music 已停用。系统授权可在系统设置中管理。"))
     }
     func remove(_ track: Track) { player.removeFromQueue(track.id); library.removeTrack(track.id); notify(L10n.string("已从音乐库移除，原文件保留")) }

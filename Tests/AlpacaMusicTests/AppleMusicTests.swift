@@ -97,6 +97,30 @@ import Testing
     }
     func pause() { pauses += 1; snapshotValue.state = .paused }
     func seek(to seconds: Double) { snapshotValue.position = seconds }
+    var browseRequests = 0
+    var browseGate: CheckedContinuation<Void, Never>?
+    var delaysBrowse = false
+    var browseError: (any Error)?
+    var chartLimits: [Int] = []
+    func catalogCharts(limit: Int) async throws -> [BrowseCollection] {
+        browseRequests += 1; chartLimits.append(limit)
+        if delaysBrowse { await withCheckedContinuation { browseGate = $0 } }
+        if let browseError { throw browseError }
+        return [BrowseCollection(source: .appleMusic, kind: .chart, remoteID: "songs-top", title: "Top Songs", tracks: [appleTrack("1")]),
+                BrowseCollection(source: .netease, kind: .chart, remoteID: "foreign", title: "Wrong Source")]
+    }
+    func personalRecommendations() async throws -> BrowseRecommendations {
+        browseRequests += 1
+        if delaysBrowse { await withCheckedContinuation { browseGate = $0 } }
+        if let browseError { throw browseError }
+        return BrowseRecommendations(collections: [BrowseCollection(source: .appleMusic, kind: .album, remoteID: "a1", title: "Album")],
+                                     refreshesAt: Date(timeIntervalSince1970: 2_000_000_000))
+    }
+    func catalogTracks(in collection: BrowseCollection, limit: Int) async throws -> [Track] {
+        browseRequests += 1
+        if let browseError { throw browseError }
+        return (1...150).map { appleTrack(String($0)) }
+    }
     func snapshot() -> AppleMusicPlaybackSnapshot { snapshotValue }
 }
 private func appleTrack(_ id: String) -> Track {
@@ -377,5 +401,38 @@ private let configuredMusic = AppleMusicConfiguration(enabledInBuild: true, expe
         player.cycleRepeat(); player.cycleRepeat(); #expect(player.repeatMode == .one)
         let oldPlays = adapter.plays; adapter.snapshotValue = .init(state: .stopped, position: 10, hasCurrentEntry: false)
         try await waitFor { adapter.plays > oldPlays }; #expect(player.current?.sourceID == "2")
+    }
+    @Test func chartsAndPicksNeedAccessAndKeepOnlyAppleMusicLists() async throws {
+        let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
+        let adapter = StubAppleMusic()
+        var unconfigured = configuredMusic; unconfigured.isAdHoc = true
+        let blocked = AppleMusicService(defaults: defaults, configuration: unconfigured, adapter: adapter)
+        do { _ = try await blocked.charts(); Issue.record("Unconfigured charts loaded") } catch { }
+        #expect(adapter.browseRequests == 0)
+        let service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
+        do { _ = try await service.recommendations(); Issue.record("Disconnected picks loaded") } catch { }
+        #expect(adapter.browseRequests == 0)
+        await service.connect()
+        let charts = try await service.charts()
+        #expect(charts.map(\.remoteID) == ["songs-top"])
+        #expect(adapter.chartLimits == [AppleMusicService.chartLimit])
+        let picks = try await service.recommendations()
+        #expect(picks.collections.map(\.remoteID) == ["a1"])
+        #expect(picks.refreshesAt == Date(timeIntervalSince1970: 2_000_000_000))
+        let songs = try await service.tracks(in: picks.collections[0], limit: 100)
+        #expect(songs.count == 100)
+        do { _ = try await service.tracks(in: BrowseCollection(source: .qq, kind: .playlist, remoteID: "1", title: "QQ"), limit: 10); Issue.record("Another source's list loaded") } catch { }
+    }
+    @Test func lateChartsAfterDisconnectAreDroppedAndFailuresAreReadable() async throws {
+        let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
+        let adapter = StubAppleMusic()
+        let service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
+        await service.connect(); adapter.delaysBrowse = true
+        let charts = Task { try await service.charts() }
+        try await waitFor { adapter.browseGate != nil }; service.disconnect(); adapter.browseGate?.resume()
+        do { _ = try await charts.value; Issue.record("Late charts survived disconnect") } catch { #expect(error is CancellationError) }
+        adapter.delaysBrowse = false; adapter.browseError = rawMusicKitFailure(); await service.connect()
+        do { _ = try await service.recommendations(); Issue.record("Failure was hidden") }
+        catch { #expect(isReadableAppleMusicText(error.localizedDescription)) }
     }
 }

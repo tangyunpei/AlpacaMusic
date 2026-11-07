@@ -116,6 +116,26 @@ actor NativeMusicClient {
         try validate(source, token)
         return result
     }
+    func charts(_ source: MusicSource) async throws -> [BrowseCollection] {
+        let (session, token) = try snapshot(source)
+        let result = try await provider(source).charts(cookies: session.cookies)
+        try validate(source, token)
+        return result.filter { $0.source == source }
+    }
+    func recommendations(_ source: MusicSource) async throws -> BrowseRecommendations {
+        let (session, token) = try snapshot(source)
+        var result = try await provider(source).recommendations(cookies: session.cookies)
+        try validate(source, token)
+        result.collections.removeAll { $0.source != source }
+        result.songs.removeAll { $0.source != source }
+        return result
+    }
+    func tracks(in collection: BrowseCollection, limit: Int) async throws -> [Track] {
+        let (session, token) = try snapshot(collection.source)
+        let result = try await provider(collection.source).tracks(in: collection, limit: limit, cookies: session.cookies)
+        try validate(collection.source, token)
+        return Array(result.filter { $0.source == collection.source }.prefix(limit))
+    }
     func libraryScope(for source: MusicSource) throws -> LibrarySessionScope {
         let (_, token) = try snapshot(source)
         try validate(source, token)

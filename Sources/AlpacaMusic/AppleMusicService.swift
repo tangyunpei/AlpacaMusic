@@ -64,6 +64,23 @@ struct AppleMusicPlaybackSnapshot: Sendable {
     func pause()
     func seek(to seconds: Double)
     func snapshot() -> AppleMusicPlaybackSnapshot
+    /// The storefront's song charts (with their songs) and chart playlists.
+    func catalogCharts(limit: Int) async throws -> [BrowseCollection]
+    /// The account's personal recommendations: albums and playlists only.
+    func personalRecommendations() async throws -> BrowseRecommendations
+    /// At most `limit` catalog songs of a chart, playlist or album.
+    func catalogTracks(in collection: BrowseCollection, limit: Int) async throws -> [Track]
+}
+extension AppleMusicAdapter {
+    func catalogCharts(limit: Int) async throws -> [BrowseCollection] {
+        throw MusicError.message(L10n.string("此音源暂不提供榜单与推荐。"))
+    }
+    func personalRecommendations() async throws -> BrowseRecommendations {
+        throw MusicError.message(L10n.string("此音源暂不提供榜单与推荐。"))
+    }
+    func catalogTracks(in collection: BrowseCollection, limit: Int) async throws -> [Track] {
+        throw MusicError.message(L10n.string("此音源暂不提供榜单与推荐。"))
+    }
 }
 
 /// Readable, localized text for Apple Music failures. Raw NSError/MusicKit
@@ -297,6 +314,39 @@ final class AppleMusicService {
         try requireAccess(); guard playbackSession == session else { throw MusicError.message(L10n.string("Apple Music 播放已停止。")) }
         return adapter.snapshot()
     }
+    /// Songs per chart, as many as an opened list shows. Apple's charts take
+    /// up to 200 per request.
+    static let chartLimit = BrowseSchedule.trackLimit
+    func charts() async throws -> [BrowseCollection] {
+        try await catalogRead { try await self.adapter.catalogCharts(limit: Self.chartLimit) }.filter { $0.source == .appleMusic }
+    }
+    func recommendations() async throws -> BrowseRecommendations {
+        var value = try await catalogRead { try await self.adapter.personalRecommendations() }
+        value.collections.removeAll { $0.source != .appleMusic }
+        value.songs.removeAll { $0.source != .appleMusic }
+        return value
+    }
+    func tracks(in collection: BrowseCollection, limit: Int) async throws -> [Track] {
+        guard collection.source == .appleMusic else { throw CancellationError() }
+        let value = try await catalogRead { try await self.adapter.catalogTracks(in: collection, limit: limit) }
+        return Array(value.filter { $0.source == .appleMusic }.prefix(limit))
+    }
+    /// Catalog reads follow search: access first, readable errors, and no
+    /// result from before a disconnect or reconnect.
+    private func catalogRead<Value>(_ body: () async throws -> Value) async throws -> Value {
+        try requireAccess(); let token = generation
+        let value: Value
+        do { value = try await body() }
+        catch {
+            // A failure that outlived its session is not this session's failure.
+            if Task.isCancelled || error is CancellationError || generation != token { throw CancellationError() }
+            throw AppleMusicErrorMessage.readable(error)
+        }
+        try Task.checkCancellation()
+        guard generation == token else { throw CancellationError() }
+        try requireAccess()
+        return value
+    }
 }
 
 @MainActor private final class SystemAppleMusicAdapter: AppleMusicAdapter {
@@ -313,11 +363,119 @@ final class AppleMusicService {
     func search(_ query: String) async throws -> [Track] {
         var request = MusicCatalogSearchRequest(term: query, types: [Song.self]); request.limit = AppleMusicService.catalogSearchLimit
         let result = try await request.response()
-        return result.songs.map { song in
-            Track(id: "appleMusic:\(song.id.rawValue)", title: song.title, artist: song.artistName, album: song.albumTitle ?? "",
-                  duration: song.duration ?? 0, source: .appleMusic, sourceID: song.id.rawValue,
-                  appleMusicResourceKind: .catalogSong,
-                  artworkURL: song.artwork?.url(width: 640, height: 640), format: "Apple Music", unavailable: song.playParameters == nil)
+        return result.songs.map { Self.catalogTrack($0) }
+    }
+    /// The same catalog identity as search, so a chart song and a searched
+    /// song are one library entry and play the same way.
+    private static func catalogTrack(_ song: Song, album: String? = nil, artwork: URL? = nil) -> Track {
+        Track(id: "appleMusic:\(song.id.rawValue)", title: song.title, artist: song.artistName, album: song.albumTitle ?? album ?? "",
+              duration: song.duration ?? 0, source: .appleMusic, sourceID: song.id.rawValue,
+              appleMusicResourceKind: .catalogSong,
+              artworkURL: song.artwork?.url(width: 640, height: 640) ?? artwork, format: "Apple Music", unavailable: song.playParameters == nil)
+    }
+    func catalogCharts(limit: Int) async throws -> [BrowseCollection] {
+        let response: MusicCatalogChartsResponse
+        do {
+            var request = MusicCatalogChartsRequest(kinds: [.mostPlayed, .dailyGlobalTop], types: [Song.self, Playlist.self])
+            request.limit = limit
+            response = try await request.response()
+        } catch let error as MusicDataRequest.Error where (400..<500).contains(error.status) && ![401, 403, 429].contains(error.status) {
+            // Storefronts differ in which chart kinds they offer, and a request
+            // naming one they lack is rejected. Most played is in every
+            // storefront. Offline, sign-in, throttling and server errors are
+            // not retried here.
+            var request = MusicCatalogChartsRequest(kinds: [.mostPlayed], types: [Song.self, Playlist.self])
+            request.limit = limit
+            response = try await request.response()
+        }
+        var result: [BrowseCollection] = []
+        for chart in response.songCharts {
+            let songs = chart.items.map { Self.catalogTrack($0) }
+            guard !songs.isEmpty else { continue }
+            result.append(BrowseCollection(source: .appleMusic, kind: .chart, remoteID: "songs-\(chart.id)", title: chart.title,
+                                           caption: Self.caption(for: chart.kind), artworkURL: songs.first?.artworkURL,
+                                           preview: songs.prefix(3).map { BrowsePreviewLine(title: $0.title, artist: $0.artist) },
+                                           trackCount: songs.count, tracks: songs))
+        }
+        for chart in response.playlistCharts {
+            for playlist in chart.items.prefix(12) {
+                result.append(BrowseCollection(source: .appleMusic, kind: .playlist, remoteID: playlist.id.rawValue, title: playlist.name,
+                                               caption: playlist.curatorName ?? chart.title,
+                                               artworkURL: playlist.artwork?.url(width: 600, height: 600)))
+            }
+        }
+        var seen = Set<String>()
+        return result.filter { seen.insert($0.id).inserted }
+    }
+    private static func caption(for kind: MusicCatalogChartKind) -> String {
+        switch kind {
+        case .mostPlayed: L10n.string("最常播放")
+        case .dailyGlobalTop: L10n.string("每日全球榜")
+        case .cityTop: L10n.string("城市榜")
+        @unknown default: ""
+        }
+    }
+    func personalRecommendations() async throws -> BrowseRecommendations {
+        var request = MusicPersonalRecommendationsRequest()
+        request.limit = 12
+        let response = try await request.response()
+        // Each card keeps its group's refresh date, so only groups that are
+        // shown decide when the picks are read again.
+        var collections: [(BrowseCollection, Date?)] = []
+        for recommendation in response.recommendations {
+            let next = recommendation.nextRefreshDate
+            for item in recommendation.items {
+                switch item {
+                case .album(let album):
+                    collections.append((BrowseCollection(source: .appleMusic, kind: .album, remoteID: album.id.rawValue, title: album.title,
+                                                         caption: album.artistName, artworkURL: album.artwork?.url(width: 600, height: 600),
+                                                         trackCount: album.trackCount > 0 ? album.trackCount : nil), next))
+                case .playlist(let playlist):
+                    collections.append((BrowseCollection(source: .appleMusic, kind: .playlist, remoteID: playlist.id.rawValue, title: playlist.name,
+                                                         caption: recommendation.title ?? playlist.curatorName ?? "",
+                                                         artworkURL: playlist.artwork?.url(width: 600, height: 600)), next))
+                case .station:
+                    continue // A station is an endless stream; the player plays one song at a time.
+                @unknown default:
+                    continue
+                }
+            }
+        }
+        var seen = Set<String>()
+        let kept = collections.filter { seen.insert($0.0.id).inserted }.prefix(24)
+        return BrowseRecommendations(collections: kept.map(\.0), refreshesAt: kept.compactMap(\.1).min())
+    }
+    func catalogTracks(in collection: BrowseCollection, limit: Int) async throws -> [Track] {
+        if let tracks = collection.tracks { return Array(tracks.prefix(limit)) }
+        let id = MusicItemID(collection.remoteID)
+        switch collection.kind {
+        case .playlist:
+            var request = MusicCatalogResourceRequest<Playlist>(matching: \.id, equalTo: id)
+            request.properties = [.tracks]
+            guard let playlist = try await request.response().items.first else { throw MusicError.message(L10n.string("Apple Music 未找到这个列表。")) }
+            return try await Self.songs(in: playlist.tracks, limit: limit, artwork: playlist.artwork?.url(width: 640, height: 640))
+        case .album:
+            var request = MusicCatalogResourceRequest<Album>(matching: \.id, equalTo: id)
+            request.properties = [.tracks]
+            guard let album = try await request.response().items.first else { throw MusicError.message(L10n.string("Apple Music 未找到这个列表。")) }
+            return try await Self.songs(in: album.tracks, limit: limit, album: album.title, artwork: album.artwork?.url(width: 640, height: 640))
+        case .chart:
+            throw MusicError.message(L10n.string("Apple Music 未找到这个列表。"))
+        }
+    }
+    /// Reads pages only until `limit` songs, and at most three pages; music
+    /// videos in editorial lists are skipped.
+    private static func songs(in collection: MusicItemCollection<MusicKit.Track>?, limit: Int, album: String? = nil, artwork: URL? = nil) async throws -> [Track] {
+        guard var page = collection else { return [] }
+        var result: [Track] = [], pages = 1
+        while true {
+            for item in page {
+                if case .song(let song) = item { result.append(catalogTrack(song, album: album, artwork: artwork)) }
+                if result.count >= limit { return result }
+            }
+            try Task.checkCancellation()
+            guard pages < 3, page.hasNextBatch, let next = try await page.nextBatch() else { return result }
+            page = next; pages += 1
         }
     }
     func librarySongs(validate: @MainActor () throws -> Void, progress: @MainActor (ImportProgress) -> Void) async throws -> [Track] {
