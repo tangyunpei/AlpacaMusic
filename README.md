@@ -18,7 +18,7 @@ Created by [byalpaca](https://byalpaca.dev). **macOS 26 or later.** Windows is n
 
 - Local files, folders, HTTP/HTTPS audio links, favorites, playlists, search, and a mixed-source queue.
 - An Albums cover grid with album details, ordered track lists, and whole-album playback. Existing songs with album metadata appear automatically.
-- Charts and picks on the Now page from Apple Music, NetEase Cloud Music and QQ Music: each signed-in source's leaderboards, recommended playlists or albums, and its daily or "you might like" songs. Open a list to see its songs or play it straight from the card. Lists load only while the page shows that source and are kept for up to six hours, and never past 6 a.m., when daily picks change. Refresh waits a minute between presses, and nothing polls.
+- Charts and picks on the Now page from Apple Music, NetEase Cloud Music and QQ Music: each signed-in source's leaderboards and recommended playlists or albums as posters tinted from their artwork, plus its daily or "you might like" songs. Open a list to see its songs or play it straight from the card. Lists load only while the page shows that source and are kept for up to six hours, and never past 6 a.m., when daily picks change. Refresh waits a minute between presses, and nothing polls.
 - Album-art point clouds, orbital particles, flowing ribbons, oscilloscopes, a continuous spectrum display, a harmonograph traced from the waveform, a spectral horizon of layered spectrum ridges, and a Bauhaus composition of shapes that respond to the music. Audio-reactive effects use real samples when available.
 - A mini player in three sizes (artwork with a play button, a lyric strip, and a larger card) and a menu bar player whose panel controls playback without the main window. While music plays, the current lyric floats just below the menu bar in a frosted capsule that fades away while the pointer is over it, so whatever is underneath stays visible and clickable. Each menu bar item can be turned off in Settings.
 - Scrolling lyrics and animated captions with selective word and character emphasis: character-by-character Chinese and word-by-word English, Spanish, and similar languages. Platform YRC/QRC word timing is preferred; readable audio can be analyzed ahead on-device with voice detection and recording-specific timing caches. Uncertain lines remain estimated. See [lyric alignment](docs/lyric-audio-alignment.md).
@@ -122,7 +122,7 @@ macOS 原生音乐播放器，统一管理本地与在线曲库，提供沉浸�
 
 - 本地文件、文件夹、HTTP/HTTPS 音频链接，以及收藏、歌单、搜索和混合来源队列。
 - 专辑封面网格、专辑详情、按曲序排列的歌曲和整张播放；已有歌曲的专辑资料会自动归入专辑库。
-- 「此刻」页显示 Apple Music、网易云音乐和 QQ 音乐的榜单与推荐：已登录音源的排行榜、推荐歌单或专辑，以及每日推荐或「猜你喜欢」歌曲。展开列表即可查看歌曲，也可直接在卡片上播放。只有页面显示该音源时才会读取，列表最多保留六小时，且不跨过每日推荐更新的早上 6 点；刷新需间隔一分钟，不会定时拉取。
+- 「此刻」页显示 Apple Music、网易云音乐和 QQ 音乐的榜单与推荐：已登录音源的排行榜与推荐歌单或专辑以取色自封面的海报展示，另有每日推荐或「猜你喜欢」歌曲。展开列表即可查看歌曲，也可直接在卡片上播放。只有页面显示该音源时才会读取，列表最多保留六小时，且不跨过每日推荐更新的早上 6 点；刷新需间隔一分钟，不会定时拉取。
 - 封面点云、轨道粒子、流光绸缎、示波器、连续竖条频谱、由波形描绘的谐波图、层叠频谱山脊组成的声谱地平线，以及随音乐变化的包豪斯构成；有可用采样时以真实音频驱动。
 - 三种尺寸的迷你播放器（带播放按钮的封面、歌词条和较大的卡片）与菜单栏播放器，在其面板中无需打开主窗口即可控制播放；播放时当前歌词以磨砂胶囊悬浮显示在菜单栏正下方，指针移到其上时会淡出，下方内容依然可见、可点击。菜单栏中的各项均可在设置中关闭。
 - 滚动歌词、动态字幕和局部强调：中文逐字，英语、西语等逐词出现；缺少逐词时间时使用估算。

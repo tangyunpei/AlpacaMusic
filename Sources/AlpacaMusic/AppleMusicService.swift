@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import MusicKit
 import Observation
@@ -394,18 +395,35 @@ final class AppleMusicService {
             guard !songs.isEmpty else { continue }
             result.append(BrowseCollection(source: .appleMusic, kind: .chart, remoteID: "songs-\(chart.id)", title: chart.title,
                                            caption: Self.caption(for: chart.kind), artworkURL: songs.first?.artworkURL,
+                                           colors: Self.colors(chart.items.first?.artwork),
                                            preview: songs.prefix(3).map { BrowsePreviewLine(title: $0.title, artist: $0.artist) },
                                            trackCount: songs.count, tracks: songs))
         }
         for chart in response.playlistCharts {
             for playlist in chart.items.prefix(12) {
                 result.append(BrowseCollection(source: .appleMusic, kind: .playlist, remoteID: playlist.id.rawValue, title: playlist.name,
-                                               caption: playlist.curatorName ?? chart.title,
-                                               artworkURL: playlist.artwork?.url(width: 600, height: 600)))
+                                               caption: playlist.curatorName ?? chart.title, detail: Self.blurb(playlist),
+                                               artworkURL: playlist.artwork?.url(width: 600, height: 600), colors: Self.colors(playlist.artwork)))
             }
         }
         var seen = Set<String>()
         return result.filter { seen.insert($0.id).inserted }
+    }
+    /// Apple's own background and text colours for an artwork, in sRGB.
+    private static func colors(_ artwork: MusicKit.Artwork?) -> BrowseArtworkColors? {
+        guard let background = color(artwork?.backgroundColor) else { return nil }
+        return BrowseArtworkColors(background: background, primary: color(artwork?.primaryTextColor),
+                                   secondary: color(artwork?.secondaryTextColor))
+    }
+    private static func color(_ value: CGColor?) -> BrowseColor? {
+        guard let value, let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let rgb = value.converted(to: space, intent: .defaultIntent, options: nil)?.components, rgb.count >= 3 else { return nil }
+        return BrowseColor(red: Double(rgb[0]), green: Double(rgb[1]), blue: Double(rgb[2]))
+    }
+    /// A playlist's short editorial line, without line breaks.
+    private static func blurb(_ playlist: Playlist) -> String {
+        let text = playlist.shortDescription ?? playlist.standardDescription ?? ""
+        return text.components(separatedBy: .newlines).joined(separator: " ").trimmingCharacters(in: .whitespaces)
     }
     private static func caption(for kind: MusicCatalogChartKind) -> String {
         switch kind {
@@ -428,12 +446,15 @@ final class AppleMusicService {
                 switch item {
                 case .album(let album):
                     collections.append((BrowseCollection(source: .appleMusic, kind: .album, remoteID: album.id.rawValue, title: album.title,
-                                                         caption: album.artistName, artworkURL: album.artwork?.url(width: 600, height: 600),
+                                                         caption: recommendation.title ?? "", detail: album.artistName,
+                                                         artworkURL: album.artwork?.url(width: 600, height: 600), colors: Self.colors(album.artwork),
                                                          trackCount: album.trackCount > 0 ? album.trackCount : nil), next))
                 case .playlist(let playlist):
+                    let blurb = Self.blurb(playlist)
                     collections.append((BrowseCollection(source: .appleMusic, kind: .playlist, remoteID: playlist.id.rawValue, title: playlist.name,
                                                          caption: recommendation.title ?? playlist.curatorName ?? "",
-                                                         artworkURL: playlist.artwork?.url(width: 600, height: 600)), next))
+                                                         detail: blurb.isEmpty ? playlist.curatorName ?? "" : blurb,
+                                                         artworkURL: playlist.artwork?.url(width: 600, height: 600), colors: Self.colors(playlist.artwork)), next))
                 case .station:
                     continue // A station is an endless stream; the player plays one song at a time.
                 @unknown default:
