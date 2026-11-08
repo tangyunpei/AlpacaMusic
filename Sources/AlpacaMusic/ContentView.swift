@@ -13,6 +13,8 @@ struct ContentView: View {
         VStack(spacing: 0) {
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView(model: model).navigationSplitViewColumnWidth(min: 210, ideal: 220, max: 245)
+                // The room hides the sidebar; its toggle would float alone in the top strip.
+                .toolbar(removing: model.immersive ? .sidebarToggle : nil)
         } detail: {
             VStack(spacing: 0) {
                 AppHeader(model: model)
@@ -42,12 +44,31 @@ struct ContentView: View {
                 .accessibilityHidden(model.immersive)
                 .allowsHitTesting(!model.immersive)
                 .overlay { if model.immersive { ImmersiveView(model: model).appTheme(.listeningRoom).transition(.opacity) } }
+                // In the room the strip above the content shows the room itself.
+                .toolbarBackgroundVisibility(model.immersive ? .hidden : .automatic, for: .windowToolbar)
         }
         .navigationSplitViewStyle(.balanced)
         .tint(palette.accent)
         .background(palette.background)
-        PlayerBar(model: model).appTheme(model.immersive ? .listeningRoom : .bauhaus)
+        // Outside the room the player bar sits below the content; in the room
+        // the content fills the window and the bar floats over its edge.
+        .padding(.bottom, model.immersive ? 0 : PlayerBar.height)
         }
+        .background(palette.background)
+        // One bar in both modes, so its hover state carries into the room. In
+        // the room it fades while the listener is idle; the room keeps its
+        // content clear of the bar either way, so nothing moves when it fades.
+        .overlay(alignment: .bottom) {
+            let shown = !model.immersive || model.immersiveChrome.isVisible
+            PlayerBar(model: model).appTheme(model.immersive ? .listeningRoom : .bauhaus)
+                .opacity(shown ? 1 : 0)
+                .allowsHitTesting(shown)
+                .onHover { model.immersiveChrome.hold(.pointerOnPlayerBar, $0) }
+        }
+        .onContinuousHover { phase in
+            if model.immersive, case .active = phase { model.immersiveChrome.poke() }
+        }
+        .animation(reduceMotion || model.visual.reduceMotion ? nil : .easeInOut(duration: 0.4), value: model.immersiveChrome.isVisible)
         .overlay(alignment: .bottom) {
             VStack(spacing: 8) {
                 if let failure = model.player.failure, failure.id != dismissedPlaybackFailureID {
@@ -156,6 +177,13 @@ struct ContentView: View {
         .onChange(of: model.immersive) { _, enabled in
             withAnimation(.smooth(duration: 0.25)) { columns = enabled ? .detailOnly : .all }
         }
+        // The room's controls stay while the queue or a sheet is in use.
+        .onChange(of: model.queueOpen, initial: true) { _, open in model.immersiveChrome.hold(.queue, open) }
+        .onChange(of: model.sheet != nil || model.showLyricsImporter || model.showImporter, initial: true) { _, open in
+            model.immersiveChrome.hold(.sheet, open)
+        }
+        // No hover exit arrives for views of a closed window.
+        .onDisappear { model.immersiveChrome.forgetPointerHolds() }
         .onExitCommand {
             if model.queueOpen { model.queueOpen = false }
             else if model.immersive { model.immersive = false }
@@ -371,9 +399,11 @@ struct ImmersiveView: View {
         GeometryReader { geometry in
             ZStack {
                 // The room owns an opaque surface; its ambient gradient must
-                // never reveal search results or library text underneath.
-                palette.background
+                // never reveal search results or library text underneath. Both
+                // reach under the window's top strip, so it takes their colour.
+                palette.background.ignoresSafeArea()
                 RadialGradient(colors: [palette.raised.opacity(0.65), palette.background], center: .center, startRadius: 40, endRadius: 800)
+                    .ignoresSafeArea()
                 if !model.lyricsVisible {
                     // Keep the light Bauhaus paper clear of the room's light-on-dark chrome.
                     ListeningScene(model: model)
@@ -389,7 +419,11 @@ struct ImmersiveView: View {
                     }.padding(.top, 82).padding(.bottom, 108)
                         .transition(.opacity.combined(with: .offset(y: 8)))
                 } else {
+                    // Full bleed, so the top strip and the space under the bar
+                    // show the scene too. The point cloud takes drags, so it
+                    // stays out of the strip where the window is dragged.
                     ListeningScene(model: model).modifier(KineticBackdrop(mode: model.visualMode))
+                        .ignoresSafeArea(edges: model.visualMode == .pointCloud ? .bottom : .all)
                     ImmersiveLyricsPanel(model: model).padding(.horizontal, geometry.size.width < 700 ? 24 : 42).padding(.top, 82).padding(.bottom, 105)
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
@@ -399,7 +433,14 @@ struct ImmersiveView: View {
             .overlay { ImmersiveQueueOverlay(model: model, availableSize: geometry.size) }
             .animation(reduced ? nil : ExperienceMotion.panel, value: model.lyricPresentation)
             .animation(reduced ? nil : ExperienceMotion.panel, value: model.lyricsVisible)
-        }.accessibilityIdentifier("immersive-listening-room")
+        }
+        // The player bar floats over the bottom of the room: its height stays
+        // reserved for the content, while the backgrounds run under it.
+        .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: PlayerBar.height).allowsHitTesting(false) }
+        // Idle hiding runs only while the room is on screen.
+        .onAppear { model.immersiveChrome.activate() }
+        .onDisappear { model.immersiveChrome.deactivate() }
+        .accessibilityIdentifier("immersive-listening-room")
     }
 }
 
@@ -486,16 +527,22 @@ private struct ImmersiveChrome: View {
         return source
     }
     var body: some View {
+        let shown = model.immersiveChrome.isVisible
         VStack {
-            HStack(spacing: availableWidth < 720 ? 10 : 14) {
+            HStack(spacing: 0) {
                 Spacer(minLength: 12)
-                Picker(L10n.string("字幕效果"), selection: $model.lyricPresentation) {
-                    Text(L10n.string("滚动歌词")).tag(LyricPresentationMode.scroll)
-                    Text(L10n.string("动态字幕")).tag(LyricPresentationMode.kinetic)
+            // The player bar has the lyrics and exit buttons; the room keeps
+            // only its own switches, which fade with the bar when idle.
+            HStack(spacing: availableWidth < 720 ? 10 : 14) {
+                // Off hides the lyrics and keeps the room, which the player
+                // bar's lyrics button does not when it opened the room.
+                Picker(L10n.string("字幕效果"), selection: lyricChoice) {
+                    Text(L10n.string("滚动歌词")).tag(LyricPresentationMode?.some(.scroll))
+                    Text(L10n.string("动态字幕")).tag(LyricPresentationMode?.some(.kinetic))
+                    Text(L10n.string("关闭歌词")).tag(LyricPresentationMode?.none)
                 }.pickerStyle(.segmented).labelsHidden()
-                    .frame(width: availableWidth < 540 ? 208 : 236).disabled(!model.lyricsVisible)
+                    .fixedSize()
                     .accessibilityLabel(L10n.string("字幕效果")).accessibilityIdentifier("lyric-presentation-picker")
-                ToolButton(symbol: "quote.bubble", label: model.lyricsVisible ? L10n.string("隐藏歌词") : L10n.string("显示歌词"), active: model.lyricsVisible) { model.lyricsVisible.toggle() }
                 Menu {
                     Picker(L10n.string("视觉效果"), selection: $model.visualMode) {
                         ForEach(VisualizationMode.allCases) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
@@ -520,8 +567,11 @@ private struct ImmersiveChrome: View {
                     .menuStyle(.borderlessButton).fixedSize().foregroundStyle(palette.accent)
                     .accessibilityIdentifier("immersive-visual-effects-menu")
                     .accessibilityLabel(L10n.string("选择视觉效果，当前为\(model.visualMode.title)")).help(L10n.string("视觉效果：\(model.visualMode.title)"))
-                ToolButton(symbol: "arrow.down.right.and.arrow.up.left", label: L10n.string("退出沉浸模式")) { model.immersive = false }
             }
+            .onHover { model.immersiveChrome.hold(.pointerOnTopControls, $0) }
+            }
+            .opacity(shown ? 1 : 0)
+            .allowsHitTesting(shown)
             Spacer()
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -534,12 +584,20 @@ private struct ImmersiveChrome: View {
                 Spacer(minLength: 20)
                 Text(model.lyricsVisible && model.lyrics.document?.timing != .plain && model.lyrics.document != nil ? L10n.string("点击歌词跳转 · Esc 退出") : L10n.string("Esc 退出沉浸")).font(.system(size: 9)).foregroundStyle(palette.faint)
                     .lineLimit(2).multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
+                    .opacity(shown ? 1 : 0)
             }
         }.padding(28)
     }
     private func lookupLyrics() {
         guard let track = model.player.current else { return }
         Task { await model.lyrics.lookupOnline(for: track) }
+    }
+    /// The shown lyric style, or nil when lyrics are off.
+    private var lyricChoice: Binding<LyricPresentationMode?> {
+        Binding(get: { model.lyricsVisible ? model.lyricPresentation : nil },
+                set: { choice in
+                    if let choice { model.lyricPresentation = choice; model.lyricsVisible = true } else { model.lyricsVisible = false }
+                })
     }
 }
 

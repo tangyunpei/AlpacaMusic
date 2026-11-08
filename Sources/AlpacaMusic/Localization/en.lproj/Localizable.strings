@@ -1215,3 +1215,4 @@
 "读取已中断，请重试。" = "Loading was interrupted. Try again.";
 "正在读取榜单" = "Loading charts";
 "正在读取推荐" = "Loading picks";
+"关闭歌词" = "Off";
