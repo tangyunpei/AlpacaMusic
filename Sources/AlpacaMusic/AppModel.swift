@@ -29,6 +29,8 @@ final class AppModel {
     let autoImport: AutoImportCoordinator
     /// Charts and recommendations shown on the Now page.
     let browse: BrowseStore
+    /// Fades the immersive room's controls while the listener is idle.
+    let immersiveChrome = ImmersiveChromeController()
     var language: AppLanguage {
         didSet {
             preferences.set(language.rawValue, forKey: L10n.preferenceKey)
@@ -65,7 +67,11 @@ final class AppModel {
     var sourceFilter: MusicSource? = nil
     var queueOpen = false
     var immersive = false {
-        didSet { if !immersive { immersiveOpenedForLyrics = false } }
+        didSet {
+            if !immersive { immersiveOpenedForLyrics = false }
+            // The room's view starts the controller when it appears.
+            if !immersive { immersiveChrome.deactivate() }
+        }
     }
     var lyricsVisible = true
     /// True while the immersive view is open only because the lyrics button

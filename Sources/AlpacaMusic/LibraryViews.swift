@@ -455,6 +455,7 @@ struct QueueView: View {
 }
 
 struct PlayerBar: View {
+    static let height: CGFloat = 100
     @Environment(\.appPalette) private var palette
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
@@ -488,7 +489,7 @@ struct PlayerBar: View {
                     PlayerWindows.switchWindow(to: PlayerWindowID.miniPlayer, from: PlayerWindowID.main, open: openWindow, dismiss: dismissWindow)
                 }
             }.frame(maxWidth: .infinity, alignment: .trailing)
-        }.padding(.horizontal, 27).frame(height: 100).background(palette.panel.opacity(0.96)).overlay(alignment: .top) { Rectangle().fill(palette.accent.opacity(0.1)).frame(height: 1) }
+        }.padding(.horizontal, 27).frame(height: Self.height).background(palette.panel.opacity(0.96)).overlay(alignment: .top) { Rectangle().fill(palette.accent.opacity(0.1)).frame(height: 1) }
     }
 }
 
