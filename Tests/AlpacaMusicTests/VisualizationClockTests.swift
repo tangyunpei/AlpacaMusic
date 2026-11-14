@@ -109,24 +109,37 @@ import Testing
     }
 
 
-    @Test func savedOrbitalModeRetainsItsIdentityAfterScopeUpgrade() throws {
-        let restored = try JSONDecoder().decode(VisualizationMode.self, from: Data("\"spectrumRing\"".utf8))
-        #expect(restored == .spectrumRing)
-        #expect(try JSONEncoder().encode(restored) == Data("\"spectrumRing\"".utf8))
-    }
-
-    @Test func visualizationModeOrderAndClassificationMatchTheContract() throws {
-        #expect(VisualizationMode.allCases.map(\.rawValue) == ["pointCloud", "spectrumRing", "ribbons", "starfield", "waveform",
-                                                                "spectrumBars", "harmonograph", "spectralHorizon", "bauhaus", "artwork"])
-        #expect(VisualizationMode.allCases.filter(\.isSignalDisplay) == [.waveform, .spectrumBars, .harmonograph, .spectralHorizon])
+    @Test func visualizationModeOrderAndGroupsMatchTheMenu() throws {
+        #expect(VisualizationMode.allCases == [.artwork, .pointCloud, .bauhaus, .spectrumBars, .waveform, .spectralHorizon, .harmonograph])
+        #expect(VisualizationMode.Group.cover.modes == [.artwork, .pointCloud])
+        #expect(VisualizationMode.Group.shapes.modes == [.bauhaus])
+        #expect(VisualizationMode.Group.liveAudio.modes == [.spectrumBars, .waveform, .spectralHorizon, .harmonograph])
+        #expect(VisualizationMode.allCases.filter(\.isSignalDisplay) == VisualizationMode.Group.liveAudio.modes)
         #expect(VisualizationMode.allCases.filter { !$0.isAudioReactive } == [.artwork])
-        for mode in [VisualizationMode.harmonograph, .spectralHorizon, .bauhaus] {
+        #expect(VisualizationMode.standard == .artwork)
+        for mode in VisualizationMode.allCases {
             let encoded = try JSONEncoder().encode(mode)
             #expect(encoded == Data("\"\(mode.rawValue)\"".utf8))
             #expect(try JSONDecoder().decode(VisualizationMode.self, from: encoded) == mode)
         }
     }
 
+    /// Orbital light field, Flowing ribbons and Deep space were removed. A
+    /// saved choice of one of them opens on the default effect; any other
+    /// saved choice is kept.
+    @Test(arguments: [("spectrumRing", VisualizationMode.artwork), ("ribbons", .artwork), ("starfield", .artwork),
+                      ("nonsense", .artwork), ("harmonograph", .harmonograph), ("pointCloud", .pointCloud)])
+    @MainActor func aSavedEffectThatNoLongerExistsOpensOnTheDefault(saved: String, expected: VisualizationMode) throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "mode-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let suite = "AlpacaModeRestore.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        defaults.set(saved, forKey: "visualization-mode")
+        let model = AppModel(directory: directory, preferences: defaults, ephemeralAccounts: true)
+        defer { model.player.shutdown() }
+        #expect(model.visualMode == expected)
+    }
 
     @Test func openingAPlayingScopeWithReducedMotionShowsOneRealSnapshot() {
         let clock = VisualizationClock(), date = Date(timeIntervalSince1970: 0)

@@ -152,7 +152,7 @@ final class AppModel {
         automaticLyricAudioAlignment = audioAlignment
         lyrics = LyricsController(client: native, directory: directory, automaticAppleMusicLookup: automaticLyrics,
                                   platformWordLyrics: platformWords, automaticAudioAlignment: audioAlignment)
-        visualMode = preferences.string(forKey: "visualization-mode").flatMap(VisualizationMode.init(rawValue:)) ?? .pointCloud
+        visualMode = preferences.string(forKey: "visualization-mode").flatMap(VisualizationMode.init(rawValue:)) ?? .standard
         lyricPresentation = preferences.string(forKey: "lyrics-presentation").flatMap(LyricPresentationMode.init(rawValue:)) ?? .scroll
         sourceService = SourceService(native: native)
         appleMusic = AppleMusicService(defaults: preferences)

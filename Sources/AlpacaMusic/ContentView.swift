@@ -447,9 +447,7 @@ private struct ImmersiveChrome: View {
                     .fixedSize()
                     .accessibilityLabel(L10n.string("字幕效果")).accessibilityIdentifier("lyric-presentation-picker")
                 Menu {
-                    Picker(L10n.string("视觉效果"), selection: $model.visualMode) {
-                        ForEach(VisualizationMode.allCases) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
-                    }.pickerStyle(.inline)
+                    VisualizationModePicker(selection: $model.visualMode)
                     Divider()
                     Button(L10n.string("调整视觉效果…")) { model.sheet = .visual }
                     Button(L10n.string("导入本地歌词…")) { model.beginLyricsImport() }
@@ -539,8 +537,6 @@ struct ListeningScene: View {
                     Text(L10n.string("当前播放通道无法获取音频采样。"))
                         .font(.system(size: 10)).foregroundStyle(palette.secondary)
                         .multilineTextAlignment(.center)
-                    Button(L10n.string("使用流光绸缎")) { model.visualMode = .ribbons }
-                        .buttonStyle(QuietButtonStyle()).accessibilityIdentifier("apple-waveform-ambience")
                 }.padding(18).frame(maxWidth: 310)
                     .background(palette.background.opacity(0.92), in: .rect(cornerRadius: 12))
                     .padding(18)

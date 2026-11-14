@@ -459,9 +459,7 @@ private struct NowVisualChip: View {
         .background(style.chipFill, in: .rect(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(style.chipLine))
         .nowMenu {
-            Picker(L10n.string("视觉效果"), selection: Binding(get: { model.visualMode }, set: { model.visualMode = $0 })) {
-                ForEach(VisualizationMode.allCases) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
-            }.pickerStyle(.inline)
+            VisualizationModePicker(selection: Binding(get: { model.visualMode }, set: { model.visualMode = $0 }))
             Divider()
             Button(L10n.string("调整视觉效果…")) { model.sheet = .visual }
         }

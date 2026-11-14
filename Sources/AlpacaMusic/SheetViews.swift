@@ -125,20 +125,25 @@ struct VisualSettingsView: View {
                 .accessibilityLabel(L10n.string("迷你播放器样式"))
                 .accessibilityIdentifier("mini-player-style-picker")
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
-                ForEach(VisualizationMode.allCases) { mode in
-                    Button { model.visualMode = mode } label: {
-                        VStack(spacing: 10) {
-                            Image(systemName: mode.symbol).font(.system(size: 22, weight: .light))
-                            Text(mode.title).font(.system(size: 10)).lineLimit(2)
-                                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                                .frame(minHeight: 28)
-                        }.foregroundStyle(model.visualMode == mode ? palette.accent : palette.secondary)
-                            .frame(maxWidth: .infinity).padding(.vertical, 15)
-                            .background(palette.accent.opacity(model.visualMode == mode ? 0.12 : 0.03), in: .rect(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.accent.opacity(model.visualMode == mode ? 0.4 : 0.09)))
-                    }.buttonStyle(.plain).accessibilityLabel(L10n.string("视觉效果：\(mode.title)"))
-                        .accessibilityAddTraits(model.visualMode == mode ? [.isSelected] : [])
+            ForEach(VisualizationMode.Group.allCases) { group in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(group.title).font(.system(size: 10, weight: .medium)).foregroundStyle(palette.secondary)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                        ForEach(group.modes) { mode in
+                            Button { model.visualMode = mode } label: {
+                                VStack(spacing: 10) {
+                                    Image(systemName: mode.symbol).font(.system(size: 22, weight: .light))
+                                    Text(mode.title).font(.system(size: 10)).lineLimit(2)
+                                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                                        .frame(minHeight: 28)
+                                }.foregroundStyle(model.visualMode == mode ? palette.accent : palette.secondary)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 15)
+                                    .background(palette.accent.opacity(model.visualMode == mode ? 0.12 : 0.03), in: .rect(cornerRadius: 10))
+                                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.accent.opacity(model.visualMode == mode ? 0.4 : 0.09)))
+                            }.buttonStyle(.plain).accessibilityLabel(L10n.string("视觉效果：\(mode.title)"))
+                                .accessibilityAddTraits(model.visualMode == mode ? [.isSelected] : [])
+                        }
+                    }
                 }
             }
             if !model.canVisualizeActiveTrack {

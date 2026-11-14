@@ -26,25 +26,6 @@ struct MusicVisualizationView: View {
                 PointCloudView(track: track, settings: settings, isPlaying: isPlaying, signal: signal)
             case .artwork:
                 albumPresentation
-            case .spectrumRing, .ribbons, .starfield:
-                ZStack {
-                    ParticleFieldView(mode: mode, settings: settings, isPlaying: isPlaying,
-                                      isActive: scenePhase == .active, reduceMotion: reduceMotion,
-                                      seed: Artwork.seed(for: track), signal: {
-                        track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels()
-                    })
-                    .id(track?.id ?? "empty-particle-stage")
-                    .transition(.opacity)
-                    if showsStatus {
-                        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-                            statusLabel(audioAvailable: isPlaying && track?.source.supportsAudioAnalysis != false && signal().available)
-                        }
-                    }
-                }
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.9), value: track?.id)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(L10n.string("\(mode.title)，\(track?.title ?? "AlpacaMusic")"))
-                .accessibilityValue(!isPlaying ? L10n.string("已暂停") : reduceMotion ? L10n.string("减少动态，画面已静止") : track?.source.supportsAudioAnalysis == false ? L10n.string("氛围模式，当前播放通道尚无实时音频采样") : L10n.string("氛围运动，随可用音频变化"))
             case .waveform, .spectrumBars:
                 TimelineView(.animation(minimumInterval: lowPower ? 1.0 / 30 : 1.0 / 60, paused: !animate)) { timeline in
                     let levels = isPlaying && scenePhase == .active && track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels()
@@ -252,5 +233,20 @@ struct ArtworkAtmosphere: View {
                                center: .center, startRadius: 0, endRadius: max(1, min(geometry.size.width, geometry.size.height) * 0.65))
             }.allowsHitTesting(false)
         }
+    }
+}
+
+/// The effects menu: the effects grouped as From the cover, Shapes and Needs
+/// live audio, with native selection marks. Used inline inside a Menu.
+struct VisualizationModePicker: View {
+    let selection: Binding<VisualizationMode>
+    var body: some View {
+        Picker(L10n.string("视觉效果"), selection: selection) {
+            ForEach(VisualizationMode.Group.allCases) { group in
+                Section(group.title) {
+                    ForEach(group.modes) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
+                }
+            }
+        }.pickerStyle(.inline)
     }
 }
