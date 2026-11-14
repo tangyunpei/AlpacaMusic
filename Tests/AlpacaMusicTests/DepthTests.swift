@@ -165,7 +165,7 @@ private struct FlatDepthProvider: DepthProvider {
     #expect(MemoryLayout<CloudUniforms>.stride == 208)
 }
 
-@Test @MainActor func gpuCoverMotionProtectsDetailsAndRemainsBoundedAtMaximumSettings() throws {
+@Test @MainActor func gpuCoverMovesAsOneSheetAndRemainsBoundedAtMaximumSettings() throws {
     let device = try #require(MTLCreateSystemDefaultDevice())
     let queue = try #require(device.makeCommandQueue())
     let probe = """
@@ -214,18 +214,24 @@ private struct FlatDepthProvider: DepthProvider {
                     maximum = max(maximum, simd_length(SIMD3(difference.x, difference.y, difference.z)))
                     #expect(animated[index].x.isFinite && animated[index].y.isFinite && animated[index].z.isFinite)
                 }
-                // Includes the continuous wave, 0.5% coherent scale pulse and
-                // depth accent; this is measured from actual GPU positions.
-                #expect(maximum <= 0.051)
+                // The bounce is at most 4.4% of the cover's height (0.088 of
+                // its 2 units), plus the depth accent (0.018) and the 0.5%
+                // coherent scale pulse; measured from actual GPU positions.
+                #expect(maximum <= 0.088 + 0.018 + 0.0072)
             }
         }
     }
     let pulse = try positions(time: 0.4, scheme: 0, bounce: 0.4, idle: 0.05, beat: 1, enabled: 1)
-    // The adjacent center samples differ only in their detail-protection flag.
-    let centerFlat = 26, centerProtected = 27
+    // The adjacent center samples differ only in their old detail flag. No
+    // point is held back any more: the cover moves as one sheet.
+    let centerFlat = 26, centerDetailed = 27
     let flatShift = simd_length(pulse[centerFlat] - staticPositions[centerFlat])
-    let protectedShift = simd_length(pulse[centerProtected] - staticPositions[centerProtected])
-    #expect(flatShift > 0.001 && protectedShift < flatShift * 0.6)
+    let detailedShift = simd_length(pulse[centerDetailed] - staticPositions[centerDetailed])
+    #expect(flatShift > 0.001 && detailedShift == flatShift)
+    // A bounce you can see: a loud beat moves the cover by several percent.
+    let loud = try (0..<24).map { try positions(time: Float($0) * 0.31, scheme: 0, bounce: 0.16, idle: 0.012, beat: 1, enabled: 1) }
+    let largest = loud.flatMap { frame in points.indices.map { abs(frame[$0].y - staticPositions[$0].y) } }.max() ?? 0
+    #expect(largest > 0.06)
     let reducedA = try positions(time: 0.4, scheme: 0, bounce: 0.4, idle: 0.05, beat: 1, enabled: 0)
     let reducedB = try positions(time: 4.8, scheme: 1, bounce: 0.4, idle: 0.05, beat: 1, enabled: 0)
     #expect(reducedA == staticPositions && reducedB == staticPositions)
@@ -287,7 +293,7 @@ private struct FlatDepthProvider: DepthProvider {
             }
         }
     }
-    #expect(maximumMovement > 0.008 && maximumMovement < 0.09)
+    #expect(maximumMovement > 0.008 && maximumMovement < 0.13)
     // Region breathing follows the selected continuous axis, rather than an
     // independently animated random point on all three axes.
     let early = try positions(time: 0.4), later = try positions(time: 2.4)
@@ -401,4 +407,39 @@ private final class OffscreenCloud {
     try data.write(to: URL(fileURLWithPath: "/private/tmp/alpacamusic-native-gpu-report.json"))
     print(String(decoding: data, as: UTF8.self))
     #expect(renderer.nonTransparentPixelCount() > 50000)
+}
+
+/// The relief follows only the cover's large shapes: a bright half stands
+/// above a dark half, fine stripes leave no trace, neighbours sit at nearly
+/// the same depth, and the depth still goes through `DepthProvider` (AC-10).
+@Test func largeShapeReliefIgnoresFineDetailAndKeepsNeighboursTogether() async throws {
+    let side = 256
+    var rgba = [UInt8](repeating: 255, count: side * side * 4)
+    for y in 0..<side {
+        for x in 0..<side {
+            let bright = x >= side / 2
+            // Fine one-pixel stripes on the bright half: lettering-sized detail.
+            let value: UInt8 = bright ? (y.isMultiple(of: 2) ? 230 : 200) : 40
+            let offset = (y * side + x) * 4
+            rgba[offset] = value; rgba[offset + 1] = value; rgba[offset + 2] = value
+        }
+    }
+    let image = ArtworkPixels(width: side, height: side, rgba: rgba)
+    let provider: any DepthProvider = LargeShapeReliefProvider()
+    let grid = 160
+    let depth = try await provider.compute(image, grid: grid)
+    #expect(depth.count == grid * grid && depth.allSatisfy { $0 >= 0 && $0 <= 1 })
+    let left = depth[80 * grid + 10], right = depth[80 * grid + 150]
+    #expect(right > left + 0.2)
+    // Down a column of the striped half, depth barely changes.
+    let column = (20..<140).map { depth[$0 * grid + 150] }
+    #expect((column.max() ?? 0) - (column.min() ?? 0) < 0.02)
+    // Across the hard edge the depth ramps over many points: no two
+    // neighbours differ by more than a sliver of the full step.
+    let row = (0..<grid).map { depth[80 * grid + $0] }
+    let steepest = zip(row, row.dropFirst()).map { abs($0 - $1) }.max() ?? 1
+    #expect(steepest < (right - left) / 12)
+    // Centred on its mean.
+    let mean = depth.reduce(0, +) / Float(depth.count)
+    #expect(abs(mean - 0.5) < 0.02)
 }

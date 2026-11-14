@@ -22,7 +22,7 @@ struct PointOutput {
     float3 color;
     float opacity;
     float halo;
-    float softness;
+    float size;
 };
 
 // A single position function is shared by rasterization and the test-only
@@ -39,26 +39,26 @@ float3 cloudPosition(CloudPoint point, constant CloudUniforms &u) {
     float contour = sin(base.x * 2.1 + regionPhase * 0.34) * cos(base.y * 1.8 - regionPhase * 0.21);
     p.z += contour * abstraction * u.shape.x * 0.24;
     float weight = 0.8 + 0.4 * depth;
-    // The image sampler identifies color/alpha boundaries and fine detail.
-    // Pin those features more strongly than flat regions, so a bass accent
-    // never pulls lettering or a face apart into independent moving points.
-    float protection = mix(1.0, 0.16, saturate(point.geometryFeatures.x));
+    // The cover moves as one sheet: no point is held back for its detail,
+    // because points held back while their neighbours move tear lettering.
     float edge = 1.0 - smoothstep(0.70, 1.0, max(abs(base.x), abs(base.y)));
-    float envelope = mix(0.30, 1.0, edge) * protection;
+    float envelope = mix(0.30, 1.0, edge);
     float idle = sin(u.motion.x * 0.65 + base.x * 1.3 + base.y * 0.9) * min(0.008, u.shape.z * 0.32);
-    float wave = sin(base.x * min(u.wave.x, 6.0) * 0.55 - u.motion.x * u.wave.y * 0.35 + depth * 0.65 + regionPhase * abstraction * 0.28);
+    // At the default wave speed (3.5) one wave passes every 2.2 seconds.
+    float wave = sin(base.x * min(u.wave.x, 6.0) * 0.55 - u.motion.x * u.wave.y * 0.816 + depth * 0.65 + regionPhase * abstraction * 0.28);
     float breath = sin(u.motion.x * 0.42 + base.y * 1.9 + regionPhase * 0.2) * min(0.012, u.shape.z * 0.35) * abstraction;
-    float continuous = (idle + breath + wave * u.shape.y * (0.11 + abstraction * 0.035) * u.motion.y * weight) * u.behavior.y * envelope;
+    float continuous = (idle + breath + wave * u.shape.y * 0.375 * u.motion.y * weight) * u.behavior.y * envelope;
     float beat = u.motion.z * u.behavior.y;
-    float kick = beat * u.shape.y * 0.025 * weight * envelope;
+    float kick = beat * u.shape.y * 0.12 * weight * envelope;
     float pop = beat * u.behavior.x;
     float a = 1.0 - u.wave.w, b = u.wave.w;
     // A: only Y carries a continuous wave. B: only Z. The remaining axes
     // move exclusively during beat accents; relief remains static on Z.
-    float displacement = clamp(continuous + kick, -0.04 - abstraction * 0.02, 0.04 + abstraction * 0.02);
+    // A bounce you can see, at most 4.4% of the cover's height (the cover spans 2).
+    float displacement = clamp(continuous + kick, -0.088, 0.088);
     p.y += displacement * a;
     p.z += displacement * b;
-    p.z += pop * (0.018 + abstraction * 0.022) * depth * protection * a;
+    p.z += pop * (0.018 + abstraction * 0.022) * depth * a;
     // A coherent scale accent reads as a pulse, without distorting the image.
     p.xy *= 1.0 + pop * (0.005 + abstraction * 0.014);
     float progress = clamp(u.motion.w * 1.25 - seed * 0.25, 0.0, 1.0);
@@ -78,7 +78,6 @@ vertex PointOutput cloudVertex(uint id [[vertex_id]],
     PointOutput output;
     output.position = u.projection * viewPosition;
     float densityScale = u.viewport.z > 0.0 ? u.viewport.z : 1.0;
-    float detail = saturate(point.geometryFeatures.x);
     float abstraction = saturate(point.geometryFeatures.w);
     float footprint = clamp(1.05 + (u.shape.w - 1.8) * 0.16, 0.78, 1.35);
     // Tie the splat to its source cell rather than arbitrary screen pixels.
@@ -87,22 +86,25 @@ vertex PointOutput cloudVertex(uint id [[vertex_id]],
     float diameter = spacing * footprint * max(0.5, point.geometryFeatures.y);
     // In the painterly cloud, visible air separates pigment grains. Spatially
     // varying source footprints still cluster them into coherent color masses.
-    diameter *= mix(1.0, 0.95, detail) * mix(1.0, 0.76, abstraction) * (1.0 + beat * (0.06 + abstraction * 0.08));
+    // Dots swell by a quarter on a beat.
+    diameter *= mix(1.0, 0.76, abstraction) * (1.0 + beat * 0.25);
     bool halo = u.viewport.y > 0.5;
     output.pointSize = clamp(diameter * (halo ? 1.8 : 1.0) * u.viewport.x / max(0.1, -viewPosition.z), mix(0.9, 0.65, abstraction), 32.0);
+    // One pixel of soft edge: hard-edged dots closer than about 5 px draw ring patterns.
+    output.pointSize += halo ? 0.0 : 1.0;
+    output.size = output.pointSize;
     // The core always uses ordinary alpha compositing and unmodified linear
     // sampled pigment color. Glow is a separate, faint underlay; it cannot replace
     // dark ink with additive light or overexpose the photograph's highlights.
     output.color = point.colorLuminance.rgb;
-    float haloAlpha = (0.045 + beat * 0.02) * (1.0 - detail * 0.65) * (1.0 - point.colorLuminance.w * 0.70);
+    float haloAlpha = (0.045 + beat * 0.02) * (1.0 - point.colorLuminance.w * 0.70);
     // Dust from a flat background has no luminous veil. Keep a little halo
     // around larger pigment grains and macro contours to reveal their depth.
-    float pigmentHalo = smoothstep(0.9, 1.65, point.geometryFeatures.y) * 0.72 + detail * 0.20;
+    float pigmentHalo = smoothstep(0.9, 1.65, point.geometryFeatures.y) * 0.72;
     haloAlpha *= mix(1.0, pigmentHalo, saturate(abstraction * 1.4));
     float regionalCoverage = mix(1.0, 0.90 + 0.10 * sin(point.geometryFeatures.z * 6.2831853), abstraction);
     output.opacity = u.behavior.w * point.scatter.w * (halo ? haloAlpha : regionalCoverage);
     output.halo = halo ? 1.0 : 0.0;
-    output.softness = abstraction;
     return output;
 }
 
@@ -111,6 +113,6 @@ fragment float4 cloudFragment(PointOutput point [[stage_in]], float2 coordinate 
     if (radius > 0.5) discard_fragment();
     float alpha = point.halo > 0.5
         ? exp(-radius * radius * 18.0) * (1.0 - smoothstep(0.40, 0.50, radius))
-        : 1.0 - smoothstep(mix(0.43, 0.37, point.softness), 0.50, radius);
+        : saturate((0.5 - radius) * point.size);
     return float4(point.color, alpha * point.opacity);
 }

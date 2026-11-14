@@ -161,7 +161,7 @@ struct VisualSettingsView: View {
                     }
                 }
                 HStack(spacing: 22) {
-                    VStack(alignment: .leading, spacing: 9) { Text(L10n.string("点云密度")).font(.system(size: 11)); Picker(L10n.string("点云密度"), selection: $model.visual.density) { Text(L10n.string("稀疏")).tag(96); Text(L10n.string("均衡")).tag(160); Text(L10n.string("密集")).tag(224) }.labelsHidden() }
+                    VStack(alignment: .leading, spacing: 9) { Text(L10n.string("点云密度")).font(.system(size: 11)); Picker(L10n.string("点云密度"), selection: $model.visual.density) { Text(L10n.string("稀疏")).tag(96); Text(L10n.string("均衡")).tag(160); Text(L10n.string("密集")).tag(224); Text(L10n.string("非常密集")).tag(320) }.labelsHidden() }
                     Spacer()
                     VStack(alignment: .leading, spacing: 9) { Text(L10n.string("运动方式")).font(.system(size: 11)); Picker(L10n.string("运动方式"), selection: $model.visual.scheme) { Text(L10n.string("轻盈跃动")).tag(0); Text(L10n.string("纵深呼吸")).tag(1) }.labelsHidden() }
                 }.foregroundStyle(palette.secondary)

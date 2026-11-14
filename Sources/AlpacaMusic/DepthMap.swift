@@ -76,6 +76,51 @@ struct LuminanceDepthProvider: DepthProvider {
     }
 }
 
+/// Relief from the cover's large shapes only: lightness blurred over about a
+/// ninth of the cover, twice, then centred on its mean. Neighbouring points
+/// sit at nearly the same depth, so lettering and faces hold together when
+/// the cover is turned or bounces. It replaces the light 1 px blur of
+/// `LuminanceDepthProvider` (see docs/point-cloud-mode-requirements.md, FR-2.1).
+struct LargeShapeReliefProvider: DepthProvider {
+    /// How far the relief reaches around its mean: about 3.4 times the depth
+    /// the cover had when the relief was flattened per point.
+    var contrast: Float = 0.9
+
+    func compute(_ image: ArtworkPixels, grid: Int) async throws -> [Float] {
+        let field = try await ArtworkCloudField.make(image, grid: grid, abstraction: 0, seed: 0)
+        var values = field.cells.map(\.perceptualLuminance)
+        let radius = max(2, grid / 18)
+        for _ in 0..<2 {
+            try Task.checkCancellation()
+            var horizontal = values
+            for y in 0..<grid {
+                // A running box sum along each row, then each column.
+                var sum: Float = 0
+                for x in 0...min(grid - 1, radius) { sum += values[y * grid + x] }
+                for x in 0..<grid {
+                    let low = max(0, x - radius), high = min(grid - 1, x + radius)
+                    horizontal[y * grid + x] = sum / Float(high - low + 1)
+                    if x + radius + 1 < grid { sum += values[y * grid + x + radius + 1] }
+                    if x - radius >= 0 { sum -= values[y * grid + x - radius] }
+                }
+            }
+            for x in 0..<grid {
+                var sum: Float = 0
+                for y in 0...min(grid - 1, radius) { sum += horizontal[y * grid + x] }
+                for y in 0..<grid {
+                    let low = max(0, y - radius), high = min(grid - 1, y + radius)
+                    values[y * grid + x] = sum / Float(high - low + 1)
+                    if y + radius + 1 < grid { sum += horizontal[(y + radius + 1) * grid + x] }
+                    if y - radius >= 0 { sum -= horizontal[(y - radius) * grid + x] }
+                }
+            }
+            await Task.yield()
+        }
+        let mean = values.reduce(0, +) / Float(max(1, values.count))
+        return values.map { min(1, max(0, 0.5 + ($0 - mean) * contrast)) }
+    }
+}
+
 /// Four float4 values match the 64-byte Metal vertex layout without padding ambiguity.
 struct CloudPoint: Sendable {
     var positionDepthSeed: SIMD4<Float>
