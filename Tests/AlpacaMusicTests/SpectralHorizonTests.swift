@@ -198,7 +198,7 @@ import Testing
         #expect(SpectralHorizonRenderer.nearness(depth: 1) == 0)
         #expect(SpectralHorizonRenderer.nearness(depth: .nan) == 0)
         let geometry = SpectralHorizonRenderer.geometry(history: filled(audio(), captures: 20), size: Self.size)
-        #expect(abs(geometry.horizonY - Self.size.height * 0.36) < 0.001)
+        #expect(abs(geometry.horizonY - (Self.size.height / 2 - 0.14 * SpectrumBarsRenderer.roomUnit(Self.size))) < 0.001)
         let ridges = geometry.ridges
         #expect(ridges.count == SpectralHorizonHistory.capacity)
         for (far, near) in zip(ridges, ridges.dropFirst()) {

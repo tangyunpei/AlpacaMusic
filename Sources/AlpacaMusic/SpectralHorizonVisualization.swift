@@ -226,8 +226,11 @@ enum SpectralHorizonRenderer {
         guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else {
             return .init(ridges: [], front: nil, horizonY: 0, plotRect: .zero, state: .waiting)
         }
-        let horizonY = size.height * horizonFraction
-        let nearBase = size.height * nearBaseFraction
+        // Scaled to the largest 1440 x 676 box that fits, centred, so a tall
+        // window does not stretch the land.
+        let unit = SpectrumBarsRenderer.roomUnit(size)
+        let horizonY = size.height / 2 + (horizonFraction - 0.5) * unit
+        let nearBase = size.height / 2 + (nearBaseFraction - 0.5) * unit
         let nearHalf = size.width * nearHalfWidth
         let plot = CGRect(x: size.width / 2 - nearHalf, y: horizonY, width: nearHalf * 2, height: nearBase - horizonY)
         let state = history.state
@@ -237,7 +240,7 @@ enum SpectralHorizonRenderer {
             ridges.reserveCapacity(waitingRowCount)
             for index in stride(from: waitingRowCount - 1, through: 0, by: -1) {
                 let depth = Double(index) / Double(waitingRowCount)
-                ridges.append(ridge(levels: [], depth: depth, size: size, horizonY: horizonY, nearBase: nearBase))
+                ridges.append(ridge(levels: [], depth: depth, size: size, horizonY: horizonY, nearBase: nearBase, unit: unit))
             }
         } else {
             let rows = Array(history.rows.prefix(SpectralHorizonHistory.capacity))
@@ -245,21 +248,21 @@ enum SpectralHorizonRenderer {
             ridges.reserveCapacity(rows.count)
             for age in stride(from: rows.count - 1, through: 0, by: -1) {
                 let depth = (Double(age) + phase) / Double(SpectralHorizonHistory.capacity)
-                ridges.append(ridge(levels: rows[age], depth: depth, size: size, horizonY: horizonY, nearBase: nearBase))
+                ridges.append(ridge(levels: rows[age], depth: depth, size: size, horizonY: horizonY, nearBase: nearBase, unit: unit))
             }
-            front = ridge(levels: history.live, depth: 0, size: size, horizonY: horizonY, nearBase: nearBase)
+            front = ridge(levels: history.live, depth: 0, size: size, horizonY: horizonY, nearBase: nearBase, unit: unit)
         }
         return .init(ridges: ridges, front: front, horizonY: horizonY, plotRect: plot, state: state)
     }
 
     private static func ridge(levels: [Double], depth: Double, size: CGSize,
-                              horizonY: CGFloat, nearBase: CGFloat) -> SpectralHorizonRidge {
+                              horizonY: CGFloat, nearBase: CGFloat, unit: CGFloat) -> SpectralHorizonRidge {
         let near = nearness(depth: depth)
         let t = CGFloat(near)
         let baseY = horizonY + (nearBase - horizonY) * t
         let halfWidth = size.width * nearHalfWidth * (0.40 + 0.60 * t)
         let center = size.width / 2
-        let amplitude = size.height * 0.25 * t
+        let amplitude = unit * 0.25 * t
         let minX = center - halfWidth, maxX = center + halfWidth
         let count = min(levels.count, maximumPointsPerRidge)
         guard count >= 2 else {
@@ -292,7 +295,7 @@ enum SpectralHorizonRenderer {
         return size.width / 2 + size.width * nearHalfWidth * CGFloat(fraction * 1.1 - 0.55)
     }
 
-    static func sunRadius(size: CGSize) -> CGFloat { min(size.width, size.height) * 0.065 }
+    static func sunRadius(size: CGSize) -> CGFloat { min(size.width, SpectrumBarsRenderer.roomUnit(size)) * 0.065 }
 
     /// Shared production/offscreen entry point. Draws on whatever is behind it.
     static func draw(in context: inout GraphicsContext, size: CGSize,

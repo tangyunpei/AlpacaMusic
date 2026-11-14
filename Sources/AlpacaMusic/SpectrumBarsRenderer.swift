@@ -84,17 +84,26 @@ enum SpectrumBarsRenderer {
     /// centred, on a disc that sits on the baseline. The Now stage: columns
     /// 4 wide with 3 between across the visual's whole width, and a darker
     /// disc to the right (centred once the text sits below).
+    /// The height of the largest 1440 x 676 box (the room's scene in the
+    /// default window) that fits in `size`: what room effects scale with.
+    static func roomUnit(_ size: CGSize) -> CGFloat {
+        max(0, min(size.height, size.width * 676 / 1440))
+    }
+
     static func layout(size: CGSize, count: Int, place: EffectPlace) -> Layout {
         let width = max(0, size.width), height = max(0, size.height)
         let count = CGFloat(max(1, count))
         switch place {
         case .room:
-            // Measured on the room frame: a 1440 x 676 scene.
-            let baseline = height * 0.728
-            let tall = height * 0.503
-            let plotWidth = min(width * 0.73, height * 1.56)
+            // Measured on the room frame, a 1440 x 676 scene, and scaled to the
+            // largest such box that fits, centred: a tall window does not
+            // stretch the disc past its sides.
+            let unit = roomUnit(size)
+            let baseline = height / 2 + (0.728 - 0.5) * unit
+            let tall = unit * 0.503
+            let plotWidth = min(width * 0.73, unit * 1.56)
             let pitch = plotWidth / count
-            let disc = height * 0.71
+            let disc = unit * 0.71
             return Layout(plot: CGRect(x: (width - plotWidth) / 2, y: baseline - tall, width: plotWidth, height: tall),
                           columnWidth: pitch * 6 / 11, pitch: pitch, mirrorGap: 3,
                           disc: CGRect(x: (width - disc) / 2, y: baseline - disc, width: disc, height: disc),

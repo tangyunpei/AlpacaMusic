@@ -343,8 +343,8 @@ struct HarmonographSongFigure: Sendable {
 
     // MARK: Drawing
 
-    /// Centred on the scene: a full swing reaches as wide as the bars (36.5% of
-    /// the width each side) and as tall as the disc (40% of the height).
+    /// Centred on the scene: a full swing reaches as wide as the oscilloscope's
+    /// trace and as tall as the disc, the same disc as the oscilloscope's.
     struct Layout: Equatable, Sendable {
         var centre: CGPoint
         var halfWidth: CGFloat, halfHeight: CGFloat
@@ -354,7 +354,9 @@ struct HarmonographSongFigure: Sendable {
     static func layout(size: CGSize) -> Layout {
         let centre = CGPoint(x: size.width / 2, y: size.height / 2)
         let radius = min(size.height * 0.40, size.width * 0.24)
-        return Layout(centre: centre, halfWidth: size.width * 0.365, halfHeight: size.height * 0.40,
+        // Top and bottom of the disc are a full upright swing; a full sideways
+        // swing reaches as wide as the oscilloscope's trace.
+        return Layout(centre: centre, halfWidth: min(size.width * 0.365, radius * 1.95), halfHeight: radius,
                       disc: CGRect(x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2))
     }
 

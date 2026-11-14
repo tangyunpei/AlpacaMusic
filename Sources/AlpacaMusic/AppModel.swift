@@ -178,7 +178,6 @@ final class AppModel {
     }
 
     var activeTrack: Track? { player.current ?? library.tracks.first }
-    var canVisualizeActiveTrack: Bool { activeTrack?.source.supportsAudioAnalysis ?? true }
     /// A "Needs live audio" effect has nothing to draw for a source that
     /// gives no audio (Apple Music, Spotify), so the cover stands in while
     /// such a song is the current one, on the Now stage and in the room.

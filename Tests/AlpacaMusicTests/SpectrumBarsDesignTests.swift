@@ -37,11 +37,15 @@ import Testing
         #expect(layout.plot.maxY + layout.mirrorGap + layout.plot.height * SpectrumBarsRenderer.mirrorShare < 676)
     }
 
-    @Test(arguments: [CGSize(width: 1040, height: 456), CGSize(width: 1080, height: 1656), CGSize(width: 2560, height: 1176)])
+    @Test(arguments: [CGSize(width: 1040, height: 456), CGSize(width: 1080, height: 1656), CGSize(width: 2560, height: 1176),
+                      CGSize(width: 576, height: 600)])
     func theRoomKeepsItsProportionsAtOtherWindows(_ size: CGSize) {
         let layout = SpectrumBarsRenderer.layout(size: size, count: 96, place: .room)
         #expect(layout.plot.minX >= 0 && layout.plot.maxX <= size.width)
-        #expect(layout.disc.minY >= 0 && layout.disc.maxY == layout.plot.maxY)
+        #expect(layout.disc.minX >= 0 && layout.disc.maxX <= size.width && layout.disc.minY >= 0)
+        #expect(abs(layout.disc.maxY - layout.plot.maxY) < 0.001)
+        // Proportions are the default window's, scaled: never stretched.
+        #expect(abs(layout.disc.width / layout.plot.height - 0.71 / 0.503) < 0.001)
         #expect(layout.plot.maxY + 3 + layout.plot.height * 0.38 < size.height)
         #expect(abs(layout.columnWidth / layout.pitch - 6.0 / 11) < 0.001)
     }

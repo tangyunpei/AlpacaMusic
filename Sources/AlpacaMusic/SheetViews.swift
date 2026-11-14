@@ -146,7 +146,7 @@ struct VisualSettingsView: View {
                     }
                 }
             }
-            if !model.canVisualizeActiveTrack {
+            if model.player.current?.source.supportsAudioAnalysis == false {
                 Label(model.visualMode.isSignalDisplay
                       ? L10n.string("\(model.visualMode.title)需要实时音频，这个音源没有，暂由专辑封面代替。")
                       : L10n.string("\(model.activeTrack?.source.title ?? L10n.string("此音源")) 使用氛围动画，无法根据实时音频变化。"), systemImage: "sparkles")
@@ -185,7 +185,8 @@ struct VisualSettingsView: View {
                 toggle(L10n.string("减少动态效果"), $model.visual.reduceMotion)
                 toggle(L10n.string("低电量模式节能"), $model.visual.batterySaver)
                 // The point cloud shows this toggle with its own controls above.
-                if model.visualMode != .pointCloud && model.visualMode.isAudioReactive { toggle(L10n.string("柔和辉光"), $model.visual.glow) }
+                // Only the Bauhaus composition still draws a glow; the redesigned effects have none.
+                if model.visualMode == .bauhaus { toggle(L10n.string("柔和辉光"), $model.visual.glow) }
             }
             if osReduced { Text(L10n.string("已遵循系统的“减少动态效果”设置。")).font(.system(size: 10)).foregroundStyle(palette.secondary).frame(maxWidth: .infinity, alignment: .leading) }
         }.tint(palette.accent).animation(ExperienceMotion.control, value: model.visualMode)
