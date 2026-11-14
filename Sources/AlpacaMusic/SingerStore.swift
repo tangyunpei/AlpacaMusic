@@ -36,6 +36,7 @@ final class SingerStore: Identifiable {
     @ObservationIgnored private var songCounts: [MusicSource: Int] = [:]
     @ObservationIgnored private var isSaved: (Track) -> Bool
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var asking: Set<String> = []
 
     static func key(_ names: [String]) -> String { "singer:" + names.map(SearchList.fold).sorted().joined(separator: "|") }
 
@@ -82,8 +83,13 @@ final class SingerStore: Identifiable {
             return found
         }
         profiles = sources.compactMap { found[$0] }
+        // Marked loading before the search counts as done, so the page never
+        // shows a moment of "no albums" between the two.
+        for source in sources {
+            let load: SourceLoad = found[source] == nil ? .none : .loading
+            albumLoads[source] = load; songLoads[source] = load
+        }
         finding = false
-        for source in sources where found[source] == nil { albumLoads[source] = SourceLoad.none; songLoads[source] = SourceLoad.none }
         await withTaskGroup(of: Void.self) { group in
             for profile in profiles {
                 group.addTask { await self.loadAlbums(profile) }
@@ -119,7 +125,8 @@ final class SingerStore: Identifiable {
     }
 
     private func loadAlbums(_ profile: SingerProfile) async {
-        guard albumLoads[profile.source] != .loading else { return }
+        guard asking.insert("albums:" + profile.id).inserted else { return }
+        defer { asking.remove("albums:" + profile.id) }
         albumLoads[profile.source] = .loading
         do {
             let page = try await loader.albums(of: profile, offset: albumCounts[profile.source] ?? 0)
@@ -133,7 +140,8 @@ final class SingerStore: Identifiable {
     }
 
     private func loadSongs(_ profile: SingerProfile) async {
-        guard songLoads[profile.source] != .loading else { return }
+        guard asking.insert("songs:" + profile.id).inserted else { return }
+        defer { asking.remove("songs:" + profile.id) }
         songLoads[profile.source] = .loading
         do {
             let start = songCounts[profile.source] ?? 0
