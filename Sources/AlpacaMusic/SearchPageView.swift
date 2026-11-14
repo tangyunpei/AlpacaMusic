@@ -685,11 +685,18 @@ private struct SearchListFooter: View {
             Text(verbatim: note(store)).font(.system(size: 10)).foregroundStyle(palette.faint).lineLimit(2)
         }
         .frame(minHeight: 64)
+        // The next pages load by themselves as the end of the list scrolls into
+        // view (the owner's call, 14 November); a failure waits for the button.
+        .onScrollVisibilityChange(threshold: 0.2) { visible in
+            guard visible, store.canLoadMore, !store.sources.contains(where: { $0.moreError != nil }) else { return }
+            store.loadMore()
+        }
     }
 
     private func note(_ store: SearchStore) -> String {
         var parts: [String] = []
-        if store.canLoadMore { parts.append(L10n.string("向每个已连接的服务请求下一页，新歌曲加在下面。")) }
+        if store.loadingMore { parts.append(L10n.string("正在加载更多歌曲…")) }
+        else if store.canLoadMore { parts.append(L10n.string("向每个已连接的服务请求下一页，新歌曲加在下面。")) }
         else { parts.append(L10n.string("已是全部结果。")) }
         for state in store.sources {
             if let error = state.moreError { parts.append(L10n.string("\(state.source.title)：加载更多失败（\(error)）")) }

@@ -128,6 +128,23 @@ struct QQDirectProvider: DirectMusicProvider {
         guard tracks.count == list.count else { throw malformed() }
         return uniqueTracks(tracks)
     }
+    /// A later page of the same song search, for the results page's "More
+    /// songs". Tried live on 14 November 2026: page 2 gave 40 new songs; the
+    /// search reports at most 999 songs.
+    func searchPage(_ query: String, page: Int, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        let account = try session(cookies)
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, page >= 1 else { return [] }
+        guard query.count <= 200 else { throw MusicError.message(L10n.string("搜索内容过长，请缩短关键词。")) }
+        let data = try await rpc(module: "music.search.SearchCgiService", method: "DoSearchForQQMusicDesktop", parameters: ["remoteplace": "txt.yqq.song", "searchid": String(UInt64.random(in: 1...UInt64.max)), "search_type": 0, "query": query, "page_num": page, "num_per_page": Self.searchPageSize], account: account, cookies: cookies)
+        if let meta = data["meta"] as? [String: Any], (integer(meta["is_filter"]) ?? 0) < 0 {
+            throw MusicError.message(L10n.string("QQ 音乐限制了本次搜索，请重新登录或稍后重试。"))
+        }
+        guard let body = data["body"] as? [String: Any] else { throw malformed() }
+        let list = ((body["song"] as? [String: Any])?["list"] as? [[String: Any]]) ?? []
+        return uniqueTracks(list.compactMap(track))
+    }
+    static let searchPageSize = 40
     func lyrics(_ track: Track, cookies: [MusicSessionCookie]) async throws -> LyricsPayload? {
         guard track.source == .qq, let mid = track.sourceID, validID(mid) else { throw MusicError.message(L10n.string("歌曲缺少有效的 QQ 音乐标识，无法读取歌词。")) }
         let account = try session(cookies)

@@ -22,6 +22,17 @@ struct NeteaseDirectProvider: DirectMusicProvider {
         }
         return songs.map(\.track)
     }
+    /// A later page of the same song search, for the results page's "More
+    /// songs". Tried live on 14 November 2026: offset 50 gave 50 new songs.
+    func searchPage(_ query: String, offset: Int, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return [] }
+        let response: NESearchResponse = try await request("cloudsearch/pc", payload: ["s": term, "type": 1, "limit": Self.searchPageSize, "offset": max(0, offset), "total": true], cookies: cookies)
+        guard let result = response.result else { throw MusicError.message(L10n.string("网易云搜索响应已变化，请稍后重试")) }
+        // Past the last page the list is absent.
+        return (result.songs ?? []).map(\.track)
+    }
+    static let searchPageSize = 50
 
     func playlists(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicPlaylist] {
         try requireID(profile.id)

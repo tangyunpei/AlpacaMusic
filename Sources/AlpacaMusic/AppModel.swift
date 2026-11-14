@@ -146,7 +146,7 @@ final class AppModel {
         player = PlayerController(sources: sourceService, defaults: preferences, appleMusic: appleMusic, spotify: spotify)
         autoImport = AutoImportCoordinator(library: library, accounts: accounts, appleMusic: appleMusic, spotify: spotify)
         browse = BrowseStore(loader: browseLoader ?? PlatformBrowseLoader(accounts: accounts, appleMusic: appleMusic), defaults: preferences)
-        searchResults = SearchStore(loader: searchLoader ?? PlatformSearchLoader(sources: sourceService, appleMusic: appleMusic, spotify: spotify),
+        searchResults = SearchStore(loader: searchLoader ?? PlatformSearchLoader(sources: sourceService, appleMusic: appleMusic, spotify: spotify, native: native),
                                     preferences: preferences)
         var savedVisual = (preferences.data(forKey: "visual-settings").flatMap { try? JSONDecoder().decode(VisualSettings.self, from: $0) } ?? .standard).validated()
         // Abstraction's default moved from 0.2 to 0 (true colours, every point).

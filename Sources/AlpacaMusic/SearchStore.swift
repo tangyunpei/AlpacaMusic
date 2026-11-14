@@ -125,14 +125,20 @@ final class SearchStore {
             sources[index].loadingMore = true; sources[index].moreError = nil
         }
         let offsets = Dictionary(uniqueKeysWithValues: sources.map { ($0.source, $0.count) })
+        let loader = loader, configurations = configurations, includeSoda = includeSoda
         tasks.append(Task { [weak self] in
-            guard let self else { return }
-            var pages: [SearchPage] = []
-            for source in asked {
-                pages.append(await loader.page(term, source: source, offset: offsets[source] ?? 0, configurations: configurations,
-                                               includeSodaPublicly: includeSoda))
-                guard current(token) else { return }
+            // Every service is asked at once; their songs still take turns in the fixed order.
+            let answers = await withTaskGroup(of: SearchPage.self) { group in
+                for source in asked {
+                    group.addTask { await loader.page(term, source: source, offset: offsets[source] ?? 0, configurations: configurations,
+                                                      includeSodaPublicly: includeSoda) }
+                }
+                var answers: [SearchPage] = []
+                for await page in group { answers.append(page) }
+                return answers
             }
+            guard let self, current(token) else { return }
+            let pages = asked.compactMap { source in answers.first { $0.source == source } }
             var lists: [[SearchCopy]] = []
             for page in pages {
                 guard let index = sources.firstIndex(where: { $0.source == page.source }) else { continue }

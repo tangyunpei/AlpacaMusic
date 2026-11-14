@@ -115,6 +115,31 @@ struct SearchStoreTests {
         #expect(SearchList.filter(store.rows, by: .source(.appleMusic)).last?.id == "appleMusic:34")
     }
 
+    @Test func moreSongsAsksEveryServiceAndKeepsTheirOrderAndAFailureCanBeTriedAgain() async throws {
+        let loader = FakeSearchLoader()
+        loader.targetList = [.netease, .qq]
+        loader.first = [.netease: SearchPage(source: .netease, tracks: songs(.netease, 2), paging: .more),
+                        .qq: SearchPage(source: .qq, tracks: songs(.qq, 2), paging: .more)]
+        loader.pages = [.netease: [2: SearchPage(source: .netease, tracks: songs(.netease, 2, from: 2), paging: .end)],
+                        .qq: [2: SearchPage(source: .qq, tracks: [], error: "timed out", paging: .more)]]
+        let (store, defaults, domain) = try makeStore(loader); defer { defaults.removePersistentDomain(forName: domain) }
+        store.start("Song", library: [], configurations: [], includeSodaPublicly: false, isSaved: { _ in false })
+        await until { !store.held }
+        store.loadMore()
+        await until { !store.loadingMore && store.rows.count == 6 }
+        #expect(Set(loader.pageRequests) == ["netease@2", "qq@2"])
+        #expect(store.rows.suffix(2).map(\.id) == ["netease:2", "netease:3"])
+        #expect(store.sources.first { $0.source == .qq }?.moreError == "timed out")
+        // The failed service can still be asked; the one that ended is not.
+        #expect(store.canLoadMore)
+        loader.pages[.qq] = [2: SearchPage(source: .qq, tracks: songs(.qq, 1, from: 2), paging: .end)]
+        store.loadMore()
+        await until { !store.loadingMore && store.rows.count == 7 }
+        #expect(loader.pageRequests.last == "qq@2")
+        #expect(store.rows.last?.id == "qq:2")
+        #expect(!store.canLoadMore)
+    }
+
     @Test func aFailedServiceIsRetriedAndItsSongsGoBelow() async throws {
         let loader = FakeSearchLoader()
         loader.targetList = [.netease, .qq]
