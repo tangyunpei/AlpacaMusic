@@ -19,8 +19,10 @@ struct NowLayoutInput: Equatable, Sendable {
     var action = false
     /// The stage shows the current and the next lyric line.
     var lyrics = true
-    /// The stage says its visual has no live audio to draw.
-    var notice = false
+    /// The stage shows the song's cover: Album artwork is the chosen visual,
+    /// or the cover stands in for a visual that needs live audio the source
+    /// does not give.
+    var cover = false
     /// This week shows every chart instead of two rows.
     var chartsExpanded = false
 }
@@ -46,7 +48,7 @@ struct NowLayoutChoice: Equatable, Sendable {
     var connect: Bool
     var action: Bool
     var lyrics: Bool
-    var notice: Bool
+    var cover: Bool
     var chartsExpanded: Bool
 
     /// The same choices as amounts, the form in which they move.
@@ -55,7 +57,7 @@ struct NowLayoutChoice: Equatable, Sendable {
                        compactNext: compact && !idle ? 1 : 0, idle: idle ? 1 : 0, stacked: stacked ? 1 : 0,
                        columns2: chartColumns == 2 ? 1 : 0, columns3: chartColumns == 3 ? 1 : 0, columns5: chartColumns == 5 ? 1 : 0,
                        panel: panel == .closed ? 0 : 1, dock: docks ? 1 : 0, connect: connect ? 1 : 0,
-                       action: action ? 1 : 0, lyrics: lyrics ? 1 : 0, notice: notice ? 1 : 0, expanded: chartsExpanded ? 1 : 0)
+                       action: action ? 1 : 0, lyrics: lyrics ? 1 : 0, cover: cover ? 1 : 0, expanded: chartsExpanded ? 1 : 0)
     }
 }
 
@@ -80,12 +82,13 @@ struct NowLayoutBlend: VectorArithmetic, Sendable {
     var connect: CGFloat = 0
     var action: CGFloat = 0
     var lyrics: CGFloat = 0
-    var notice: CGFloat = 0
+    /// How much of the cover shows in the visual's place.
+    var cover: CGFloat = 0
     var expanded: CGFloat = 0
 
     static var zero: NowLayoutBlend {
         NowLayoutBlend(gutter: 0, cards: 0, nextStrip: 0, compactNext: 0, idle: 0, stacked: 0, columns2: 0, columns3: 0, columns5: 0,
-                       panel: 0, dock: 0, connect: 0, action: 0, lyrics: 0, notice: 0, expanded: 0)
+                       panel: 0, dock: 0, connect: 0, action: 0, lyrics: 0, cover: 0, expanded: 0)
     }
     private func combined(_ other: NowLayoutBlend, _ operation: (CGFloat, CGFloat) -> CGFloat) -> NowLayoutBlend {
         NowLayoutBlend(gutter: operation(gutter, other.gutter), cards: operation(cards, other.cards),
@@ -95,7 +98,7 @@ struct NowLayoutBlend: VectorArithmetic, Sendable {
                        columns5: operation(columns5, other.columns5), panel: operation(panel, other.panel),
                        dock: operation(dock, other.dock), connect: operation(connect, other.connect),
                        action: operation(action, other.action), lyrics: operation(lyrics, other.lyrics),
-                       notice: operation(notice, other.notice), expanded: operation(expanded, other.expanded))
+                       cover: operation(cover, other.cover), expanded: operation(expanded, other.expanded))
     }
     static func + (lhs: NowLayoutBlend, rhs: NowLayoutBlend) -> NowLayoutBlend { lhs.combined(rhs, +) }
     static func - (lhs: NowLayoutBlend, rhs: NowLayoutBlend) -> NowLayoutBlend { lhs.combined(rhs, -) }
@@ -104,7 +107,7 @@ struct NowLayoutBlend: VectorArithmetic, Sendable {
         let squares = combined(self) { value, _ in value * value }
         return Double(squares.gutter + squares.cards + squares.nextStrip + squares.compactNext + squares.idle + squares.stacked
                       + squares.columns2 + squares.columns3 + squares.columns5 + squares.panel + squares.dock + squares.connect
-                      + squares.action + squares.lyrics + squares.notice + squares.expanded)
+                      + squares.action + squares.lyrics + squares.cover + squares.expanded)
     }
 }
 
@@ -141,7 +144,9 @@ struct NowMetrics: Equatable, Sendable {
     var visualFrame: CGRect
     var action: CGFloat
     var lyrics: CGFloat
-    var notice: CGFloat
+    var cover: CGFloat
+    /// The cover's place on the stage.
+    var coverFrame: CGRect
     var connect: CGFloat
     var panel: CGFloat
     var dock: CGFloat
@@ -175,7 +180,8 @@ struct NowStageMetrics: Equatable, Sendable {
     var visualFrame: CGRect
     var action: CGFloat
     var lyrics: CGFloat
-    var notice: CGFloat
+    var cover: CGFloat
+    var coverFrame: CGRect
     var compactNext: CGFloat
 }
 
@@ -186,7 +192,8 @@ extension NowMetrics {
     var stage: NowStageMetrics {
         NowStageMetrics(pageWidth: pageWidth, contentWidth: contentWidth, height: stageHeight, gutter: gutter, rowInset: rowInset,
                         titleSize: titleSize, lyricSize: lyricSize, lyricNextSize: lyricNextSize, textHeight: textHeight,
-                        stacked: stacked, visualFrame: visualFrame, action: action, lyrics: lyrics, notice: notice, compactNext: compactNext)
+                        stacked: stacked, visualFrame: visualFrame, action: action, lyrics: lyrics, cover: cover, coverFrame: coverFrame,
+                        compactNext: compactNext)
     }
     var cardSize: CGSize { CGSize(width: cardWidth, height: cardHeight) }
 }
@@ -230,6 +237,10 @@ enum NowLayout {
     static let todayPadding = (top: CGFloat(24), bottom: CGFloat(20))
     static let weekPadding = (top: CGFloat(28), bottom: CGFloat(28))
     static let latelyPadding = (top: CGFloat(28), bottom: CGFloat(36))
+    /// The cover on the stage is never smaller or larger than this.
+    static let coverSideRange: ClosedRange<CGFloat> = 96...520
+    /// The room the cover leaves below the stage's top edge.
+    static let coverTopRoom: CGFloat = 72
     static let chartCardHeight: CGFloat = 148
     static let chartGap: CGFloat = 14
     static let chartRows = 2
@@ -251,7 +262,7 @@ enum NowLayout {
         var choice = NowLayoutChoice(gutter: gutter, cardsPerRow: cards, compact: compact, nextStrip: nextStrip, idle: input.idle,
                                      stacked: false, chartColumns: rowWidth >= 1700 ? 5 : rowWidth >= 940 ? 3 : 2,
                                      panel: panel, docks: docks, connect: input.connect, action: input.action,
-                                     lyrics: input.lyrics && !input.idle, notice: input.notice && !input.idle,
+                                     lyrics: input.lyrics && !input.idle, cover: input.cover,
                                      chartsExpanded: input.chartsExpanded)
         let settled = metrics(width: input.width, height: input.height, blend: choice.blend)
         choice.stacked = settled.pageWidth / settled.stageHeight < 1.6
@@ -292,15 +303,35 @@ enum NowLayout {
         let stacked = share(blend.stacked)
         let visualLeft = pixel(pageWidth * 0.38 * (1 - stacked))
         let visualFrame = CGRect(x: visualLeft, y: 0, width: pageWidth - visualLeft, height: pixel(max(1, stageHeight - stacked * textHeight)))
+        // The cover's place, as the canvas sets it. Beside the text it stands at
+        // the content's right edge, 12pt above the stage's buttons and the note
+        // of the next song over them; over the text it is centred in the room
+        // above it. While the stage changes between the two it travels.
+        let compactNext = share(blend.compactNext)
+        let besideBottom = stageHeight - 26 - (34 + 36 * compactNext) - 12
+        let besideSide = coverSide(room: besideBottom - coverTopRoom, width: (pageWidth * 0.62).rounded(), stageHeight: stageHeight)
+        let aboveBottom = stageHeight - textHeight - 40
+        let aboveSide = coverSide(room: aboveBottom - coverTopRoom, width: pageWidth, stageHeight: stageHeight)
+        let coverSide = (besideSide + (aboveSide - besideSide) * stacked).rounded()
+        let besideOrigin = CGPoint(x: pageWidth - sidePadding - besideSide, y: besideBottom - besideSide)
+        let aboveOrigin = CGPoint(x: (pageWidth - aboveSide) / 2, y: coverTopRoom + (aboveBottom - coverTopRoom - aboveSide) / 2)
+        let coverFrame = CGRect(x: pixel(besideOrigin.x + (aboveOrigin.x - besideOrigin.x) * stacked),
+                                y: pixel(besideOrigin.y + (aboveOrigin.y - besideOrigin.y) * stacked), width: coverSide, height: coverSide)
         return NowMetrics(width: width, height: height, pageWidth: pageWidth, contentWidth: contentWidth, gutter: gutter,
                           rowInset: rowInset, rowWidth: rowWidth, cardWidth: cardWidth, cardHeight: cardHeight,
                           headHeight: headHeight, todayRowHeight: todayRowHeight, todayHeight: todayHeight,
-                          nextStrip: nextStrip, nextStripHeight: nextStripHeight, compactNext: share(blend.compactNext),
+                          nextStrip: nextStrip, nextStripHeight: nextStripHeight, compactNext: compactNext,
                           idle: idle, stageHeight: stageHeight, titleSize: titleSize, lyricSize: lyricSize,
                           lyricNextSize: lyricNextSize, textHeight: textHeight, stacked: stacked, visualFrame: visualFrame,
-                          action: action, lyrics: lyrics, notice: share(blend.notice), connect: connect, panel: panel, dock: dock,
+                          action: action, lyrics: lyrics, cover: share(blend.cover), coverFrame: coverFrame, connect: connect, panel: panel, dock: dock,
                           columns: NowChartColumns(two: fine(blend.columns2), three: fine(blend.columns3), five: fine(blend.columns5)),
                           expanded: share(blend.expanded))
+    }
+
+    /// The cover's side in whole points: the smallest of the room it has, six
+    /// tenths of the visual's width and 62% of the stage's height.
+    static func coverSide(room: CGFloat, width: CGFloat, stageHeight: CGFloat) -> CGFloat {
+        clamp(min(room, width * 0.6, stageHeight * 0.62), coverSideRange.lowerBound, coverSideRange.upperBound).rounded()
     }
 
     /// A length on the half-point grid: a whole pixel on a Retina display.

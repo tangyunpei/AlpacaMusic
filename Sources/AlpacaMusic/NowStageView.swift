@@ -15,11 +15,31 @@ struct NowStageView: View {
         let style = NowStageStyle(light: model.visualMode == .bauhaus)
         ZStack(alignment: .topLeading) {
             style.palette.background
-            NowStageVisual(model: model)
-                .frame(width: metrics.visualFrame.width, height: metrics.visualFrame.height)
-                .offset(x: metrics.visualFrame.minX, y: metrics.visualFrame.minY)
+            // The chosen visual, or the cover's wash of colour where the cover
+            // shows instead. While one gives way to the other both are here; at
+            // rest only one is, so a visual that is not shown costs nothing.
+            if metrics.cover < 0.999 {
+                NowStageVisual(model: model)
+                    .frame(width: metrics.visualFrame.width, height: metrics.visualFrame.height)
+                    .offset(x: metrics.visualFrame.minX, y: metrics.visualFrame.minY)
+                    .opacity(Double(1 - metrics.cover))
+            }
+            if metrics.cover > 0.001 {
+                ArtworkAtmosphere(track: model.activeTrack)
+                    .frame(width: metrics.visualFrame.width, height: metrics.visualFrame.height)
+                    .offset(x: metrics.visualFrame.minX, y: metrics.visualFrame.minY)
+                    .opacity(Double(metrics.cover))
+                    .accessibilityHidden(true)
+            }
             NowStageScrim(style: style, stacked: metrics.stacked, textShare: metrics.textHeight / max(1, metrics.height))
                 .allowsHitTesting(false)
+            if metrics.cover > 0.001 {
+                NowStageCover(model: model)
+                    .frame(width: metrics.coverFrame.width, height: metrics.coverFrame.height)
+                    .scaleEffect(0.94 + 0.06 * metrics.cover)
+                    .offset(x: metrics.coverFrame.minX, y: metrics.coverFrame.minY)
+                    .opacity(Double(metrics.cover))
+            }
             NowStageText(model: model, metrics: metrics, style: style)
                 .frame(width: metrics.contentWidth, alignment: .bottomLeading)
                 .padding(.horizontal, NowLayout.sidePadding).padding(.bottom, 26)
@@ -37,12 +57,64 @@ struct NowStageView: View {
     }
 }
 
-/// The listener's visual, exactly as the room shows it. One scene at a time:
+/// When the stage shows the song's cover, and why.
+@MainActor enum NowCover {
+    /// A visual that draws measured audio has nothing to draw for a source
+    /// that gives none. The cover stands in while such a song plays. The
+    /// listener's choice is not touched, so it is back with the next song
+    /// that has live audio. Whether a source can give audio decides this, not
+    /// whether samples have arrived: a song still loading keeps its visual.
+    static func standsIn(_ model: AppModel) -> Bool {
+        model.player.current?.source.supportsAudioAnalysis == false && model.visualMode.isSignalDisplay
+    }
+    /// The cover shows: as the chosen visual, or standing in for one.
+    static func shows(_ model: AppModel) -> Bool { model.visualMode == .artwork || standsIn(model) }
+}
+
+/// The listener's visual, drawn as the room draws it. One scene at a time:
 /// while the room is open it has the scene and the stage rests.
+///
+/// The cover has its own place on the stage, so this never draws Album
+/// artwork: when the cover takes over, the visual that was showing stays as
+/// it was while it fades.
 private struct NowStageVisual: View {
+    @Environment(\.nowMotion) private var motion
+    let model: AppModel
+    /// The visual last drawn here.
+    @State private var last: VisualizationMode?
+
+    var body: some View {
+        let chosen = model.visualMode
+        let mode = chosen == .artwork ? last ?? chosen : chosen
+        ZStack {
+            if !model.immersive {
+                MusicVisualizationView(track: model.activeTrack, mode: mode, settings: model.visual,
+                                       // A visual on its way out for want of audio rests rather than wait for samples.
+                                       isPlaying: model.player.status == .playing && !NowCover.standsIn(model),
+                                       signal: { model.player.readLevels() }, showsStatus: false, showsMissingAudioStatus: false)
+                    .id(mode).transition(.opacity)
+            }
+        }
+        .animation(motion.reduced ? nil : ExperienceMotion.visualization, value: mode)
+        .onChange(of: chosen, initial: true) { _, new in if new != .artwork { last = new } }
+    }
+}
+
+/// The song's cover on the stage, drawn as the Album artwork visual draws it.
+private struct NowStageCover: View {
+    @Environment(\.nowMotion) private var motion
     let model: AppModel
     var body: some View {
-        if !model.immersive { ListeningScene(model: model, showsSignalNotice: false) }
+        let track = model.activeTrack
+        ZStack {
+            ArtworkView(track: track, radius: 10, highResolution: true)
+                .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.16), lineWidth: 0.7) }
+                .id(track?.id)
+                .transition(.opacity)
+        }
+        .shadow(color: .black.opacity(0.34), radius: 36, x: 0, y: 22)
+        .animation(motion.reflow, value: track?.id)
+        .allowsHitTesting(false)
     }
 }
 
@@ -109,6 +181,8 @@ private struct NowStageText: View {
             NowStageEyebrow(model: model, gutter: metrics.gutter, style: style)
             NowStageTitle(model: model, size: metrics.titleSize, style: style)
                 .padding(.top, 10)
+                // The name ends before a cover that stands beside it.
+                .padding(.trailing, (metrics.coverFrame.width + 24) * metrics.cover * (1 - metrics.stacked))
             HStack(alignment: .bottom, spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     NowStageSubtitle(model: model)
@@ -121,7 +195,9 @@ private struct NowStageText: View {
                         .nowReveal(metrics.lyrics)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                NowStageSide(model: model, compactNext: metrics.compactNext, notice: metrics.notice, style: style)
+                NowStageSide(model: model, compactNext: metrics.compactNext, gutter: metrics.gutter, style: style)
+                    // As wide as the cover above it, so the lines beside it end before the cover too.
+                    .frame(minWidth: metrics.coverFrame.width * metrics.cover * (1 - metrics.stacked), alignment: .trailing)
                     .padding(.leading, 24)
                     .fixedSize()
             }
@@ -333,12 +409,13 @@ private struct NowStageLyrics: View {
     }
 }
 
-/// The stage's lower right: what comes next when the strip has no room, a
-/// word when the visual has no live audio, the visual's name and the room.
+/// The stage's lower right: what comes next when the strip has no room, the
+/// visual's name and the room.
 private struct NowStageSide: View {
     let model: AppModel
     let compactNext: CGFloat
-    let notice: CGFloat
+    /// How much of the label gutter shows; with it the visual's button has room for a word more.
+    let gutter: CGFloat
     let style: NowStageStyle
 
     var body: some View {
@@ -347,58 +424,51 @@ private struct NowStageSide: View {
             NowCompactNext(model: model, style: style)
                 .padding(.bottom, 12)
                 .nowReveal(compactNext, foldsAcross: true, anchor: .topTrailing)
-            NowSignalNotice(model: model, style: style)
-                .padding(.bottom, 12)
-                .nowReveal(notice, foldsAcross: true, anchor: .topTrailing)
+            // Each button keeps its own width. Left to share the row, the one with
+            // less to give is offered half of it first and cuts its name short.
             HStack(spacing: 8) {
-                NowVisualChip(model: model, style: style)
-                NowRoomChip(model: model, style: style)
+                NowVisualChip(model: model, gutter: gutter, style: style).fixedSize()
+                NowRoomChip(model: model, style: style).fixedSize()
             }
         }
     }
 }
 
-/// Says that the chosen visual draws measured audio and this source gives none.
-private struct NowSignalNotice: View {
-    let model: AppModel
-    let style: NowStageStyle
-    var body: some View {
-        let palette = style.palette
-        HStack(spacing: 10) {
-            Text(L10n.string("\(model.activeTrack?.source.title ?? L10n.string("当前音源")) 没有实时音频，画面保持静止。"))
-                .font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
-            // Where the no-live-audio fallback has always pointed.
-            Button(L10n.string("使用流光绸缎")) { model.visualMode = .ribbons }
-                .buttonStyle(NowChipButtonStyle(fill: palette.accent.opacity(0.16), ink: palette.accent))
-                .accessibilityIdentifier("apple-waveform-ambience")
-        }
-        .padding(.leading, 12).padding(.trailing, 5).frame(height: 34)
-        .background(style.chipFill, in: .rect(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(style.chipLine))
-    }
-}
-
-/// Names the visual on the stage and opens the list of visuals.
+/// Names the visual on the stage and opens the list of visuals. While the
+/// cover stands in for a visual that needs live audio, the visual keeps its
+/// name here in the quieter ink, since it is still the listener's choice.
 private struct NowVisualChip: View {
     let model: AppModel
+    let gutter: CGFloat
     let style: NowStageStyle
     var body: some View {
         let palette = style.palette
-        Label(model.visualMode.title, systemImage: model.visualMode.symbol).font(.system(size: 11)).lineLimit(1)
-            .padding(.horizontal, 12).frame(height: 34)
-            .foregroundStyle(palette.accent)
-            .background(style.chipFill, in: .rect(cornerRadius: 7))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(style.chipLine))
-            .nowMenu {
-                Picker(L10n.string("视觉效果"), selection: Binding(get: { model.visualMode }, set: { model.visualMode = $0 })) {
-                    ForEach(VisualizationMode.allCases) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
-                }.pickerStyle(.inline)
-                Divider()
-                Button(L10n.string("调整视觉效果…")) { model.sheet = .visual }
+        let mode = model.visualMode
+        let standsIn = NowCover.standsIn(model)
+        let waiting = L10n.string("\(mode.title)需要实时音频，这个音源没有，暂由专辑封面代替。")
+        HStack(spacing: 0) {
+            Label(mode.title, systemImage: mode.symbol)
+            if standsIn {
+                Text(L10n.string("· 无实时音频")).fixedSize().padding(.leading, 7)
+                    .nowReveal(gutter, axis: .horizontal)
             }
-            .help(model.visualMode == .pointCloud ? L10n.string("拖动旋转 · 双击复位") : L10n.string("视觉效果：\(model.visualMode.title)"))
-            .accessibilityLabel(L10n.string("选择视觉效果，当前为\(model.visualMode.title)"))
-            .accessibilityIdentifier("now-visual-menu")
+        }
+        .font(.system(size: 11)).lineLimit(1)
+        .padding(.horizontal, 12).frame(height: 34)
+        .foregroundStyle(standsIn ? palette.secondary : palette.accent)
+        .background(style.chipFill, in: .rect(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(style.chipLine))
+        .nowMenu {
+            Picker(L10n.string("视觉效果"), selection: Binding(get: { model.visualMode }, set: { model.visualMode = $0 })) {
+                ForEach(VisualizationMode.allCases) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
+            }.pickerStyle(.inline)
+            Divider()
+            Button(L10n.string("调整视觉效果…")) { model.sheet = .visual }
+        }
+        .help(standsIn ? waiting : mode == .pointCloud ? L10n.string("拖动旋转 · 双击复位") : L10n.string("视觉效果：\(mode.title)"))
+        .accessibilityLabel(L10n.string("选择视觉效果，当前为\(mode.title)"))
+        .accessibilityValue(standsIn ? waiting : "")
+        .accessibilityIdentifier("now-visual-menu")
     }
 }
 
@@ -418,19 +488,6 @@ private struct NowRoomChip: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("now-open-room")
-    }
-}
-
-/// A small filled button inside a chip.
-struct NowChipButtonStyle: ButtonStyle {
-    let fill: Color
-    let ink: Color
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: 11, weight: .medium)).lineLimit(1)
-            .padding(.horizontal, 9).frame(height: 24)
-            .foregroundStyle(ink.opacity(configuration.isPressed ? 0.7 : 1))
-            .background(fill, in: .rect(cornerRadius: 5))
-            .contentShape(.rect)
     }
 }
 

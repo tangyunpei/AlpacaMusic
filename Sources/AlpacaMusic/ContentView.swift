@@ -525,16 +525,13 @@ struct KineticBackdrop: ViewModifier {
 struct ListeningScene: View {
     @Environment(\.appPalette) private var palette
     @Bindable var model: AppModel
-    /// Off where the surface around the scene says it itself, as the Now stage does.
-    var showsSignalNotice = true
     @Environment(\.accessibilityReduceMotion) private var reduced
     var body: some View {
         ZStack {
             MusicVisualizationView(track: model.activeTrack, mode: model.visualMode, settings: model.visual,
-                                   isPlaying: model.player.status == .playing, signal: { model.player.readLevels() }, showsStatus: false,
-                                   showsMissingAudioStatus: showsSignalNotice)
+                                   isPlaying: model.player.status == .playing, signal: { model.player.readLevels() }, showsStatus: false)
                 .id(model.visualMode).transition(.opacity)
-            if showsSignalNotice, model.activeTrack?.source.supportsAudioAnalysis == false, model.visualMode.isSignalDisplay,
+            if model.activeTrack?.source.supportsAudioAnalysis == false, model.visualMode.isSignalDisplay,
                !model.immersive || !model.lyricsVisible || model.lyricPresentation == .scroll {
                 VStack(spacing: 10) {
                     Text(L10n.string("\(model.activeTrack?.source.title ?? L10n.string("当前音源")) 暂无实时波形与频谱"))

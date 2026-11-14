@@ -63,9 +63,23 @@ private struct CanvasFrame: Sendable, CustomTestStringConvertible {
 private func near(_ value: CGFloat, _ expected: CGFloat, within tolerance: CGFloat) -> Bool { abs(value - expected) <= tolerance }
 
 /// A window as the page sees it: without the sidebar and the player bar.
-private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool = false, idle: Bool = false, connect: Bool = false) -> NowLayoutInput {
+private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool = false, idle: Bool = false, connect: Bool = false,
+                  cover: Bool = false) -> NowLayoutInput {
     NowLayoutInput(width: windowWidth - NowLayout.sidebarWidth, height: windowHeight - NowLayout.playerBarHeight, idle: idle,
-                   panelOpen: panel, connect: connect, action: idle, lyrics: !idle)
+                   panelOpen: panel, connect: connect, action: idle, lyrics: !idle, cover: cover)
+}
+
+/// Where the canvas's rules put the stage's cover for one window.
+private struct CoverPlace: Sendable, CustomTestStringConvertible {
+    let name: String
+    let w: CGFloat, h: CGFloat
+    let panel: Bool
+    let side: CGFloat, left: CGFloat, top: CGFloat
+    let stacked: Bool
+    init(_ name: String, w: CGFloat, h: CGFloat, panel: Bool = false, side: CGFloat, left: CGFloat, top: CGFloat, stacked: Bool) {
+        self.name = name; self.w = w; self.h = h; self.panel = panel; self.side = side; self.left = left; self.top = top; self.stacked = stacked
+    }
+    var testDescription: String { name }
 }
 
 @Suite struct NowLayoutTests {
@@ -208,6 +222,67 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
         #expect(landscape.stacked == 0)
         #expect(near(landscape.visualFrame.minX, landscape.pageWidth * 0.38, within: 0.25))
         #expect(landscape.visualFrame.maxX == landscape.pageWidth && landscape.visualFrame.height == landscape.stageHeight)
+    }
+
+    // MARK: Cover
+
+    /// The cover's place for the canvas's sizes, from the canvas's own rules
+    /// (artSide, artLeft, artTop) evaluated for each. The canvas takes the
+    /// stage's text as three lines whatever it shows; where the cover stands
+    /// over the text the app measures the text it has, so those two differ by
+    /// a point or two.
+    @Test(arguments: [
+        CoverPlace("no live audio 1440x940", w: 1440, h: 940, side: 273, left: 913, top: 96, stacked: false),
+        CoverPlace("smallest 1040x720", w: 1040, h: 720, side: 96, left: 690, top: 56, stacked: false),
+        CoverPlace("portrait 1080x1920", w: 1080, h: 1920, side: 365, left: 248, top: 72, stacked: true),
+        CoverPlace("big 2560x1440", w: 2560, h: 1440, side: 446, left: 1860, top: 202, stacked: false),
+        CoverPlace("list open 1440x940", w: 1440, h: 940, panel: true, side: 237, left: 609, top: 74, stacked: false),
+        CoverPlace("built-in 1728x1117", w: 1728, h: 1117, side: 347, left: 1127, top: 140, stacked: false),
+        CoverPlace("tall 1080x1340", w: 1080, h: 1340, side: 327, left: 267, top: 72, stacked: true)
+    ])
+    fileprivate func theCoverStandsWhereTheCanvasPutsIt(_ place: CoverPlace) {
+        let metrics = NowLayout.settledMetrics(for: page(place.w, place.h, panel: place.panel, cover: true))
+        let slack: CGFloat = place.stacked ? 2 : 0.5
+        #expect(metrics.cover == 1)
+        #expect((metrics.stacked == 1) == place.stacked)
+        #expect(near(metrics.coverFrame.width, place.side, within: slack))
+        #expect(metrics.coverFrame.width == metrics.coverFrame.height)
+        #expect(near(metrics.coverFrame.minX, place.left, within: slack))
+        #expect(near(metrics.coverFrame.minY, place.top, within: slack))
+    }
+
+    @Test func theCoverKeepsToItsSizesAndClearOfTheButtons() {
+        for windowWidth in stride(from: CGFloat(1040), through: 3000, by: 61) {
+            for windowHeight in stride(from: CGFloat(720), through: 2200, by: 43) {
+                let metrics = NowLayout.settledMetrics(for: page(windowWidth, windowHeight, cover: true))
+                let frame = metrics.coverFrame
+                #expect(frame.width >= 96 && frame.width <= 520)
+                #expect(frame.width == frame.width.rounded())
+                // Inside the page, and its bottom edge at least 12pt above the buttons (34pt tall, 26pt above the stage's foot).
+                #expect(frame.minX >= 0 && frame.maxX <= metrics.pageWidth)
+                if metrics.stacked == 0 {
+                    #expect(frame.maxX == metrics.pageWidth - 34)
+                    #expect(frame.maxY <= metrics.stageHeight - 26 - 34 - 12 + 0.25)
+                } else {
+                    #expect(near(frame.midX, metrics.pageWidth / 2, within: 0.5))
+                    #expect(frame.maxY <= metrics.stageHeight - metrics.textHeight - 40 + 0.5 || frame.width == 96)
+                }
+            }
+        }
+    }
+
+    @Test func theCoverTravelsWhenTheStageStacks() {
+        let beside = NowLayout.choice(for: page(1440, 940, cover: true)).blend
+        var above = beside
+        above.stacked = 1
+        var previous = NowLayout.metrics(width: 1220, height: 840, blend: beside).coverFrame
+        for step in 1...60 {
+            var travelled = above - beside
+            travelled.scale(by: Double(step) / 60)
+            let frame = NowLayout.metrics(width: 1220, height: 840, blend: beside + travelled).coverFrame
+            #expect(abs(frame.minX - previous.minX) <= 12 && abs(frame.minY - previous.minY) <= 6 && abs(frame.width - previous.width) <= 6)
+            previous = frame
+        }
     }
 
     // MARK: Panel

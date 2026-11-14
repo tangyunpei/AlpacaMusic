@@ -627,10 +627,18 @@ private struct NowConnectCard: View {
 
     var body: some View {
         HStack(spacing: 28) {
-            HStack(spacing: -16) {
-                Circle().fill(palette.primary).frame(width: 56, height: 56)
-                Circle().fill(palette.accent).frame(width: 56, height: 56)
-                Circle().fill(palette.highlight).frame(width: 56, height: 56)
+            // Decoration: the heading beside it says what the card is about.
+            Group {
+                if let art = NowConnectArt.image {
+                    Image(nsImage: art).resizable().interpolation(.high)
+                        .frame(width: NowConnectArt.side, height: NowConnectArt.side)
+                } else {
+                    HStack(spacing: -16) {
+                        Circle().fill(palette.primary).frame(width: 56, height: 56)
+                        Circle().fill(palette.accent).frame(width: 56, height: 56)
+                        Circle().fill(palette.highlight).frame(width: 56, height: 56)
+                    }
+                }
             }
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 8) {
@@ -655,6 +663,22 @@ private struct NowConnectCard: View {
         let names = (source.map { [$0] } ?? model.browse.sources).map(\.title)
             .formatted(.list(type: .or).locale(model.language.locale))
         return L10n.string("登录\(names)后，今日会显示每日歌曲与推荐，本周会显示榜单。")
+    }
+}
+
+/// The drawing on the connect card: the alpaca with its cables unplugged,
+/// which the build copies into the app bundle
+/// (Resources/Brand/alpaca-disconnected.svg). A bare SwiftPM build has no
+/// bundle resources and shows three discs instead.
+enum NowConnectArt {
+    static let side: CGFloat = 152
+
+    @MainActor static let image: NSImage? = image(at: Bundle.main.url(forResource: "AlpacaDisconnected", withExtension: "svg"))
+
+    /// The drawing, or nil when the file is missing or unreadable.
+    static func image(at url: URL?) -> NSImage? {
+        guard let url, let image = NSImage(contentsOf: url), image.size.width > 0, image.size.height > 0 else { return nil }
+        return image
     }
 }
 

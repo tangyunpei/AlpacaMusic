@@ -9,7 +9,7 @@ struct MusicVisualizationView: View {
     let signal: @MainActor () -> AudioLevels
     var showsStatus = true
     /// The small label a signal display shows while playback has no audio to
-    /// draw. Off where the surrounding surface says so itself.
+    /// draw. Off on the Now stage, where it would land among the song's lines.
     var showsMissingAudioStatus = true
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -129,17 +129,7 @@ struct MusicVisualizationView: View {
         }
     }
 
-    private var albumAtmosphere: some View {
-        GeometryReader { geometry in
-            ZStack {
-                ArtworkView(track: track, radius: 0, highResolution: true)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .blur(radius: 65).opacity(0.13).saturation(0.65)
-                RadialGradient(colors: [Color.black.opacity(0.12), Color.black.opacity(0.03), Color.black.opacity(0.22)],
-                               center: .center, startRadius: 0, endRadius: max(1, min(geometry.size.width, geometry.size.height) * 0.65))
-            }.allowsHitTesting(false)
-        }
-    }
+    private var albumAtmosphere: some View { ArtworkAtmosphere(track: track) }
 
     private var albumPresentation: some View {
         GeometryReader { geometry in
@@ -243,5 +233,24 @@ struct VisualizationFrame {
         smoothed.spectrumBinWidth = incoming.spectrumBinWidth
         smoothed.available = true
         return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation)
+    }
+}
+
+
+/// A wash of a song's cover: the cover blurred until only its colours are
+/// left, shaded toward the edges. Album artwork lays it behind the cover, and
+/// so does the Now stage where it shows the cover.
+struct ArtworkAtmosphere: View {
+    var track: Track?
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                ArtworkView(track: track, radius: 0, highResolution: true)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .blur(radius: 65).opacity(0.13).saturation(0.65)
+                RadialGradient(colors: [Color.black.opacity(0.12), Color.black.opacity(0.03), Color.black.opacity(0.22)],
+                               center: .center, startRadius: 0, endRadius: max(1, min(geometry.size.width, geometry.size.height) * 0.65))
+            }.allowsHitTesting(false)
+        }
     }
 }

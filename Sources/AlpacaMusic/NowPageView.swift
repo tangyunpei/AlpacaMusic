@@ -49,7 +49,7 @@ struct NowPageView: View {
         return NowLayoutInput(width: size.width, height: size.height, idle: idle, panelOpen: panelOpen,
                               connect: NowBrowse.needsConnection(model.browse), action: idle || waiting,
                               lyrics: Self.hasTimedLyrics(model.lyrics.document),
-                              notice: track?.source.supportsAudioAnalysis == false && model.visualMode.isSignalDisplay,
+                              cover: NowCover.shows(model),
                               chartsExpanded: chartsExpanded)
     }
 

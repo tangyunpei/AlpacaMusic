@@ -1206,7 +1206,8 @@
 "正在读取推荐" = "Loading picks";
 "关闭歌词" = "Off";
 // The Now page: stage, Next, Today, This week and Lately.
-"%@ 没有实时音频，画面保持静止。" = "No live audio from %@, so the visual rests.";
+"· 无实时音频" = "· no live audio";
+"%@需要实时音频，这个音源没有，暂由专辑封面代替。" = "%@ needs live audio and this source gives none, so the album cover stands in.";
 "%lld 个榜单，来自%@" = "%lld charts from %@";
 "%lld 首 · 来自%@" = "%lld songs from %@";
 "%lld 首 · 每天 %lld:00 更新" = "%lld songs · new at %lld:00";
