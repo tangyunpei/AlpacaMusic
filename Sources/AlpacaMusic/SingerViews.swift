@@ -203,7 +203,9 @@ struct SingerPageView: View {
                     .onScrollVisibilityChange(threshold: 0.1) { visible in if visible { singer.loadMoreSongs() } }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // The width offered, not the content's: fixed-size tiles must never
+        // hold the page at its old width after the window narrows.
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .task { singer.start() }
         .accessibilityIdentifier("singer-page")
@@ -404,7 +406,9 @@ struct RemoteAlbumView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // The width offered, not the content's: fixed-size tiles must never
+        // hold the page at its old width after the window narrows.
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .task { store.start() }
         .accessibilityIdentifier("remote-album-page")
