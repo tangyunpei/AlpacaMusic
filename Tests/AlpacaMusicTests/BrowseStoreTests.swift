@@ -24,6 +24,8 @@ private struct LoaderFailure: LocalizedError {
     var holds = false
     var gates: [CheckedContinuation<Void, Never>] = []
     var chartTitle = "Hot"
+    /// The one song the picks carry, like a source's daily songs.
+    var pickSong = "s1"
     /// Songs bundled with chart "1", like Apple Music's song charts.
     var bundled: [Track]?
 
@@ -41,7 +43,7 @@ private struct LoaderFailure: LocalizedError {
         try await hold()
         if let pickError { throw pickError }
         return BrowseRecommendations(collections: [BrowseCollection(source: source, kind: .playlist, remoteID: "p1", title: "Pick")],
-                                     songs: partialPicks == nil ? [song(source, "s1")] : [], partialError: partialPicks)
+                                     songs: partialPicks == nil ? [song(source, pickSong)] : [], partialError: partialPicks)
     }
     func tracks(in collection: BrowseCollection, limit: Int) async throws -> [Track] {
         trackCalls[collection.id, default: 0] += 1
@@ -395,6 +397,30 @@ private func song(_ source: MusicSource, _ id: String) -> Track {
         try await settle { store.opened?.title == "Hot, refreshed" }
         #expect(store.tracksState(for: opened).flatMap(loadedIDs) == ["qq:new"])
         #expect(loader.trackCalls[opened.id] == nil) // Bundled songs need no request.
+    }
+
+    @Test func theDailySongsOpenAsAListAndFollowARefresh() async throws {
+        let loader = FakeBrowseLoader(), clock = TestClock()
+        let (store, defaults, suite) = makeStore(loader, clock: clock); defer { defaults.removePersistentDomain(forName: suite) }
+        store.ensureLoaded(.netease)
+        try await settle { store.entry(for: .netease)?.picks.value != nil }
+        let picks = try #require(store.entry(for: .netease)?.picks.value)
+        let list = try #require(picks.songList(for: .netease, title: "Daily"))
+        #expect(list.isSongList && list.trackCount == 1 && list.tracks == picks.songs)
+        #expect(BrowseRecommendations().songList(for: .netease, title: "Daily") == nil)
+        #expect(picks.collections.allSatisfy { !$0.isSongList })
+        store.open(list, from: .picks)
+        // The songs came with the picks: opening the list asks the platform nothing.
+        #expect(store.tracksState(for: list).flatMap(loadedIDs) == ["netease:s1"])
+        #expect(loader.trackCalls[list.id] == nil)
+        loader.pickSong = "s2"
+        clock.advance(BrowseSchedule.refreshCooldown)
+        store.refresh(.netease)
+        try await settle { store.tracksState(for: list).flatMap(loadedIDs) == ["netease:s2"] }
+        // The open list keeps its name and shows the new songs.
+        #expect(store.opened?.title == "Daily")
+        #expect(store.opened?.tracks?.map(\.id) == ["netease:s2"])
+        #expect(loader.trackCalls[list.id] == nil)
     }
 
     @Test func theDefaultWaitsForASourceThatIsStillSigningIn() {

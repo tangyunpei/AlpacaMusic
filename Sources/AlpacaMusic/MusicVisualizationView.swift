@@ -8,6 +8,11 @@ struct MusicVisualizationView: View {
     let isPlaying: Bool
     let signal: @MainActor () -> AudioLevels
     var showsStatus = true
+    /// The small label a signal display shows while playback has no audio to
+    /// draw. Off on the Now stage, where it would land among the song's lines.
+    var showsMissingAudioStatus = true
+    /// The room or the Now stage: effects drawn on either lay out for it.
+    var place: EffectPlace = .room
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var clock = VisualizationClock()
@@ -23,25 +28,6 @@ struct MusicVisualizationView: View {
                 PointCloudView(track: track, settings: settings, isPlaying: isPlaying, signal: signal)
             case .artwork:
                 albumPresentation
-            case .spectrumRing, .ribbons, .starfield:
-                ZStack {
-                    ParticleFieldView(mode: mode, settings: settings, isPlaying: isPlaying,
-                                      isActive: scenePhase == .active, reduceMotion: reduceMotion,
-                                      seed: Artwork.seed(for: track), signal: {
-                        track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels()
-                    })
-                    .id(track?.id ?? "empty-particle-stage")
-                    .transition(.opacity)
-                    if showsStatus {
-                        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-                            statusLabel(audioAvailable: isPlaying && track?.source.supportsAudioAnalysis != false && signal().available)
-                        }
-                    }
-                }
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.9), value: track?.id)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(L10n.string("\(mode.title)，\(track?.title ?? "AlpacaMusic")"))
-                .accessibilityValue(!isPlaying ? L10n.string("已暂停") : reduceMotion ? L10n.string("减少动态，画面已静止") : track?.source.supportsAudioAnalysis == false ? L10n.string("氛围模式，当前播放通道尚无实时音频采样") : L10n.string("氛围运动，随可用音频变化"))
             case .waveform, .spectrumBars:
                 TimelineView(.animation(minimumInterval: lowPower ? 1.0 / 30 : 1.0 / 60, paused: !animate)) { timeline in
                     let levels = isPlaying && scenePhase == .active && track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels()
@@ -49,16 +35,18 @@ struct MusicVisualizationView: View {
                                             captureStaticSignal: reduceMotion && isPlaying && scenePhase == .active,
                                             spectrumBarsActive: mode == .spectrumBars)
                     ZStack {
-                        Canvas(opaque: true, rendersAsynchronously: false) { context, size in
+                        Canvas(opaque: false, rendersAsynchronously: false) { context, size in
                             switch mode {
                             case .spectrumBars:
-                                SpectrumBarsRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow, presentation: frame.spectrumBars)
+                                SpectrumBarsRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow,
+                                                          presentation: frame.spectrumBars, place: place)
                             default:
-                                WaveformRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow)
+                                WaveformRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow,
+                                                      peak: frame.scopePeak, place: place)
                             }
                         }
                         .allowsHitTesting(false)
-                        if showsStatus || (isPlaying && !frame.audio.available) { statusLabel(audioAvailable: frame.audio.available) }
+                        if showsStatus || (showsMissingAudioStatus && isPlaying && !frame.audio.available) { statusLabel(audioAvailable: frame.audio.available) }
                     }
                 }
                 .accessibilityElement(children: .ignore)
@@ -69,7 +57,7 @@ struct MusicVisualizationView: View {
             case .harmonograph, .spectralHorizon:
                 ZStack {
                     composedStage
-                    if showsStatus || isPlaying { periodicStatus(whenAudioMissing: !showsStatus) }
+                    if showsStatus || (showsMissingAudioStatus && isPlaying) { periodicStatus(whenAudioMissing: !showsStatus) }
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(L10n.string("\(mode.title)，\(track?.title ?? "AlpacaMusic")"))
@@ -94,7 +82,7 @@ struct MusicVisualizationView: View {
         switch mode {
         case .harmonograph:
             HarmonographStage(isPlaying: isPlaying, isActive: scenePhase == .active, reduceMotion: reduceMotion,
-                              lowPower: lowPower, glow: settings.glow, seed: Artwork.seed(for: track), trackID: track?.id,
+                              lowPower: lowPower, seed: Artwork.seed(for: track), trackID: track?.id, place: place,
                               signal: { track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels() })
         case .spectralHorizon:
             SpectralHorizonStage(isPlaying: isPlaying, isActive: scenePhase == .active, reduceMotion: reduceMotion,
@@ -126,17 +114,7 @@ struct MusicVisualizationView: View {
         }
     }
 
-    private var albumAtmosphere: some View {
-        GeometryReader { geometry in
-            ZStack {
-                ArtworkView(track: track, radius: 0, highResolution: true)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .blur(radius: 65).opacity(0.13).saturation(0.65)
-                RadialGradient(colors: [Color.black.opacity(0.12), Color.black.opacity(0.03), Color.black.opacity(0.22)],
-                               center: .center, startRadius: 0, endRadius: max(1, min(geometry.size.width, geometry.size.height) * 0.65))
-            }.allowsHitTesting(false)
-        }
-    }
+    private var albumAtmosphere: some View { ArtworkAtmosphere(track: track) }
 
     private var albumPresentation: some View {
         GeometryReader { geometry in
@@ -167,8 +145,15 @@ struct MusicVisualizationView: View {
 
 struct VisualizationFrame {
     var time: Double
+    /// The levels eased at 12 a second, for effects that want a steady picture.
     var audio: VisualizationAudio
     var spectrumBars: SpectrumBarsPresentation = .empty
+    /// The levels exactly as the analyser last measured them, before any
+    /// easing, for effects that answer a hit as it arrives. A frozen frame
+    /// holds the reading it was frozen on.
+    var measured = VisualizationAudio()
+    /// The oscilloscope's held widest swing, 0 to 1.
+    var scopePeak = 0.0
 }
 
 /// Timeline dates resume after pauses, while this clock only advances on active
@@ -177,12 +162,17 @@ struct VisualizationFrame {
     private var previousDate: Date?
     private var time = 0.0
     private var smoothed = VisualizationAudio()
+    private var measured = VisualizationAudio()
     private var barsClock = SpectrumBarsMotionClock()
     private var barsPresentation = SpectrumBarsPresentation.empty
+    private var scopeHold = OscilloscopePeakHold()
 
     func resetFrameDate() { previousDate = nil }
-    func resetSpectrumBars() { barsClock.reset(); barsPresentation = .empty }
-    func resetSignal() { previousDate = nil; smoothed = VisualizationAudio(); barsClock.reset(); barsPresentation = .empty }
+    func resetSpectrumBars() { barsClock.reset(); barsPresentation = .empty; scopeHold.reset() }
+    func resetSignal() {
+        previousDate = nil; smoothed = VisualizationAudio(); measured = VisualizationAudio()
+        barsClock.reset(); barsPresentation = .empty; scopeHold.reset()
+    }
 
     func frame(at date: Date, animated: Bool, levels: AudioLevels, playing: Bool,
                captureStaticSignal: Bool = false, spectrumBarsActive: Bool = false) -> VisualizationFrame {
@@ -197,19 +187,24 @@ struct VisualizationFrame {
                 if !initial.available || !smoothed.available || smoothed.sampleRate != initial.sampleRate
                     || smoothed.spectrumBinWidth != initial.spectrumBinWidth || smoothed.waveformDuration != initial.waveformDuration {
                     smoothed = initial
+                    measured = initial
                     if spectrumBarsActive { barsPresentation = barsClock.step(dt: 0, audio: initial, resetInput: true) }
                 }
             }
-            return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation)
+            if captureStaticSignal, playing, smoothed.available { _ = scopeHold.step(dt: 0, audio: smoothed) }
+            return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation, measured: measured,
+                                      scopePeak: scopeHold.peak)
         }
         let dt = previousDate.map { min(0.08, max(0, date.timeIntervalSince($0))) } ?? 0
         previousDate = date
         time += dt
         let incoming = VisualizationAudio(levels, playing: playing)
+        measured = incoming
         if spectrumBarsActive { barsPresentation = barsClock.step(dt: dt, audio: incoming) }
         guard incoming.available else {
             smoothed = incoming
-            return VisualizationFrame(time: time, audio: incoming, spectrumBars: barsPresentation)
+            return VisualizationFrame(time: time, audio: incoming, spectrumBars: barsPresentation, measured: incoming,
+                                      scopePeak: scopeHold.step(dt: dt, audio: incoming))
         }
         let follow = 1 - exp(-dt * 12)
         smoothed.energy += (incoming.energy - smoothed.energy) * follow
@@ -239,6 +234,41 @@ struct VisualizationFrame {
         }
         smoothed.spectrumBinWidth = incoming.spectrumBinWidth
         smoothed.available = true
-        return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation)
+        return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation, measured: incoming,
+                                  scopePeak: scopeHold.step(dt: dt, audio: smoothed))
+    }
+}
+
+
+/// A wash of a song's cover: the cover blurred until only its colours are
+/// left, shaded toward the edges. Album artwork lays it behind the cover, and
+/// so does the Now stage where it shows the cover.
+struct ArtworkAtmosphere: View {
+    var track: Track?
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                ArtworkView(track: track, radius: 0, highResolution: true)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .blur(radius: 65).opacity(0.13).saturation(0.65)
+                RadialGradient(colors: [Color.black.opacity(0.12), Color.black.opacity(0.03), Color.black.opacity(0.22)],
+                               center: .center, startRadius: 0, endRadius: max(1, min(geometry.size.width, geometry.size.height) * 0.65))
+            }.allowsHitTesting(false)
+        }
+    }
+}
+
+/// The effects menu: the effects grouped as From the cover, Shapes and Needs
+/// live audio, with native selection marks. Used inline inside a Menu.
+struct VisualizationModePicker: View {
+    let selection: Binding<VisualizationMode>
+    var body: some View {
+        Picker(L10n.string("视觉效果"), selection: selection) {
+            ForEach(VisualizationMode.Group.allCases) { group in
+                Section(group.title) {
+                    ForEach(group.modes) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
+                }
+            }
+        }.pickerStyle(.inline)
     }
 }

@@ -83,7 +83,9 @@ struct AudioLevels: Sendable {
 }
 struct VisualSettings: Codable, Equatable, Sendable {
     var density: Int = 160
-    var abstraction: Float = 0.2
+    /// 0 shows the cover in its true colours with every point; the painterly
+    /// look stays on the slider. It was 0.2 before 2026-11-13.
+    var abstraction: Float = 0
     var pointSize: Float = 1.8
     var depth: Float = 0.35
     var bounce: Float = 0.16
@@ -98,6 +100,10 @@ struct VisualSettings: Codable, Equatable, Sendable {
     var reduceMotion: Bool = false
     var batterySaver: Bool = true
     static let standard = VisualSettings()
+    /// Sparse, balanced and dense, and a very dense 320 x 320 that only the
+    /// listener chooses: it keeps small lettering on a large cover, and lies
+    /// beyond the spec's performance guarantee (FR-1.3).
+    static let densities = [96, 160, 224, 320]
     static var presets: [(name: String, settings: VisualSettings)] { [
         (L10n.string("平静"), VisualSettings(pointSize: 1.6, depth: 0.30, bounce: 0.10, speed: 2, idle: 0.015)),
         (L10n.string("跃动"), VisualSettings(pointSize: 1.9, depth: 0.35, bounce: 0.22, speed: 5, idle: 0.010)),

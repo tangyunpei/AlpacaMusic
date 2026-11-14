@@ -61,6 +61,23 @@ struct BrowseRecommendations: Sendable, Equatable {
     var partialError: String? = nil
 }
 
+extension BrowseRecommendations {
+    /// The daily or personal songs as a list the page opens like any other.
+    /// They arrive with the picks, so opening it asks the platform nothing.
+    func songList(for source: MusicSource, title: String) -> BrowseCollection? {
+        guard !songs.isEmpty else { return nil }
+        return BrowseCollection(source: source, kind: .playlist, remoteID: BrowseCollection.songListID, title: title,
+                                artworkURL: songs.first { $0.artworkURL != nil }?.artworkURL, trackCount: songs.count, tracks: songs)
+    }
+}
+
+extension BrowseCollection {
+    /// No platform uses this as a playlist id.
+    static let songListID = "now-songs"
+    /// True for the list made of a source's daily or personal songs.
+    var isSongList: Bool { kind == .playlist && remoteID == Self.songListID }
+}
+
 /// How often the Now page may ask a platform again. Nothing polls: lists load
 /// when the page shows a source whose copy is missing or past these limits,
 /// or when the listener presses refresh.

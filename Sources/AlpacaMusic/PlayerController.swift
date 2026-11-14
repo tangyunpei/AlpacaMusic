@@ -3,6 +3,15 @@ import Foundation
 import MediaPlayer
 import Observation
 
+/// What plays after the current song, as far as that is decided.
+struct PlaybackUpcoming: Equatable, Sendable {
+    /// Songs in the order they will play. Under shuffle only a song queued
+    /// to play next is known before the current one ends.
+    var tracks: [Track] = []
+    /// How many songs shuffle will still draw from after those.
+    var shuffled = 0
+}
+
 /// Value-only queue rules are independent of decoding and network timing.
 struct PlaybackQueue: Sendable {
     var tracks: [Track] = []
@@ -24,12 +33,9 @@ struct PlaybackQueue: Sendable {
         guard !playable.isEmpty else { return nil }
         var next = playable.first { $0.id == priority }; priority = nil
         if next == nil && shuffle {
-            remaining = remaining.filter { id in id != currentID && playable.contains { $0.id == id } }
-            if remaining.isEmpty {
-                let visited = Set(history + [currentID].compactMap { $0 })
-                remaining = playable.filter { !visited.contains($0.id) }.map(\.id)
-                if remaining.isEmpty && repeatMode == .all { history = []; remaining = playable.filter { $0.id != currentID }.map(\.id) }
-            }
+            let pool = shufflePool(playable, repeatMode: repeatMode)
+            if pool.startsOver { history = [] }
+            remaining = pool.ids
             if !remaining.isEmpty {
                 let index = min(remaining.count - 1, max(0, Int((randomUnit.isFinite ? randomUnit : 0) * Double(remaining.count))))
                 let id = remaining.remove(at: index); next = playable.first { $0.id == id }
@@ -42,6 +48,34 @@ struct PlaybackQueue: Sendable {
         guard let next else { return nil }
         if let currentID { history.append(currentID) }; currentID = next.id
         return next
+    }
+    /// The songs shuffle may draw next, and whether drawing from them starts a new round.
+    private func shufflePool(_ playable: [Track], repeatMode: RepeatMode) -> (ids: [String], startsOver: Bool) {
+        var pool = remaining.filter { id in id != currentID && playable.contains { $0.id == id } }
+        var startsOver = false
+        if pool.isEmpty {
+            let visited = Set(history + [currentID].compactMap { $0 })
+            pool = playable.filter { !visited.contains($0.id) }.map(\.id)
+            if pool.isEmpty && repeatMode == .all { startsOver = true; pool = playable.filter { $0.id != currentID }.map(\.id) }
+        }
+        return (pool, startsOver)
+    }
+    /// What `next` would take from here, without taking it: up to `limit`
+    /// songs in order, or under shuffle the song queued to play next and the
+    /// number shuffle picks from after it. A list never repeats a song.
+    func upcoming(shuffle: Bool, repeatMode: RepeatMode, limit: Int) -> PlaybackUpcoming {
+        guard limit > 0 else { return PlaybackUpcoming() }
+        if shuffle {
+            let playable = tracks.filter { !$0.unavailable }
+            let first = playable.first { $0.id == priority }
+            let pool = shufflePool(playable, repeatMode: repeatMode).ids.filter { $0 != first?.id }
+            return PlaybackUpcoming(tracks: first.map { [$0] } ?? [], shuffled: pool.count)
+        }
+        var rest = self, result: [Track] = [], seen = Set([currentID].compactMap { $0 })
+        while result.count < limit, let track = rest.next(shuffle: false, repeatMode: repeatMode), seen.insert(track.id).inserted {
+            result.append(track)
+        }
+        return PlaybackUpcoming(tracks: result)
     }
     mutating func previous(repeatMode: RepeatMode) -> Track? {
         var previous: Track?
@@ -115,6 +149,9 @@ final class PlayerController {
     var error: String? { failure?.message }
     var supportsVolumeControl: Bool { current?.source != .appleMusic && current?.source != .spotify }
     var sourceConfigurations = SourceConfiguration.defaults
+    /// Changes when the song that plays next changes while the queue and the
+    /// current song stay as they are.
+    private var upNextRevision: UInt64 = 0
     /// Counts plays, skips and toggles the listener asked for (automatic
     /// advances excluded), so a list still loading can tell it was overtaken.
     @ObservationIgnored private(set) var listenerRevision: UInt64 = 0
@@ -618,7 +655,13 @@ final class PlayerController {
     func toggleShuffle() { shuffle.toggle(); navigation.resetShuffleHistory(); persistPreferences() }
     func cycleRepeat() { repeatMode = repeatMode == .off ? .all : repeatMode == .all ? .one : .off; persistPreferences() }
     func enqueue(_ track: Track) { navigation.enqueue(track); queue = navigation.tracks; persistQueue() }
-    func playNext(_ track: Track) { navigation.playNext(track); queue = navigation.tracks; persistQueue() }
+    func playNext(_ track: Track) { navigation.playNext(track); queue = navigation.tracks; upNextRevision &+= 1; persistQueue() }
+    /// What plays after the current song, as far as that is decided. Views
+    /// that read it update when the queue, the song or the play order changes.
+    func upcoming(limit: Int) -> PlaybackUpcoming {
+        _ = upNextRevision; _ = queue; _ = current
+        return navigation.upcoming(shuffle: shuffle, repeatMode: repeatMode, limit: limit)
+    }
     func removeFromQueue(_ id: String) {
         let isCurrent = current?.id == id, wasPlaying = wantsPlayback
         let replacement = navigation.remove(id); queue = navigation.tracks

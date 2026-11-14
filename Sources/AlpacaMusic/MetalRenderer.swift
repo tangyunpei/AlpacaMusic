@@ -163,9 +163,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func qualityLevels(_ settings: VisualSettings) -> [RenderQuality] {
-        let density = [96, 160, 224].contains(settings.density) ? settings.density : 160
+        let density = VisualSettings.densities.contains(settings.density) ? settings.density : 160
         let scale = min(view?.window?.backingScaleFactor ?? 2, 2)
         var result = [RenderQuality(density: density, scale: scale, glow: settings.glow)]
+        if density > 224 { result.append(RenderQuality(density: 224, scale: scale, glow: settings.glow)) }
         if density > 160 { result.append(RenderQuality(density: 160, scale: scale, glow: settings.glow)) }
         if density > 96 { result.append(RenderQuality(density: 96, scale: scale, glow: settings.glow)) }
         if scale > 1.5 { result.append(RenderQuality(density: 96, scale: 1.5, glow: settings.glow)) }
@@ -199,7 +200,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     private static func abstractionBucket(_ value: Float) -> Float {
-        guard value.isFinite else { return 0.2 }
+        guard value.isFinite else { return 0 }
         return (min(1, max(0, value)) * 50).rounded() / 50
     }
 
@@ -223,7 +224,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             guard !Task.isCancelled, !stopped, generation == ownGeneration else { return }
             let seed = Artwork.seed(for: track)
             let worker = Task.detached(priority: .userInitiated) {
-                try await CloudSampler.sample(artwork.pixels, density: density, seed: seed, abstraction: abstraction)
+                try await CloudSampler.sample(artwork.pixels, density: density, seed: seed, abstraction: abstraction,
+                                             provider: LargeShapeReliefProvider())
             }
             samplingWorker = worker
             do {

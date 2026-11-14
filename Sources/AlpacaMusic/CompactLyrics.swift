@@ -128,15 +128,18 @@ struct CompactLyricLines: View {
     private let showsNextLine: Bool
     private let alignment: HorizontalAlignment
     private let fallback: CompactLyricFallback
+    private let look: CompactLyricLook
 
     init(model: AppModel, primarySize: CGFloat = 15, secondarySize: CGFloat = 11, showsNextLine: Bool = true,
-         alignment: HorizontalAlignment = .leading, fallback: CompactLyricFallback = .trackInfo) {
+         alignment: HorizontalAlignment = .leading, fallback: CompactLyricFallback = .trackInfo,
+         look: CompactLyricLook = CompactLyricLook()) {
         self.model = model
         self.primarySize = primarySize
         self.secondarySize = secondarySize
         self.showsNextLine = showsNextLine
         self.alignment = alignment
         self.fallback = fallback
+        self.look = look
     }
 
     private var reduced: Bool { systemReduced || model.visual.reduceMotion }
@@ -144,7 +147,7 @@ struct CompactLyricLines: View {
     private var frameAlignment: Alignment { Alignment(horizontal: alignment, vertical: .center) }
     private var rowStyle: CompactLyricStyle {
         CompactLyricStyle(primarySize: primarySize, secondarySize: secondarySize,
-                          showsNextLine: showsNextLine, alignment: alignment, reduced: reduced)
+                          showsNextLine: showsNextLine, alignment: alignment, reduced: reduced, look: look)
     }
 
     var body: some View {
@@ -183,6 +186,19 @@ struct CompactLyricLines: View {
     }
 }
 
+/// How a surface inks the compact lines. The defaults are the mini player's.
+struct CompactLyricLook: Sendable {
+    var weight: Font.Weight = .semibold
+    /// How strong the ink of the part not yet sung is.
+    var unsungOpacity = 0.25
+    /// Off, the current line keeps the unsung ink, for a paused song.
+    var showsProgress = true
+    /// The next line in the surface's secondary ink instead of a dimmed text ink.
+    var nextInSecondaryInk = false
+    /// Room between the two lines; nil follows the text size.
+    var spacing: CGFloat? = nil
+}
+
 /// Sizes and placement shared by the compact lyric rows.
 private struct CompactLyricStyle {
     var primarySize: CGFloat
@@ -190,7 +206,8 @@ private struct CompactLyricStyle {
     var showsNextLine: Bool
     var alignment: HorizontalAlignment
     var reduced: Bool
-    var rowSpacing: CGFloat { max(2, (primarySize * 0.24).rounded()) }
+    var look = CompactLyricLook()
+    var rowSpacing: CGFloat { look.spacing ?? max(2, (primarySize * 0.24).rounded()) }
 }
 
 /// One projected moment of the compact lines. A cue change cross-fades with
@@ -239,8 +256,9 @@ private struct CompactLyricFrame: View {
         return VStack(alignment: style.alignment, spacing: style.rowSpacing) {
             CompactScrollingLine(progress: progress, alignment: style.alignment) {
                 LyricProgressText(line: line, text: text, position: time,
-                                  appearance: .highlight, reduceMotion: style.reduced, timingContext: context)
-                    .font(.system(size: style.primarySize, weight: .semibold))
+                                  appearance: .highlight, reduceMotion: style.reduced, timingContext: context,
+                                  unsungOpacity: style.look.unsungOpacity, showsProgress: style.look.showsProgress)
+                    .font(.system(size: style.primarySize, weight: style.look.weight))
             }
             if style.showsNextLine { nextRow(next) }
         }
@@ -250,7 +268,7 @@ private struct CompactLyricFrame: View {
     private func upcomingRows(_ line: LyricLine) -> some View {
         VStack(alignment: style.alignment, spacing: style.rowSpacing) {
             Text(verbatim: CompactLyricText.singleLine(line.text))
-                .font(.system(size: style.primarySize, weight: .semibold))
+                .font(.system(size: style.primarySize, weight: style.look.weight))
                 .foregroundStyle(palette.text.opacity(0.45))
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -262,7 +280,7 @@ private struct CompactLyricFrame: View {
         if let line {
             Text(verbatim: CompactLyricText.singleLine(line.text))
                 .font(.system(size: style.secondarySize))
-                .foregroundStyle(palette.text.opacity(0.42))
+                .foregroundStyle(style.look.nextInSecondaryInk ? palette.secondary : palette.text.opacity(0.42))
                 .lineLimit(1)
                 .truncationMode(.tail)
         } else {

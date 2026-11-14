@@ -8,6 +8,8 @@ AlpacaMusic 创作者：[byalpaca](https://byalpaca.dev)。本目录保存应用
 
 `MenuBarIcon-Headphones.svg` 是菜单栏图标：同一只羊驼的纯黑剪影，耳机只保留轮廓，周围留出透明间隙，按 18 × 18 点的模板图绘制，会随菜单栏的明暗自动变色。构建脚本把它原样复制为 App 包内的 `Contents/Resources/MenuBarIcon.svg`；没有该文件时（例如直接用 SwiftPM 运行）菜单栏回退为系统符号。
 
+`alpaca-disconnected.svg` 是「此刻」页在没有连接任何音源时显示的插图：戴耳机的羊驼拿着两根没插上的音频线，透明底色，由项目作者提供。构建脚本把它原样复制为 App 包内的 `Contents/Resources/AlpacaDisconnected.svg`，卡片按 152 × 152 点绘制；没有该文件时（例如直接用 SwiftPM 运行）卡片回退为三个圆。
+
 此目录仅用于构建，不属于 SwiftPM 的运行时资源。
 
 ## 备选与历史版本

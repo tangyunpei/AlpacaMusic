@@ -16,7 +16,7 @@ import Testing
     @Test func initialSnapshotUsesActualFixedGainHeights() {
         var clock = SpectrumBarsMotionClock()
         let frame = clock.step(dt: 0, audio: audio(0.4))
-        #expect(frame.levels.count == 72 && frame.peaks.count == 72)
+        #expect(frame.levels.count == 96 && frame.peaks.count == 96)
         #expect(frame.state == .signal)
         #expect(frame.levels.allSatisfy { abs($0 - pow(0.4, 1.55)) < 0.000_001 })
         #expect(frame.levels == frame.peaks)
@@ -154,7 +154,7 @@ import Testing
         mixed.spectrum[8] = .nan; mixed.spectrum[16] = .infinity
         mixed.spectrum[32] = -1; mixed.spectrum[64] = 2
         let frame = clock.step(dt: 0, audio: mixed)
-        #expect(frame.levels.count == 72)
+        #expect(frame.levels.count == 96)
         #expect(frame.levels.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 })
         #expect(frame.peaks.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 })
         var absent = audio(.nan)

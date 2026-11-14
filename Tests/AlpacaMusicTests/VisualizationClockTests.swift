@@ -109,24 +109,37 @@ import Testing
     }
 
 
-    @Test func savedOrbitalModeRetainsItsIdentityAfterScopeUpgrade() throws {
-        let restored = try JSONDecoder().decode(VisualizationMode.self, from: Data("\"spectrumRing\"".utf8))
-        #expect(restored == .spectrumRing)
-        #expect(try JSONEncoder().encode(restored) == Data("\"spectrumRing\"".utf8))
-    }
-
-    @Test func visualizationModeOrderAndClassificationMatchTheContract() throws {
-        #expect(VisualizationMode.allCases.map(\.rawValue) == ["pointCloud", "spectrumRing", "ribbons", "starfield", "waveform",
-                                                                "spectrumBars", "harmonograph", "spectralHorizon", "bauhaus", "artwork"])
-        #expect(VisualizationMode.allCases.filter(\.isSignalDisplay) == [.waveform, .spectrumBars, .harmonograph, .spectralHorizon])
+    @Test func visualizationModeOrderAndGroupsMatchTheMenu() throws {
+        #expect(VisualizationMode.allCases == [.artwork, .pointCloud, .bauhaus, .spectrumBars, .waveform, .spectralHorizon, .harmonograph])
+        #expect(VisualizationMode.Group.cover.modes == [.artwork, .pointCloud])
+        #expect(VisualizationMode.Group.shapes.modes == [.bauhaus])
+        #expect(VisualizationMode.Group.liveAudio.modes == [.spectrumBars, .waveform, .spectralHorizon, .harmonograph])
+        #expect(VisualizationMode.allCases.filter(\.isSignalDisplay) == VisualizationMode.Group.liveAudio.modes)
         #expect(VisualizationMode.allCases.filter { !$0.isAudioReactive } == [.artwork])
-        for mode in [VisualizationMode.harmonograph, .spectralHorizon, .bauhaus] {
+        #expect(VisualizationMode.standard == .artwork)
+        for mode in VisualizationMode.allCases {
             let encoded = try JSONEncoder().encode(mode)
             #expect(encoded == Data("\"\(mode.rawValue)\"".utf8))
             #expect(try JSONDecoder().decode(VisualizationMode.self, from: encoded) == mode)
         }
     }
 
+    /// Orbital light field, Flowing ribbons and Deep space were removed. A
+    /// saved choice of one of them opens on the default effect; any other
+    /// saved choice is kept.
+    @Test(arguments: [("spectrumRing", VisualizationMode.artwork), ("ribbons", .artwork), ("starfield", .artwork),
+                      ("nonsense", .artwork), ("harmonograph", .harmonograph), ("pointCloud", .pointCloud)])
+    @MainActor func aSavedEffectThatNoLongerExistsOpensOnTheDefault(saved: String, expected: VisualizationMode) throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "mode-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let suite = "AlpacaModeRestore.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        defaults.set(saved, forKey: "visualization-mode")
+        let model = AppModel(directory: directory, preferences: defaults, ephemeralAccounts: true)
+        defer { model.player.shutdown() }
+        #expect(model.visualMode == expected)
+    }
 
     @Test func openingAPlayingScopeWithReducedMotionShowsOneRealSnapshot() {
         let clock = VisualizationClock(), date = Date(timeIntervalSince1970: 0)
@@ -150,4 +163,27 @@ import Testing
         #expect(paused.audio.bassWaveform == reformatted.audio.bassWaveform)
     }
 
+
+    /// Effects get the analyser's reading beside the eased one: a hit is in
+    /// `measured` on the frame it arrives, while `audio` is still rising.
+    @Test func effectsGetTheMeasuredLevelsBesideTheEasedOnes() {
+        let clock = VisualizationClock(), start = Date(timeIntervalSince1970: 0)
+        let quiet = AudioLevels(spectrum: [0.1, 0.1], available: true, amplitude: 0.1, bass: 0.1, mid: 0.1, treble: 0.1,
+                                sampleRate: 44_100, spectrumBinWidth: 44_100.0 / 2_048)
+        _ = clock.frame(at: start, animated: true, levels: quiet, playing: true)
+        _ = clock.frame(at: start.addingTimeInterval(1.0 / 60), animated: true, levels: quiet, playing: true)
+        var hit = quiet; hit.bass = 0.9; hit.mid = 0.6; hit.treble = 0.3; hit.amplitude = 0.8; hit.spectrum = [0.9, 0.2]
+        let frame = clock.frame(at: start.addingTimeInterval(2.0 / 60), animated: true, levels: hit, playing: true)
+        #expect(frame.measured.bass == Double(Float(0.9)) && frame.measured.mid == Double(Float(0.6)))
+        #expect(frame.measured.treble == Double(Float(0.3)) && frame.measured.amplitude == Double(Float(0.8)))
+        #expect(frame.measured.spectrum == [0.9, 0.2].map { Double(Float($0)) })
+        #expect(frame.audio.bass < 0.5 && frame.audio.bass > 0.1)
+        // A frozen frame keeps the reading it froze on.
+        let frozen = clock.frame(at: start.addingTimeInterval(1), animated: false, levels: quiet, playing: true)
+        #expect(frozen.measured.bass == frame.measured.bass && frozen.audio.bass == frame.audio.bass)
+        // A new song starts from nothing.
+        clock.resetSignal()
+        let after = clock.frame(at: start.addingTimeInterval(2), animated: false, levels: AudioLevels(), playing: true)
+        #expect(!after.measured.available)
+    }
 }

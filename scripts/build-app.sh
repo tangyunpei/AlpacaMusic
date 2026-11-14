@@ -160,6 +160,8 @@ swift scripts/make-icon.swift "$alpaca_staging" "$PWD/Resources/Brand/AppIcon-He
 iconutil -c icns "$alpaca_staging/AppIcon.iconset" -o "$alpaca_app/Contents/Resources/AppIcon.icns"
 # The menu bar shows this template artwork; the app falls back to a symbol without it.
 cp "$PWD/Resources/Brand/MenuBarIcon-Headphones.svg" "$alpaca_app/Contents/Resources/MenuBarIcon.svg"
+# The Now page's connect card shows this drawing; the app falls back to three discs without it.
+cp "$PWD/Resources/Brand/alpaca-disconnected.svg" "$alpaca_app/Contents/Resources/AlpacaDisconnected.svg"
 alpaca_sign_flags=(--force --sign "$alpaca_identity" --identifier "$alpaca_bundle_id")
 if [[ "$alpaca_sandbox" == 1 || -n "$alpaca_profile" ]]; then
   alpaca_sign_flags+=(--entitlements "$alpaca_staging/signing.entitlements")
