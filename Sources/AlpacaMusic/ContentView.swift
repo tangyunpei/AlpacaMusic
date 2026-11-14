@@ -535,7 +535,9 @@ struct ListeningScene: View {
         let mode = model.shownVisualMode
         ZStack {
             MusicVisualizationView(track: model.activeTrack, mode: mode, settings: model.visual,
-                                   isPlaying: model.player.status == .playing, signal: { model.player.readLevels() }, showsStatus: false)
+                                   isPlaying: model.player.status == .playing, signal: { model.player.readLevels() }, showsStatus: false,
+                                   // Each effect shows its own waiting state; a label here would land on the song's title.
+                                   showsMissingAudioStatus: false)
                 .id(mode).transition(.opacity)
         }.animation(reduced || model.visual.reduceMotion ? nil : ExperienceMotion.visualization, value: mode)
     }
