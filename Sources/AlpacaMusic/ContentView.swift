@@ -45,6 +45,10 @@ struct ContentView: View {
                                             case .sources: SourcesView(model: model)
                                             case .albums: AlbumsView(model: model)
                                             case .album: AlbumDetailView(model: model)
+                                            case .singer(let id):
+                                                if let store = model.singerStores[id] { SingerPageView(model: model, singer: store) }
+                                            case .remoteAlbum(let id):
+                                                if let store = model.albumStores[id] { RemoteAlbumView(model: model, store: store) }
                                             default: LibraryView(model: model)
                                             }
                                         }.padding(.horizontal, 34).padding(.top, 30).padding(.bottom, 24)
@@ -317,17 +321,14 @@ struct AppHeader: View {
     }
     /// Where the listener is: the search, then the page opened from it.
     @ViewBuilder private var trail: some View {
-        let results = L10n.string("搜索「\(model.searchResults.term)」")
+        // The pages from the search on: each earlier one is a link back to it.
+        let steps = model.trail.drop { $0 != .search }
         HStack(spacing: 6) {
-            if model.destination == .search {
-                Text(results).foregroundStyle(palette.secondary)
-            } else if model.trail.last == .search {
-                Button(results) { model.goBack() }.buttonStyle(.plain).foregroundStyle(palette.accent)
+            ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                Button(model.title(of: step)) { model.goBack(to: step) }.buttonStyle(.plain).foregroundStyle(palette.accent)
                 Image(systemName: "chevron.right").font(.system(size: 7, weight: .semibold)).foregroundStyle(palette.faint)
-                Text(model.pageTitle).foregroundStyle(palette.secondary)
-            } else {
-                Text(model.pageTitle).foregroundStyle(palette.secondary)
             }
+            Text(model.pageTitle).foregroundStyle(palette.secondary)
         }
         .font(.system(size: 10)).lineLimit(1)
     }

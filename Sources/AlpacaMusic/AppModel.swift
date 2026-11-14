@@ -35,8 +35,9 @@ final class AppModel {
     /// The services a search, singer page or album page asks.
     @ObservationIgnored let searchLoader: any SearchLoading
     /// Singer and album pages opened from search, kept while Back can return to them.
-    private(set) var singerStores: [String: SingerStore] = [:]
-    private(set) var albumStores: [String: AlbumStore] = [:]
+    /// Not observed: a card asks for its store while it is drawn.
+    @ObservationIgnored private(set) var singerStores: [String: SingerStore] = [:]
+    @ObservationIgnored private(set) var albumStores: [String: AlbumStore] = [:]
     var sodaPublicSearch: Bool {
         didSet { preferences.set(sodaPublicSearch, forKey: "soda-public-search") }
     }
@@ -267,6 +268,16 @@ final class AppModel {
         return (ids, keys)
     }
 
+    /// The title a page would have, for the header's trail.
+    func title(of page: Destination) -> String {
+        switch page {
+        case .search: L10n.string("搜索「\(searchResults.term)」")
+        case .singer(let id): singerStores[id]?.names.first ?? L10n.string("歌手")
+        case .remoteAlbum(let id): albumStores[id]?.album.name ?? L10n.string("专辑")
+        case .album(let id): library.album(id: id)?.name ?? L10n.string("专辑")
+        default: ""
+        }
+    }
     var pageTitle: String {
         switch destination {
         case .search: return L10n.string("搜索「\(searchResults.term)」")

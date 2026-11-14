@@ -74,7 +74,7 @@ private struct SearchPageBody: View, Animatable {
                     }
                     .frame(width: metrics.listWidth, alignment: .topLeading)
                     if metrics.asideWidth > 1 {
-                        SearchAside(model: model)
+                        SearchAside(model: model, width: metrics.asideWidth)
                             .frame(width: metrics.asideWidth, alignment: .topLeading)
                             .padding(.top, 18)
                             .opacity(Double(blend.columns))
@@ -279,60 +279,82 @@ private struct SearchLayers: View {
         let card: SingerCard? = if case .singer(let card) = store.shape { card } else { nil }
         let bandHeight = (SearchLayout.bandHeight + 18) * blend.band
         let compactHeight = (SearchLayout.compactHeight + 14) * blend.compact
+        let singer = card.map { model.singerStore(for: store.split ? $0.split[0] : $0) }
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 if blend.band > 0.01 {
                     Group {
                         if store.held { SkeletonBand() }
-                        else if let card { SingerBandCards(model: model, card: card) }
+                        else if let card, let singer {
+                            HStack(alignment: .top, spacing: 18) {
+                                SingerBandCards(model: model, card: card, singer: singer)
+                                AlbumStrip(model: model, singer: singer, compact: false)
+                            }
+                        }
                     }
                     .frame(height: SearchLayout.bandHeight, alignment: .topLeading)
                     .padding(.top, 18)
                     .opacity(Double(blend.band))
                 }
-                if blend.compact > 0.01, !store.held, let card {
-                    SingerCompactCards(model: model, card: card)
-                        .frame(height: SearchLayout.compactHeight, alignment: .topLeading)
-                        .padding(.top, 14)
-                        .opacity(Double(blend.compact))
+                if blend.compact > 0.01, !store.held, let card, let singer {
+                    HStack(alignment: .center, spacing: 16) {
+                        SingerCompactCards(model: model, card: card, singer: singer)
+                        AlbumStrip(model: model, singer: singer, compact: true)
+                    }
+                    .frame(height: SearchLayout.compactHeight, alignment: .topLeading)
+                    .padding(.top, 14)
+                    .opacity(Double(blend.compact))
                 }
             }
             .frame(height: bandHeight + compactHeight, alignment: .topLeading)
             .clipped()
             if blend.singersLine > 0.01, case .singers(let names, let more) = store.shape {
-                SingersLine(names: names, more: more)
+                SingersLine(model: model, names: names, more: more)
                     .padding(.top, 14)
                     .frame(height: (SearchLayout.singersLineHeight + 14) * blend.singersLine, alignment: .bottom)
                     .clipped()
                     .opacity(Double(blend.singersLine))
             }
         }
+        // The singer is looked up once the card is known; its page reuses it.
+        .task(id: singer?.id) { singer?.start() }
     }
 }
 
 private struct SkeletonBand: View {
     @Environment(\.appPalette) private var palette
     var body: some View {
-        RoundedRectangle(cornerRadius: 12).fill(palette.panel.opacity(0.6)).frame(width: SearchLayout.cardWidth)
-            .accessibilityHidden(true)
+        HStack(alignment: .top, spacing: 18) {
+            RoundedRectangle(cornerRadius: 12).fill(palette.panel.opacity(0.6)).frame(width: SearchLayout.cardWidth)
+            AlbumSkeletons(size: 96, count: 7).padding(.top, 28)
+        }
+        .accessibilityHidden(true)
     }
 }
 
-/// The initial on the round avatar; no picture is known without a lookup.
-private struct SingerAvatar: View {
+/// The singer's picture when a service gave one, else the initial.
+struct SingerAvatar: View {
     @Environment(\.appPalette) private var palette
     var name: String
     var size: CGFloat
+    var pictureURL: URL? = nil
     var body: some View {
-        Text(verbatim: String(name.prefix(1)).uppercased())
-            .font(.system(size: size * 0.4, weight: .light)).foregroundStyle(palette.secondary)
-            .frame(width: size, height: size)
-            .background(LinearGradient(colors: [palette.raised, palette.panel], startPoint: .topLeading, endPoint: .bottomTrailing), in: .circle)
-            .accessibilityHidden(true)
+        ZStack {
+            Text(verbatim: String(name.prefix(1)).uppercased())
+                .font(.system(size: size * 0.4, weight: .light)).foregroundStyle(palette.secondary)
+                .frame(width: size, height: size)
+                .background(LinearGradient(colors: [palette.raised, palette.panel], startPoint: .topLeading, endPoint: .bottomTrailing), in: .circle)
+            if let pictureURL {
+                ArtworkView(track: Track(id: "singer:\(pictureURL.absoluteString)", title: name, artist: name, album: "", duration: 0,
+                                         source: .netease, artworkURL: pictureURL), radius: size / 2)
+                    .frame(width: size, height: size).clipShape(.circle)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
-private struct SingerName: View {
+struct SingerName: View {
     @Environment(\.appPalette) private var palette
     var card: SingerCard
     var size: CGFloat
@@ -363,7 +385,18 @@ private struct SplitLink: View {
     }
 }
 
-private struct EvidenceLine: View {
+private struct OpenSingerLink: View {
+    @Environment(\.appPalette) private var palette
+    @Bindable var model: AppModel
+    var singer: SingerStore
+    var body: some View {
+        Button(L10n.string("打开歌手页 ›")) { model.openSinger(singer) }
+            .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.accent)
+            .accessibilityIdentifier("open-singer-page")
+    }
+}
+
+struct EvidenceLine: View {
     @Environment(\.appPalette) private var palette
     var evidence: SingerEvidence
     var body: some View {
@@ -381,30 +414,34 @@ private struct SingerBandCards: View {
     @Environment(\.appPalette) private var palette
     @Bindable var model: AppModel
     var card: SingerCard
+    var singer: SingerStore
     var body: some View {
         if model.searchResults.split {
             let parts = card.split
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
-                    HStack(spacing: 12) {
-                        SingerAvatar(name: part.names.first ?? "", size: 40)
-                        VStack(alignment: .leading, spacing: 5) {
-                            SingerName(card: part, size: 15)
-                            HStack(spacing: 6) {
-                                ForEach(part.evidence, id: \.source) { PlatformMark(source: $0.source) }
-                                if index == parts.count - 1 { Spacer(minLength: 4); SplitLink(model: model, card: card) }
+                    let store = model.singerStore(for: part)
+                    Button { model.openSinger(store) } label: {
+                        HStack(spacing: 12) {
+                            SingerAvatar(name: part.names.first ?? "", size: 40, pictureURL: store.pictureURL)
+                            VStack(alignment: .leading, spacing: 5) {
+                                SingerName(card: part, size: 15)
+                                HStack(spacing: 6) { ForEach(part.evidence, id: \.source) { PlatformMark(source: $0.source) } }
                             }
+                            Spacer(minLength: 4)
                         }
+                        .padding(.horizontal, 14)
+                        .frame(width: SearchLayout.cardWidth, height: (SearchLayout.bandHeight - 8 * CGFloat(parts.count - 1)) / CGFloat(parts.count), alignment: .leading)
+                        .background(palette.panel, in: .rect(cornerRadius: 12)).contentShape(.rect)
                     }
-                    .padding(.horizontal, 14)
-                    .frame(width: SearchLayout.cardWidth, height: (SearchLayout.bandHeight - 8 * CGFloat(parts.count - 1)) / CGFloat(parts.count), alignment: .leading)
-                    .background(palette.panel, in: .rect(cornerRadius: 12))
+                    .buttonStyle(.plain)
+                    .overlay(alignment: .bottomTrailing) { if index == parts.count - 1 { SplitLink(model: model, card: card).padding(10) } }
                 }
             }
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 14) {
-                    SingerAvatar(name: card.names.first ?? "", size: 52)
+                    SingerAvatar(name: card.names.first ?? "", size: 52, pictureURL: singer.pictureURL)
                     VStack(alignment: .leading, spacing: 4) {
                         Eyebrow(text: L10n.string("歌手"))
                         SingerName(card: card, size: 21)
@@ -415,12 +452,14 @@ private struct SingerBandCards: View {
                     ForEach(card.evidence.prefix(3), id: \.source) { EvidenceLine(evidence: $0) }
                 }
                 Spacer(minLength: 6)
-                HStack { Spacer(); SplitLink(model: model, card: card) }.frame(height: 14)
+                HStack { OpenSingerLink(model: model, singer: singer); Spacer(); SplitLink(model: model, card: card) }.frame(height: 14)
             }
             .padding(.horizontal, 18).padding(.vertical, 16)
             .frame(width: SearchLayout.cardWidth, height: SearchLayout.bandHeight, alignment: .topLeading)
             .background(palette.panel, in: .rect(cornerRadius: 12))
-            .accessibilityElement(children: .combine)
+            .contentShape(.rect)
+            .onTapGesture { model.openSinger(singer) }
+            .accessibilityElement(children: .contain)
         }
     }
 }
@@ -430,37 +469,48 @@ private struct SingerCompactCards: View {
     @Environment(\.appPalette) private var palette
     @Bindable var model: AppModel
     var card: SingerCard
+    var singer: SingerStore
     var body: some View {
         let parts = model.searchResults.split ? card.split : [card]
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
-                HStack(spacing: 12) {
-                    SingerAvatar(name: part.names.first ?? "", size: 44)
-                    VStack(alignment: .leading, spacing: 5) {
-                        SingerName(card: part, size: 15)
-                        HStack(spacing: 2) { ForEach(part.evidence, id: \.source) { PlatformMark(source: $0.source) } }
+                let store = parts.count == 1 ? singer : model.singerStore(for: part)
+                Button { model.openSinger(store) } label: {
+                    HStack(spacing: 12) {
+                        SingerAvatar(name: part.names.first ?? "", size: 44, pictureURL: store.pictureURL)
+                        VStack(alignment: .leading, spacing: 5) {
+                            SingerName(card: part, size: 15)
+                            HStack(spacing: 2) { ForEach(part.evidence, id: \.source) { PlatformMark(source: $0.source) } }
+                        }
+                        Spacer(minLength: 0)
                     }
+                    .padding(.horizontal, 14)
+                    .frame(width: SearchLayout.compactCardWidth, height: SearchLayout.compactHeight, alignment: .leading)
+                    .background(palette.panel, in: .rect(cornerRadius: 12)).contentShape(.rect)
                 }
-                .padding(.horizontal, 14)
-                .frame(width: SearchLayout.compactCardWidth, height: SearchLayout.compactHeight, alignment: .leading)
-                .background(palette.panel, in: .rect(cornerRadius: 12))
+                .buttonStyle(.plain)
+                .help(L10n.string("打开歌手页"))
             }
-            SplitLink(model: model, card: card)
+            if card.joinsNames || model.searchResults.split { SplitLink(model: model, card: card) }
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
-/// The singer beside the list in a wide window.
+/// The singer beside the list in a wide window, with their albums in a grid.
 private struct SearchAside: View {
     @Environment(\.appPalette) private var palette
     @Bindable var model: AppModel
+    var width: CGFloat
     var body: some View {
         if case .singer(let card) = model.searchResults.shape {
             let parts = model.searchResults.split ? card.split : [card]
+            let singer = model.singerStore(for: parts[0])
             VStack(alignment: .leading, spacing: 18) {
                 ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                    let store = model.singerStore(for: part)
                     HStack(spacing: 14) {
-                        SingerAvatar(name: part.names.first ?? "", size: 48)
+                        SingerAvatar(name: part.names.first ?? "", size: 48, pictureURL: store.pictureURL)
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(alignment: .firstTextBaseline, spacing: 9) {
                                 SingerName(card: part, size: 21)
@@ -471,9 +521,12 @@ private struct SearchAside: View {
                                 if index == parts.count - 1 { SplitLink(model: model, card: card) }
                             }
                         }
+                        Spacer(minLength: 8)
+                        Button(L10n.string("打开歌手页")) { model.openSinger(store) }.buttonStyle(QuietButtonStyle())
                     }
                     .frame(height: 64, alignment: .leading)
                 }
+                AlbumGrid(model: model, singer: singer, width: width, rows: 3)
             }
         }
     }
@@ -482,16 +535,20 @@ private struct SearchAside: View {
 /// The singers credited in a song-title search's songs.
 private struct SingersLine: View {
     @Environment(\.appPalette) private var palette
+    @Bindable var model: AppModel
     var names: [SingerCount]
     var more: Int
     var body: some View {
         HStack(spacing: 12) {
             Eyebrow(text: L10n.string("这些歌曲的歌手"))
             ForEach(names, id: \.name) { item in
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(verbatim: item.name).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.accent)
-                    Text(verbatim: "\(item.count)").font(.system(size: 9.5).monospacedDigit()).foregroundStyle(palette.faint)
+                Button { model.openSinger(model.singerStore(named: item.name)) } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(verbatim: item.name).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.accent)
+                        Text(verbatim: "\(item.count)").font(.system(size: 9.5).monospacedDigit()).foregroundStyle(palette.faint)
+                    }
                 }
+                .buttonStyle(.plain).help(L10n.string("打开歌手页"))
             }
             if more > 0 { Text(L10n.string("其余 \(more) 位")).font(.system(size: 11)).foregroundStyle(palette.secondary) }
             Spacer(minLength: 0)
@@ -499,7 +556,7 @@ private struct SingersLine: View {
         .lineLimit(1)
         .padding(.horizontal, 14).frame(height: SearchLayout.singersLineHeight)
         .background(palette.accent.opacity(0.035), in: .rect(cornerRadius: 9))
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -577,7 +634,7 @@ private struct SkeletonRow: View {
 
 /// One song: play, the singer, the album, every service's mark, like, add to
 /// a playlist and more, all on the row. The row never moves after an action.
-private struct SearchSongRow: View {
+struct SearchSongRow: View {
     @Environment(\.appPalette) private var palette
     @Bindable var model: AppModel
     var row: SearchRow
@@ -603,10 +660,13 @@ private struct SearchSongRow: View {
                 .foregroundStyle(current ? palette.accent : palette.faint)
             }
             .buttonStyle(.plain).disabled(track.unavailable).help(L10n.string("播放 \(track.title)"))
-            Button { model.play(track, context: queue) } label: {
-                HStack(spacing: 12) {
+            HStack(spacing: 12) {
+                Button { model.play(track, context: queue) } label: {
                     ArtworkView(track: track, radius: 6).frame(width: 43, height: 43)
-                    VStack(alignment: .leading, spacing: 6) {
+                }
+                .buttonStyle(.plain).disabled(track.unavailable)
+                VStack(alignment: .leading, spacing: 6) {
+                    Button { model.play(track, context: queue) } label: {
                         HStack(spacing: 5) {
                             Text(verbatim: track.title).font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(current ? palette.accent : palette.text)
@@ -614,17 +674,26 @@ private struct SearchSongRow: View {
                                 Image(systemName: "checkmark.circle").font(.system(size: 10, weight: .medium)).foregroundStyle(palette.accent)
                                     .help(L10n.string("已在音乐库")).accessibilityLabel(L10n.string("已在音乐库"))
                             }
+                            Spacer(minLength: 0)
                         }
-                        Text(verbatim: track.unavailable ? L10n.string("\(track.artist) · 当前不可播放") : track.artist)
-                            .font(.system(size: 10)).foregroundStyle(palette.secondary)
+                        .contentShape(.rect)
                     }
-                    .lineLimit(1)
-                    .frame(width: metrics.songColumn, alignment: .leading)
+                    .buttonStyle(.plain).disabled(track.unavailable)
+                    .accessibilityLabel(L10n.string("播放 \(track.title)，\(track.artist)"))
+                    // Each credited singer opens that singer's page.
+                    HStack(spacing: 0) {
+                        ForEach(Array(SingerRule.credits(track.artist).enumerated()), id: \.offset) { index, name in
+                            if index > 0 { Text(verbatim: " / ") }
+                            Button(name) { model.openSinger(model.singerStore(named: name)) }
+                                .buttonStyle(.plain).help(L10n.string("打开歌手页"))
+                        }
+                        if track.unavailable { Text(L10n.string(" · 当前不可播放")) }
+                    }
+                    .font(.system(size: 10)).foregroundStyle(palette.secondary)
                 }
-                .contentShape(.rect)
+                .lineLimit(1)
+                .frame(width: metrics.songColumn, alignment: .leading)
             }
-            .buttonStyle(.plain).disabled(track.unavailable)
-            .accessibilityLabel(L10n.string("播放 \(track.title)，\(track.artist)"))
             if metrics.albumColumn > 1 { album(target).frame(width: metrics.albumColumn, alignment: .leading) }
             Spacer(minLength: 0)
             HStack(spacing: 4) { ForEach(row.sources.filter(PlatformMark.has), id: \.self) { PlatformMark(source: $0) } }
