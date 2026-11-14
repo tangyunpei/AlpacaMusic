@@ -357,6 +357,25 @@ struct SingerAvatar: View {
     }
 }
 
+/// The singer's picture filling a panel, or the initial on the panel colour.
+struct SingerPicture: View {
+    @Environment(\.appPalette) private var palette
+    var name: String
+    var pictureURL: URL?
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: [palette.raised, palette.panel], startPoint: .topLeading, endPoint: .bottomTrailing)
+            Text(verbatim: String(name.prefix(1)).uppercased()).font(.system(size: 34, weight: .light)).foregroundStyle(palette.secondary)
+            if let pictureURL {
+                ArtworkView(track: Track(id: "singer:\(pictureURL.absoluteString)", title: name, artist: name, album: "", duration: 0,
+                                         source: .netease, artworkURL: pictureURL), radius: 0, highResolution: true)
+            }
+        }
+        .clipped()
+        .accessibilityHidden(true)
+    }
+}
+
 struct SingerName: View {
     @Environment(\.appPalette) private var palette
     var card: SingerCard
@@ -442,27 +461,31 @@ private struct SingerBandCards: View {
                 }
             }
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                // The picture stands at the right of the name (the owner's call, 14 November).
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Eyebrow(text: L10n.string("歌手"))
-                        SingerName(card: card, size: 21)
+            // The picture fills a tall panel down the card's right side, and
+            // the name runs straight into the sources (the owner's call, 14 November).
+            HStack(alignment: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Eyebrow(text: L10n.string("歌手"))
+                    SingerName(card: card, size: 21).padding(.top, 5)
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(card.evidence.prefix(3), id: \.source) { EvidenceLine(evidence: $0) }
                     }
-                    .padding(.top, 4)
-                    Spacer(minLength: 0)
-                    SingerAvatar(name: card.names.first ?? "", size: 60, pictureURL: singer.pictureURL)
+                    .padding(.top, 10)
+                    Spacer(minLength: 6)
+                    VStack(alignment: .leading, spacing: 3) {
+                        OpenSingerLink(model: model, singer: singer)
+                        if card.joinsNames || model.searchResults.split { SplitLink(model: model, card: card) }
+                    }
                 }
-                Spacer(minLength: 6)
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(card.evidence.prefix(3), id: \.source) { EvidenceLine(evidence: $0) }
-                }
-                Spacer(minLength: 6)
-                HStack { OpenSingerLink(model: model, singer: singer); Spacer(); SplitLink(model: model, card: card) }.frame(height: 14)
+                .padding(.leading, 18).padding(.trailing, 12).padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(height: SearchLayout.bandHeight, alignment: .topLeading)
+                SingerPicture(name: card.names.first ?? "", pictureURL: singer.pictureURL)
+                    .frame(width: SearchLayout.cardPictureWidth, height: SearchLayout.bandHeight)
             }
-            .padding(.horizontal, 18).padding(.vertical, 16)
             .frame(width: SearchLayout.cardWidth, height: SearchLayout.bandHeight, alignment: .topLeading)
-            .background(palette.panel, in: .rect(cornerRadius: 12))
+            .background(palette.panel)
+            .clipShape(.rect(cornerRadius: 12))
             .contentShape(.rect)
             .onTapGesture { model.openSinger(singer) }
             .accessibilityElement(children: .contain)

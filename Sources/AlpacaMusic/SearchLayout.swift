@@ -97,6 +97,8 @@ enum SearchLayout {
     static let singersLineHeight: CGFloat = 36
     static let rowHeight: CGFloat = 63
     static let cardWidth: CGFloat = 300
+    /// The singer's picture down the card's right side.
+    static let cardPictureWidth: CGFloat = 108
     static let compactCardWidth: CGFloat = 236
     /// Everything on a row but the song and album columns: padding, number,
     /// cover, sources, time, actions.
