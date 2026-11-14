@@ -379,6 +379,8 @@ struct RemoteAlbumView: View {
                         .buttonStyle(PrimaryButtonStyle()).disabled(queue.isEmpty)
                         Button(saved ? L10n.string("已在音乐库") : L10n.string("存入音乐库")) { Task { await model.saveAlbum(store) } }
                             .buttonStyle(QuietButtonStyle()).disabled(queue.isEmpty || saved || store.saving)
+                        Button(L10n.string("全部添加到歌单…")) { model.choosePlaylist(for: queue) }
+                            .buttonStyle(QuietButtonStyle()).disabled(queue.isEmpty)
                     }
                 }
             }

@@ -116,6 +116,29 @@ actor KeychainMusicCredentialAccess: MusicCredentialAccess {
     }
 }
 
+/// An isolated test copy's accounts, started from the installed app's saved
+/// sign-ins: each service's are read once, then kept in memory. Nothing is
+/// ever written back, so the installed app's sign-ins stay as they were.
+actor SeededMemoryMusicCredentialStore: MusicCredentialStoring {
+    private let memory = MemoryMusicCredentialStore()
+    private let seed: any MusicCredentialStoring
+    private var settled: Set<MusicSource> = []
+    init(seed: any MusicCredentialStoring = MusicCredentialStore()) { self.seed = seed }
+    func load(for source: MusicSource) async throws -> [MusicSessionCookie] {
+        if settled.insert(source).inserted {
+            let cookies = (try? await seed.load(for: source)) ?? []
+            if !cookies.isEmpty { try await memory.save(cookies, for: source) }
+        }
+        return try await memory.load(for: source)
+    }
+    func save(_ cookies: [MusicSessionCookie], for source: MusicSource) async throws {
+        settled.insert(source); try await memory.save(cookies, for: source)
+    }
+    func delete(for source: MusicSource) async throws {
+        settled.insert(source); try await memory.delete(for: source)
+    }
+}
+
 actor MemoryMusicCredentialAccess: MusicCredentialAccess {
     private var values: [MusicCredentialAccount: Data] = [:]
     func read(_ account: MusicCredentialAccount) -> Data? { values[account] }

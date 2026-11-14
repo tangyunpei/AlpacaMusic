@@ -105,6 +105,23 @@ final class AppModel {
     var importFolder = false
     var sheet: AppSheet?
     var selectedTrack: Track?
+    /// Several songs for the playlist sheet, such as a whole album; they count
+    /// only while `selectedTrack` is their first song.
+    var selectedTracks: [Track] = []
+    /// The songs the playlist sheet adds: an album's, or the one song chosen.
+    var playlistSheetTracks: [Track] {
+        if selectedTracks.count > 1, selectedTracks.first?.id == selectedTrack?.id { return selectedTracks }
+        return selectedTrack.map { [$0] } ?? []
+    }
+    /// Opens the playlist sheet for several songs at once.
+    func choosePlaylist(for tracks: [Track]) {
+        guard let first = tracks.first else { return }
+        selectedTracks = tracks; selectedTrack = first; sheet = .addToPlaylist
+    }
+    /// Adds songs to a playlist in their order, saving each to the library.
+    func add(_ tracks: [Track], toPlaylist id: String) {
+        for track in tracks { library.addToPlaylist(id, track: track) }
+    }
     var officialPlaybackTrack: Track?
     var notice: String?
     var visual: VisualSettings { didSet { persistVisual() } }
@@ -134,7 +151,14 @@ final class AppModel {
         miniPlayerStyle = preferences.string(forKey: "mini-player-style").flatMap(MiniPlayerStyle.init(rawValue:)) ?? .lyrics
         library = MusicLibrary(directory: directory)
         let isolatedAccounts = ephemeralAccounts ?? (ProcessInfo.processInfo.environment["ALPACA_EPHEMERAL_ACCOUNTS"] == "1")
-        let native = NativeMusicClient(credentials: isolatedAccounts ? MemoryMusicCredentialStore() : MusicCredentialStore())
+        // A test copy keeps its sign-ins in memory. With ALPACA_SEED_ACCOUNTS=1 it
+        // starts from the installed app's saved sign-ins, read once and never written.
+        let seedAccounts = isolatedAccounts && ProcessInfo.processInfo.environment["ALPACA_SEED_ACCOUNTS"] == "1"
+        let credentials: any MusicCredentialStoring
+        if !isolatedAccounts { credentials = MusicCredentialStore() }
+        else if seedAccounts { credentials = SeededMemoryMusicCredentialStore() }
+        else { credentials = MemoryMusicCredentialStore() }
+        let native = NativeMusicClient(credentials: credentials)
         accounts = ConnectedMusicAccounts(client: native)
         let automaticLyrics = preferences.object(forKey: "apple-music-online-lyrics") as? Bool ?? true
         automaticAppleMusicLyrics = automaticLyrics
