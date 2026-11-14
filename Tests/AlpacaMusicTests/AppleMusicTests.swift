@@ -47,6 +47,12 @@ import Testing
         if let searchError { throw searchError }
         return [appleTrack("search")]
     }
+    var pageOffsets: [Int] = []
+    func search(_ query: String, offset: Int) async throws -> [Track] {
+        pageOffsets.append(offset)
+        if let searchError { throw searchError }
+        return [appleTrack("search.\(offset)")]
+    }
     func librarySongs(validate: @MainActor () throws -> Void, progress: @MainActor (ImportProgress) -> Void) async throws -> [Track] {
         libraryRequests += 1
         progress(ImportProgress(completed: 0, total: 1))
@@ -282,6 +288,21 @@ private let configuredMusic = AppleMusicConfiguration(enabledInBuild: true, expe
         catch { #expect(error.localizedDescription == "Authored search failure") }
         adapter.searchError = CancellationError()
         await #expect(throws: CancellationError.self) { try await service.search("test") }
+    }
+    @Test func aLaterSearchPageAsksFromItsOffsetAndLeavesTheFirstSearchAlone() async throws {
+        let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }
+        let adapter = StubAppleMusic(), service = AppleMusicService(defaults: defaults, configuration: configuredMusic, adapter: adapter)
+        await service.connect()
+        let page = try await service.searchPage("  test ", offset: 25)
+        #expect(adapter.pageOffsets == [25])
+        #expect(adapter.searchRequests == 0)
+        #expect(page.map(\.id) == ["appleMusic:search.25"])
+        adapter.searchError = rawMusicKitFailure()
+        do { _ = try await service.searchPage("test", offset: 50); Issue.record("Failed page returned results") }
+        catch let error as MusicError { #expect(isReadableAppleMusicText(error.localizedDescription)) }
+        catch { Issue.record("Page surfaced an unwrapped error") }
+        service.disconnect()
+        await #expect(throws: (any Error).self) { try await service.searchPage("test", offset: 75) }
     }
     @Test func subscriptionFailureStoresReadableErrorOnConnectAndRefresh() async throws {
         let (defaults, suite) = environment(); defer { defaults.removePersistentDomain(forName: suite) }

@@ -89,6 +89,63 @@ actor NativeMusicClient {
         try validate(source, token)
         return result
     }
+    /// A later page of a song search, `offset` songs in, for a signed-in NetEase or QQ Music.
+    func searchPage(_ query: String, source: MusicSource, offset: Int) async throws -> [Track] {
+        let (session, token) = try snapshot(source)
+        let result: [Track]
+        switch try provider(source) {
+        case let netease as NeteaseDirectProvider: result = try await netease.searchPage(query, offset: offset, cookies: session.cookies)
+        case let qq as QQDirectProvider: result = try await qq.searchPage(query, page: SearchPagingRule.qqPage(after: offset), cookies: session.cookies)
+        default: return []
+        }
+        try validate(source, token)
+        return result.filter { $0.source == source }
+    }
+    /// Singers on a signed-in NetEase or QQ Music whose name matches.
+    func singers(_ name: String, source: MusicSource) async throws -> [SingerProfile] {
+        let (session, token) = try snapshot(source)
+        let result: [SingerProfile]
+        switch try provider(source) {
+        case let netease as NeteaseDirectProvider: result = try await netease.singers(name, cookies: session.cookies)
+        case let qq as QQDirectProvider: result = try await qq.singers(name, cookies: session.cookies)
+        default: return []
+        }
+        try validate(source, token)
+        return result
+    }
+    func singerAlbums(_ singer: SingerProfile, offset: Int) async throws -> SingerPage<SingerAlbum> {
+        let (session, token) = try snapshot(singer.source)
+        let result: SingerPage<SingerAlbum>
+        switch try provider(singer.source) {
+        case let netease as NeteaseDirectProvider: result = try await netease.singerAlbums(singer.remoteID, offset: offset, cookies: session.cookies)
+        case let qq as QQDirectProvider: result = try await qq.singerAlbums(singer.remoteID, offset: offset, cookies: session.cookies)
+        default: return SingerPage(items: [], more: false)
+        }
+        try validate(singer.source, token)
+        return result
+    }
+    func singerSongs(_ singer: SingerProfile, offset: Int) async throws -> SingerPage<Track> {
+        let (session, token) = try snapshot(singer.source)
+        let result: SingerPage<Track>
+        switch try provider(singer.source) {
+        case let netease as NeteaseDirectProvider: result = try await netease.singerSongs(singer.remoteID, offset: offset, cookies: session.cookies)
+        case let qq as QQDirectProvider: result = try await qq.singerSongs(singer.remoteID, offset: offset, cookies: session.cookies)
+        default: return SingerPage(items: [], more: false)
+        }
+        try validate(singer.source, token)
+        return SingerPage(items: result.items.filter { $0.source == singer.source }, more: result.more)
+    }
+    /// An album's songs for a page that shows it without importing it.
+    func albumSongs(_ album: SingerAlbum) async throws -> [Track] {
+        let (session, token) = try snapshot(album.source)
+        let result: [Track]
+        switch try provider(album.source) {
+        case let qq as QQDirectProvider: result = try await qq.albumSongs(album.remoteID, cookies: session.cookies)
+        case let provider: result = try await provider.tracks(in: album.remote, cookies: session.cookies)
+        }
+        try validate(album.source, token)
+        return result.filter { $0.source == album.source }
+    }
     func playlists(_ source: MusicSource) async throws -> [RemoteMusicPlaylist] {
         let (session, token) = try snapshot(source)
         let result = try await provider(source).playlists(profile: session.profile, cookies: session.cookies)

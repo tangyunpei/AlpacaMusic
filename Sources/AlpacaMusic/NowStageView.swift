@@ -637,7 +637,7 @@ struct MusicSearchField: View {
             TextField(L10n.string("搜索歌曲、艺术家或专辑"), text: $model.query).textFieldStyle(.plain).font(.system(size: 11))
                 .focused(focused).onSubmit { model.search() }.accessibilityIdentifier("music-search")
             if !model.query.isEmpty {
-                Button { model.navigate(model.destination) } label: { Image(systemName: "xmark").font(.system(size: 9)) }
+                Button { model.clearSearchField() } label: { Image(systemName: "xmark").font(.system(size: 9)) }
                     .buttonStyle(.plain).help(L10n.string("清除搜索"))
             } else {
                 Text("⌘ K").font(.system(size: 9)).foregroundStyle(hint)

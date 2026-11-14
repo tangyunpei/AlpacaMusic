@@ -1,20 +1,8 @@
 import SwiftUI
 import Observation
 
-enum Destination: Hashable { case home, library, albums, favorites, sources, playlist(String), album(String) }
+enum Destination: Hashable { case home, library, albums, favorites, sources, playlist(String), album(String), search, singer(String), remoteAlbum(String) }
 enum AppSheet: String, Identifiable { case url, playlist, visual, addToPlaylist, appleMusicSetup, qqOfficialPlayback; var id: String { rawValue } }
-
-/// Live state of one source during a search.
-struct SearchSourceStatus: Identifiable, Equatable, Sendable {
-    enum State: Equatable, Sendable {
-        case searching
-        case done(Int)
-        case failed(String)
-    }
-    var source: MusicSource
-    var state: State
-    var id: MusicSource { source }
-}
 
 @MainActor @Observable
 final class AppModel {
@@ -38,13 +26,18 @@ final class AppModel {
         }
     }
     var destination: Destination = .home
+    /// The pages behind the current one that Back returns to: the page a
+    /// search started from, then the results when an album was opened from them.
+    private(set) var trail: [Destination] = []
     var query = ""
-    var searchTerm = ""
-    var remoteResults: [Track] = [] { didSet { remoteRevision &+= 1 } }
-    private var remoteRevision: UInt64 = 0
-    var searchErrors: [String] = []
-    var searching = false
-    private(set) var searchStatuses: [SearchSourceStatus] = []
+    /// The current search's results; they outlive opening an album from them.
+    let searchResults: SearchStore
+    /// The services a search, singer page or album page asks.
+    @ObservationIgnored let searchLoader: any SearchLoading
+    /// Singer and album pages opened from search, kept while Back can return to them.
+    /// Not observed: a card asks for its store while it is drawn.
+    @ObservationIgnored private(set) var singerStores: [String: SingerStore] = [:]
+    @ObservationIgnored private(set) var albumStores: [String: AlbumStore] = [:]
     var sodaPublicSearch: Bool {
         didSet { preferences.set(sodaPublicSearch, forKey: "soda-public-search") }
     }
@@ -112,6 +105,23 @@ final class AppModel {
     var importFolder = false
     var sheet: AppSheet?
     var selectedTrack: Track?
+    /// Several songs for the playlist sheet, such as a whole album; they count
+    /// only while `selectedTrack` is their first song.
+    var selectedTracks: [Track] = []
+    /// The songs the playlist sheet adds: an album's, or the one song chosen.
+    var playlistSheetTracks: [Track] {
+        if selectedTracks.count > 1, selectedTracks.first?.id == selectedTrack?.id { return selectedTracks }
+        return selectedTrack.map { [$0] } ?? []
+    }
+    /// Opens the playlist sheet for several songs at once.
+    func choosePlaylist(for tracks: [Track]) {
+        guard let first = tracks.first else { return }
+        selectedTracks = tracks; selectedTrack = first; sheet = .addToPlaylist
+    }
+    /// Adds songs to a playlist in their order, saving each to the library.
+    func add(_ tracks: [Track], toPlaylist id: String) {
+        for track in tracks { library.addToPlaylist(id, track: track) }
+    }
     var officialPlaybackTrack: Track?
     var notice: String?
     var visual: VisualSettings { didSet { persistVisual() } }
@@ -120,10 +130,7 @@ final class AppModel {
     @ObservationIgnored private let preferences: UserDefaults
     @ObservationIgnored private var visibleCache: (key: VisibleTrackKey, tracks: [Track])?
     @ObservationIgnored private var loaded = false
-    @ObservationIgnored private var searchTask: Task<Void, Never>?
-    @ObservationIgnored private var searchGeneration: UInt64 = 0
-    @ObservationIgnored private var addedFromSearch: Set<String> = []
-    @ObservationIgnored private var searchSectionCache: (key: VisibleTrackKey, sections: SearchSections)?
+    @ObservationIgnored private var albumIndexCache: (revision: UInt64, ids: [String: String])?
     @ObservationIgnored private var libraryIndexCache: (revision: UInt64, ids: Set<String>, keys: Set<String>)?
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
     /// The listener's latest play request. A list still loading its songs
@@ -131,9 +138,10 @@ final class AppModel {
     @ObservationIgnored private var playIntent = UUID()
     @ObservationIgnored private var lyricsSync: LyricsSync?
 
-    /// `browseLoader` replaces the platforms behind the Now page's charts in tests.
+    /// `browseLoader` replaces the platforms behind the Now page's charts in
+    /// tests, and `searchLoader` the services a search asks.
     init(directory suppliedDirectory: URL? = nil, preferences suppliedDefaults: UserDefaults? = nil, ephemeralAccounts: Bool? = nil,
-         browseLoader: (any BrowseLoading)? = nil) {
+         browseLoader: (any BrowseLoading)? = nil, searchLoader: (any SearchLoading)? = nil) {
         let directory = suppliedDirectory ?? ProcessInfo.processInfo.environment["ALPACA_DATA_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         preferences = suppliedDefaults ?? ProcessInfo.processInfo.environment["ALPACA_PREFERENCES_DOMAIN"].flatMap(UserDefaults.init(suiteName:)) ?? .standard
         language = L10n.preference(in: preferences)
@@ -143,7 +151,14 @@ final class AppModel {
         miniPlayerStyle = preferences.string(forKey: "mini-player-style").flatMap(MiniPlayerStyle.init(rawValue:)) ?? .lyrics
         library = MusicLibrary(directory: directory)
         let isolatedAccounts = ephemeralAccounts ?? (ProcessInfo.processInfo.environment["ALPACA_EPHEMERAL_ACCOUNTS"] == "1")
-        let native = NativeMusicClient(credentials: isolatedAccounts ? MemoryMusicCredentialStore() : MusicCredentialStore())
+        // A test copy keeps its sign-ins in memory. With ALPACA_SEED_ACCOUNTS=1 it
+        // starts from the installed app's saved sign-ins, read once and never written.
+        let seedAccounts = isolatedAccounts && ProcessInfo.processInfo.environment["ALPACA_SEED_ACCOUNTS"] == "1"
+        let credentials: any MusicCredentialStoring
+        if !isolatedAccounts { credentials = MusicCredentialStore() }
+        else if seedAccounts { credentials = SeededMemoryMusicCredentialStore() }
+        else { credentials = MemoryMusicCredentialStore() }
+        let native = NativeMusicClient(credentials: credentials)
         accounts = ConnectedMusicAccounts(client: native)
         let automaticLyrics = preferences.object(forKey: "apple-music-online-lyrics") as? Bool ?? true
         automaticAppleMusicLyrics = automaticLyrics
@@ -161,6 +176,10 @@ final class AppModel {
         player = PlayerController(sources: sourceService, defaults: preferences, appleMusic: appleMusic, spotify: spotify)
         autoImport = AutoImportCoordinator(library: library, accounts: accounts, appleMusic: appleMusic, spotify: spotify)
         browse = BrowseStore(loader: browseLoader ?? PlatformBrowseLoader(accounts: accounts, appleMusic: appleMusic), defaults: preferences)
+        let loader = searchLoader ?? PlatformSearchLoader(sources: sourceService, appleMusic: appleMusic, spotify: spotify, native: native)
+        self.searchLoader = loader
+        searchResults = SearchStore(loader: loader,
+                                    preferences: preferences)
         var savedVisual = (preferences.data(forKey: "visual-settings").flatMap { try? JSONDecoder().decode(VisualSettings.self, from: $0) } ?? .standard).validated()
         // Abstraction's default moved from 0.2 to 0 (true colours, every point).
         // Settings saved at the old default move with it, once; a value the
@@ -205,59 +224,52 @@ final class AppModel {
     private struct VisibleTrackKey: Equatable {
         let destination: Destination
         let filter: MusicSource?
-        let search: String
         let libraryRevision: UInt64
-        let remoteRevision: UInt64
     }
     var visibleTracks: [Track] {
-        let key = VisibleTrackKey(destination: destination, filter: sourceFilter, search: searchTerm,
-                                  libraryRevision: library.listingRevision, remoteRevision: remoteRevision)
+        // The results change without the library changing; they are not cached here.
+        if destination == .search { return searchResults.shownRows.map(\.track) }
+        let key = VisibleTrackKey(destination: destination, filter: sourceFilter, libraryRevision: library.listingRevision)
         if let cached = visibleCache, cached.key == key { return cached.tracks }
         let base: [Track]
-        if !searchTerm.isEmpty {
-            let local = library.tracks.filter { "\($0.title) \($0.artist) \($0.album)".localizedCaseInsensitiveContains(searchTerm) }
-            let ids = Set(local.map(\.id)); base = local + remoteResults.filter { !ids.contains($0.id) }
-        } else {
-            switch destination {
-            case .favorites: base = library.tracks.filter { library.favorites.contains($0.id) }
-            case .playlist: base = selectedPlaylist.map { library.tracks(withIDs: $0.trackIDs) } ?? []
-            case .album: base = albumTracks
-            default: base = library.tracks
-            }
+        switch destination {
+        case .favorites: base = library.tracks.filter { library.favorites.contains($0.id) }
+        case .playlist: base = selectedPlaylist.map { library.tracks(withIDs: $0.trackIDs) } ?? []
+        case .album: base = albumTracks
+        default: base = library.tracks
         }
         let result = sourceFilter.map { source in base.filter { $0.source == source } } ?? base
         visibleCache = (key, result)
         return result
     }
-    private struct SearchSections {
-        var library: [Track]
-        var online: [Track]
-        var albums: [MusicAlbum]
-        var onlineInLibrary: Set<String>
-    }
-    /// Library tracks matching the current search (source filter applied).
-    var searchLibraryMatches: [Track] { searchSections.library }
-    /// Remote results that are not library tracks. Songs added from this
-    /// search stay here, marked as added, instead of jumping sections.
-    var searchOnlineResults: [Track] { searchSections.online }
-    /// Library album collections (inferred and imported) whose name or
-    /// artist matches the current search, source filter applied.
-    var searchAlbumMatches: [MusicAlbum] { searchSections.albums }
-    /// The trimmed search term when it is a single HTTP(S) address.
-    var searchLink: URL? { Self.linkAddress(in: searchTerm) }
-
-    /// True for a library track, or a remote track whose title and artist
-    /// match a library song.
+    /// True for a library track, or a track whose title and singer match a library song.
     func isInLibrary(_ track: Track) -> Bool {
         let index = libraryIndex
-        if index.ids.contains(track.id) { return true }
-        if searchSections.onlineInLibrary.contains(track.id) { return true }
-        return index.keys.contains(Self.matchKey(track))
+        return index.ids.contains(track.id) || index.keys.contains(Self.matchKey(track))
     }
     /// True only when this exact track is saved in the library.
     func isLibraryTrack(_ track: Track) -> Bool { libraryIndex.ids.contains(track.id) }
-    /// True for an online search result whose title and artist match a library song.
-    func searchResultMatchesLibrary(_ track: Track) -> Bool { searchSections.onlineInLibrary.contains(track.id) }
+    /// The library album that holds this song, for the results' album links.
+    func libraryAlbumID(containing trackID: String) -> String? {
+        let revision = library.listingRevision
+        if albumIndexCache?.revision != revision {
+            var index: [String: String] = [:]
+            for album in library.albums { for id in album.trackIDs where index[id] == nil { index[id] = album.id } }
+            albumIndexCache = (revision, index)
+        }
+        return albumIndexCache?.ids[trackID]
+    }
+    /// A result row is in the library when any of its copies is.
+    func isInLibrary(_ row: SearchRow) -> Bool { row.copies.contains { isInLibrary($0.track) } }
+    /// The song a row's like, playlist and menu act on: the library's own copy
+    /// when there is one, so an action never saves a second copy.
+    func actionTrack(for row: SearchRow) -> Track {
+        let index = libraryIndex
+        if let saved = row.copies.first(where: { index.ids.contains($0.track.id) }) { return saved.track }
+        let key = Self.matchKey(row.track)
+        if index.keys.contains(key), let twin = library.tracks.first(where: { Self.matchKey($0) == key }) { return twin }
+        return row.track
+    }
 
     static func linkAddress(in text: String) -> URL? {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -268,76 +280,34 @@ final class AppModel {
         return url
     }
 
-    private static func fold(_ value: String) -> String {
-        value.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    private static func matchKey(_ track: Track) -> String {
-        fold(track.title) + "\u{1F}" + fold(track.artist)
-    }
+    private static func matchKey(_ track: Track) -> String { SearchList.key(track) }
 
     private var libraryIndex: (ids: Set<String>, keys: Set<String>) {
         let revision = library.listingRevision
         if let cached = libraryIndexCache, cached.revision == revision { return (cached.ids, cached.keys) }
         let tracks = library.tracks
         let ids = Set(tracks.map(\.id))
-        let keys = Set(tracks.compactMap { track in Self.fold(track.title).isEmpty ? nil : Self.matchKey(track) })
+        let keys = Set(tracks.compactMap { track in SearchList.fold(track.title).isEmpty ? nil : Self.matchKey(track) })
         libraryIndexCache = (revision, ids, keys)
         return (ids, keys)
     }
 
-    private var searchSections: SearchSections {
-        let key = VisibleTrackKey(destination: .library, filter: sourceFilter, search: searchTerm,
-                                  libraryRevision: library.listingRevision, remoteRevision: remoteRevision)
-        if let cached = searchSectionCache, cached.key == key { return cached.sections }
-        let sections = makeSearchSections()
-        searchSectionCache = (key, sections)
-        return sections
-    }
-
-    private func makeSearchSections() -> SearchSections {
-        let term = searchTerm
-        guard !term.isEmpty else { return SearchSections(library: [], online: [], albums: [], onlineInLibrary: []) }
-        let filter = sourceFilter
-        let added = addedFromSearch
-        let index = libraryIndex
-        let candidates = library.tracks.filter { track in
-            !added.contains(track.id) && (filter == nil || track.source == filter)
+    /// The title a page would have, for the header's trail.
+    func title(of page: Destination) -> String {
+        switch page {
+        case .search: L10n.string("搜索「\(searchResults.term)」")
+        case .singer(let id): singerStores[id]?.names.first ?? L10n.string("歌手")
+        case .remoteAlbum(let id): albumStores[id]?.album.name ?? L10n.string("专辑")
+        case .album(let id): library.album(id: id)?.name ?? L10n.string("专辑")
+        default: ""
         }
-        let matches = candidates.filter { "\($0.title) \($0.artist) \($0.album)".localizedCaseInsensitiveContains(term) }
-        // Only tracks already shown in the library section are left out, so a
-        // saved song a service matched by alias or translation stays visible.
-        let matchIDs = Set(matches.map(\.id))
-        var online: [Track] = []
-        var seen = Set<String>()
-        var onlineInLibrary = Set<String>()
-        for track in remoteResults where filter == nil || track.source == filter {
-            guard seen.insert(track.id).inserted, !matchIDs.contains(track.id) else { continue }
-            online.append(track)
-            if !index.ids.contains(track.id), index.keys.contains(Self.matchKey(track)) { onlineInLibrary.insert(track.id) }
-        }
-        return SearchSections(library: matches, online: online, albums: searchAlbums(term: term, filter: filter, excluding: added), onlineInLibrary: onlineInLibrary)
     }
-
-    /// Up to 12 album collections from the album library whose name or artist
-    /// contains the term and that hold more than one song not added during this
-    /// search, so singles and just-added songs do not spawn tiles. Placeholder
-    /// names for unknown albums and links are skipped.
-    private func searchAlbums(term: String, filter: MusicSource?, excluding added: Set<String>) -> [MusicAlbum] {
-        let unknownAlbum = L10n.string("未知专辑"), linkAlbum = L10n.string("我的链接")
-        var albums: [MusicAlbum] = []
-        for album in library.albums where filter == nil || album.source == filter {
-            guard albums.count < 12 else { break }
-            guard album.trackIDs.filter({ !added.contains($0) }).count > 1, album.name != unknownAlbum, album.name != linkAlbum,
-                  album.name.localizedCaseInsensitiveContains(term) || album.artist.localizedCaseInsensitiveContains(term) else { continue }
-            albums.append(album)
-        }
-        return albums
-    }
-
     var pageTitle: String {
-        if !searchTerm.isEmpty { return L10n.string("搜索「\(searchTerm)」") }
-        switch destination { case .home: return L10n.string("此刻"); case .library: return L10n.string("我的音乐库"); case .albums: return L10n.string("专辑库"); case .favorites: return L10n.string("喜欢的音乐"); case .sources: return L10n.string("音源"); case .playlist: return selectedPlaylist?.name ?? L10n.string("我的歌单"); case .album: return selectedAlbum?.name ?? L10n.string("专辑") }
+        switch destination {
+        case .search: return L10n.string("搜索「\(searchResults.term)」")
+        case .singer(let id): return singerStores[id]?.names.first ?? L10n.string("歌手")
+        case .remoteAlbum(let id): return albumStores[id]?.album.name ?? L10n.string("专辑")
+        case .home: return L10n.string("此刻"); case .library: return L10n.string("我的音乐库"); case .albums: return L10n.string("专辑库"); case .favorites: return L10n.string("喜欢的音乐"); case .sources: return L10n.string("音源"); case .playlist: return selectedPlaylist?.name ?? L10n.string("我的歌单"); case .album: return selectedAlbum?.name ?? L10n.string("专辑") }
     }
 
     func load() async {
@@ -361,10 +331,82 @@ final class AppModel {
     }
     /// Stops lyric loading and alignment, for example while quitting.
     func stopLyricsSync() { lyricsSync?.stop() }
+    /// Goes to a page from the sidebar or a page's own link. It ends a search
+    /// and its trail.
+    /// The singer behind a search card, found once and kept for its page.
+    func singerStore(for card: SingerCard) -> SingerStore {
+        var query: [MusicSource: String] = [:]
+        for evidence in card.evidence where query[evidence.source] == nil { query[evidence.source] = evidence.name }
+        return singerStore(names: card.names, query: query)
+    }
+    /// A singer by name, from a row's credit or the singers line.
+    func singerStore(named name: String) -> SingerStore { singerStore(names: [name], query: [:]) }
+    private func singerStore(names: [String], query: [MusicSource: String]) -> SingerStore {
+        let key = SingerStore.key(names)
+        if let store = singerStores[key] { return store }
+        let store = SingerStore(names: names, query: query, sources: searchResults.sources.map(\.source), loader: searchLoader,
+                                isSaved: { [weak self] in self?.isInLibrary($0) ?? false })
+        singerStores[key] = store
+        return store
+    }
+    func openSinger(_ store: SingerStore) {
+        store.start()
+        open(.singer(store.id))
+    }
+    func openAlbum(_ album: SingerAlbum) {
+        let key = "album:" + album.id
+        let store = albumStores[key] ?? AlbumStore(album: album, loader: searchLoader)
+        albumStores[key] = store
+        store.start()
+        open(.remoteAlbum(key))
+    }
+    /// Back to an earlier page of the trail, as the header's trail links do.
+    func goBack(to target: Destination) {
+        guard trail.contains(target) else { return }
+        while destination != target, !trail.isEmpty { goBack() }
+    }
+    /// Saves an album opened from search to the library, with its songs.
+    func saveAlbum(_ store: AlbumStore) async {
+        guard !store.tracks.isEmpty, !store.saving else { return }
+        store.setSaving(true); defer { store.setSaving(false) }
+        do {
+            let count = try await library.importRemoteAlbumAndSave(store.album.remote, tracks: store.tracks)
+            notify(L10n.string("已将「\(store.album.name)」的 \(count) 首歌曲存入音乐库"))
+        } catch { notify(error.localizedDescription) }
+    }
     func navigate(_ target: Destination) {
-        stopSearch(); searchStatuses = []; addedFromSearch = []
-        query = ""; searchTerm = ""; remoteResults = []; searchErrors = []; sourceFilter = nil
+        searchResults.clear(); trail = []; singerStores = [:]; albumStores = [:]
+        query = ""; sourceFilter = nil
         destination = target; immersive = false
+    }
+    /// Opens a page from the search results, keeping them to come back to.
+    func open(_ target: Destination) {
+        guard destination == .search || !trail.isEmpty else { navigate(target); return }
+        trail.append(destination); sourceFilter = nil
+        destination = target; immersive = false
+    }
+    /// True when Back has a page to return to.
+    var canGoBack: Bool { !trail.isEmpty }
+    /// Back: from an album opened from the results, to the same results; from
+    /// the results, out of the search to the page it started from.
+    func goBack() {
+        guard let previous = trail.popLast() else { return }
+        if destination == .search { searchResults.clear(); query = "" }
+        else if previous == .search { query = searchResults.term }
+        sourceFilter = nil
+        destination = previous; immersive = false
+    }
+    /// Escape: back one page from a page opened from the results. On the
+    /// results page it does nothing; elsewhere it clears the field as before.
+    func escape() {
+        if destination == .search { return }
+        if canGoBack { goBack() } else { navigate(destination) }
+    }
+    /// The field's clear button: on the results page it clears the field only;
+    /// on a page opened from them it goes back; elsewhere it clears as before.
+    func clearSearchField() {
+        if destination == .search { query = ""; return }
+        if canGoBack { goBack() } else { navigate(destination) }
     }
     func beginLyricsImport() {
         guard let track = player.current else { notify(L10n.string("先选择一首歌曲，再为它导入歌词。")); return }
@@ -434,120 +476,28 @@ final class AppModel {
         if player.current == nil, let first = library.tracks.first { await player.play(first, context: library.tracks) }
         else { await player.toggle() }
     }
+    /// Searches for the field's text. The results are their own page; Back
+    /// returns to where the search started, even when it started on a page
+    /// opened from earlier results.
     func search() {
-        stopSearch()
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        searchTerm = term; destination = .library; immersive = false; remoteResults = []; searchErrors = []
-        searchStatuses = []; addedFromSearch = []
-        // An address is offered as a link to add; it is never sent to search services.
-        guard !term.isEmpty, Self.linkAddress(in: term) == nil else { return }
-        searching = true
-        let configs = library.sources
-        let publicSoda = sodaPublicSearch
-        let token = searchGeneration
-        searchTask = Task { [weak self] in
-            guard let self else { return }
-            await self.performSearch(term, token: token, configurations: configs, includeSodaPublicly: publicSoda)
-        }
+        guard !term.isEmpty else { return }
+        if destination != .search { trail = [trail.first ?? destination] } else if trail.isEmpty { trail = [.library] }
+        singerStores = [:]; albumStores = [:]
+        destination = .search; immersive = false; sourceFilter = nil
+        searchResults.start(term, library: library.tracks, configurations: library.sources, includeSodaPublicly: sodaPublicSearch,
+                            isSaved: { [weak self] track in self?.isInLibrary(track) ?? false })
     }
-    /// Cancels the running search; late results of that search are ignored.
-    private func stopSearch() {
-        searchTask?.cancel(); searchTask = nil
-        searchGeneration &+= 1
-        searching = false
-        searchStatuses.removeAll { $0.state == .searching }
-    }
-    private func isCurrentSearch(_ token: UInt64) -> Bool { !Task.isCancelled && token == searchGeneration }
-    private func performSearch(_ term: String, token: UInt64, configurations: [SourceConfiguration], includeSodaPublicly: Bool) async {
-        let service = sourceService
-        let apple = appleMusic
-        let spotifyService = spotify
-        let includeApple = apple.isEnabled
-        let includeSpotify = spotifyService.isEnabled
-        var sources = await service.searchTargets(configurations: configurations, includeSodaPublicly: includeSodaPublicly)
-        if includeApple { sources.append(.appleMusic) }
-        if includeSpotify { sources.append(.spotify) }
-        guard isCurrentSearch(token) else { return }
-        searchStatuses = sources.map { SearchSourceStatus(source: $0, state: .searching) }
-        let deliver: @MainActor @Sendable (SourceSearchResult) -> Void = { result in
-            self.receiveSearchResult(result, token: token)
-        }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                _ = await service.search(term, configurations: configurations, includeSodaPublicly: includeSodaPublicly, onResult: deliver)
-            }
-            if includeApple {
-                group.addTask {
-                    let result = await AppModel.appleMusicSearchResult(apple, term: term)
-                    await deliver(result)
-                }
-            }
-            if includeSpotify {
-                group.addTask {
-                    let result = await AppModel.spotifySearchResult(spotifyService, term: term)
-                    await deliver(result)
-                }
-            }
-            await group.waitForAll()
-        }
-        guard isCurrentSearch(token) else { return }
-        // Sources that returned nothing (for example an over-long query) settle as empty.
-        for index in searchStatuses.indices where searchStatuses[index].state == .searching {
-            searchStatuses[index].state = .done(0)
-        }
-        searching = false
-    }
-    private static func appleMusicSearchResult(_ service: AppleMusicService, term: String) async -> SourceSearchResult {
-        do { return SourceSearchResult(source: .appleMusic, tracks: try await service.search(term)) }
-        catch is CancellationError { return SourceSearchResult(source: .appleMusic, tracks: []) }
-        catch { return SourceSearchResult(source: .appleMusic, tracks: [], error: AppleMusicErrorMessage.describe(error)) }
-    }
-    private static func spotifySearchResult(_ service: SpotifyService, term: String) async -> SourceSearchResult {
-        do { return SourceSearchResult(source: .spotify, tracks: try await service.search(term)) }
-        catch is CancellationError { return SourceSearchResult(source: .spotify, tracks: []) }
-        catch { return SourceSearchResult(source: .spotify, tracks: [], error: SpotifyService.message(error)) }
-    }
-    /// Publishes one source's result, appending tracks not already shown.
-    private func receiveSearchResult(_ result: SourceSearchResult, token: UInt64) {
-        guard isCurrentSearch(token), isSearchSourceActive(result.source) else { return }
-        let state: SearchSourceStatus.State
-        if let error = result.error { state = .failed(error) } else { state = .done(result.tracks.count) }
-        if let index = searchStatuses.firstIndex(where: { $0.source == result.source }) { searchStatuses[index].state = state }
-        else { searchStatuses.append(SearchSourceStatus(source: result.source, state: state)) }
-        if let error = result.error { searchErrors.append(L10n.string("\(result.source.title)：\(error)")) }
-        var seen = Set(remoteResults.map(\.id))
-        let additions = result.tracks.filter { seen.insert($0.id).inserted }
-        if !additions.isEmpty { remoteResults.append(contentsOf: additions) }
-    }
-    /// Saves a search result to the library (C3).
+    /// Saves an online song to the library (C3).
     func addToLibrary(_ track: Track) {
         guard !isLibraryTrack(track) else { return }
         library.addTracks([track])
-        // Only a song that actually landed in the library is marked as added.
         guard isLibraryTrack(track) else { return }
-        addedFromSearch.insert(track.id)
         notify(L10n.string("已加入音乐库"))
     }
     func favorite(_ track: Track) { library.addTracks([track]); library.toggleFavorite(track.id) }
-    /// Stops the running search and removes one source's status and results,
-    /// for example after that source is disconnected.
-    func clearSearchResults(for source: MusicSource) {
-        stopSearch()
-        searchStatuses.removeAll { $0.source == source }
-        remoteResults.removeAll { $0.source == source }
-    }
-    /// Statuses to show; an official service that was turned off since the
-    /// search started is hidden even if its owner did not clear it.
-    var visibleSearchStatuses: [SearchSourceStatus] {
-        searchStatuses.filter { isSearchSourceActive($0.source) }
-    }
-    private func isSearchSourceActive(_ source: MusicSource) -> Bool {
-        switch source {
-        case .spotify: spotify.isEnabled
-        case .appleMusic: appleMusic.isEnabled
-        default: true
-        }
-    }
+    /// Removes one source's results, for example after it is disconnected.
+    func clearSearchResults(for source: MusicSource) { searchResults.forget(source) }
     func disconnectAccount(_ source: MusicSource) async {
         autoImport.cancel(source)
         if player.current?.source == source { player.pause() }

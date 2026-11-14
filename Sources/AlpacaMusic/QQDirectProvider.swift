@@ -128,6 +128,80 @@ struct QQDirectProvider: DirectMusicProvider {
         guard tracks.count == list.count else { throw malformed() }
         return uniqueTracks(tracks)
     }
+    /// A later page of the same song search, for the results page's "More
+    /// songs". Tried live on 14 November 2026: page 2 gave 40 new songs; the
+    /// search reports at most 999 songs.
+    func searchPage(_ query: String, page: Int, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        let account = try session(cookies)
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, page >= 1 else { return [] }
+        guard query.count <= 200 else { throw MusicError.message(L10n.string("搜索内容过长，请缩短关键词。")) }
+        let data = try await rpc(module: "music.search.SearchCgiService", method: "DoSearchForQQMusicDesktop", parameters: ["remoteplace": "txt.yqq.song", "searchid": String(UInt64.random(in: 1...UInt64.max)), "search_type": 0, "query": query, "page_num": page, "num_per_page": Self.searchPageSize], account: account, cookies: cookies)
+        if let meta = data["meta"] as? [String: Any], (integer(meta["is_filter"]) ?? 0) < 0 {
+            throw MusicError.message(L10n.string("QQ 音乐限制了本次搜索，请重新登录或稍后重试。"))
+        }
+        guard let body = data["body"] as? [String: Any] else { throw malformed() }
+        let list = ((body["song"] as? [String: Any])?["list"] as? [[String: Any]]) ?? []
+        return uniqueTracks(list.compactMap(track))
+    }
+    static let searchPageSize = 40
+
+    // Singer lookups for the search and singer pages. Each was tried live on
+    // 14 November 2026 with the owner's account; none is a documented API.
+
+    /// Singers whose name matches, best first (search_type 1).
+    func singers(_ query: String, cookies: [MusicSessionCookie]) async throws -> [SingerProfile] {
+        let account = try session(cookies)
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, query.count <= 200 else { return [] }
+        let data = try await rpc(module: "music.search.SearchCgiService", method: "DoSearchForQQMusicDesktop", parameters: ["remoteplace": "txt.yqq.singer", "searchid": String(UInt64.random(in: 1...UInt64.max)), "search_type": 1, "query": query, "page_num": 1, "num_per_page": 5], account: account, cookies: cookies)
+        let list = (((data["body"] as? [String: Any])?["singer"] as? [String: Any])?["list"] as? [[String: Any]]) ?? []
+        return list.compactMap { row in
+            guard let mid = string(row["singerMID"]) ?? string(row["mid"]), validID(mid),
+                  let name = (string(row["singerName"]) ?? string(row["name"])).map(plain), !name.isEmpty else { return nil }
+            let picture = string(row["singerPic"]).flatMap(URL.init(string:)).flatMap { $0.scheme?.lowercased() == "https" || $0.scheme?.lowercased() == "http" ? $0 : nil }
+            return SingerProfile(source: .qq, remoteID: mid, name: name, pictureURL: picture, albumCount: integer(row["albumNum"]), songCount: integer(row["songNum"]))
+        }
+    }
+    /// A page of a singer's albums and singles, newest first. QQ Music gives
+    /// no song count here.
+    func singerAlbums(_ singerMID: String, offset: Int, cookies: [MusicSessionCookie]) async throws -> SingerPage<SingerAlbum> {
+        guard validID(singerMID) else { throw malformed() }
+        let account = try session(cookies)
+        let data = try await rpc(module: "music.musichallAlbum.AlbumListServer", method: "GetAlbumList", parameters: ["singerMid": singerMID, "order": 0, "begin": max(0, offset), "num": 30, "songNumTag": 0, "singerID": 0], account: account, cookies: cookies)
+        let list = (data["albumList"] as? [[String: Any]]) ?? []
+        let albums = list.compactMap { row -> SingerAlbum? in
+            guard let mid = string(row["albumMid"]), validID(mid), let name = string(row["albumName"]).map(plain), !name.isEmpty else { return nil }
+            return SingerAlbum(source: .qq, remoteID: mid, name: name, artist: string(row["singerName"]).map(plain) ?? "",
+                               date: string(row["publishDate"]).flatMap(ReleaseDate.init(text:)), trackCount: integer(row["totalNum"]).flatMap { $0 > 0 ? $0 : nil },
+                               artworkURL: URL(string: "https://y.gtimg.cn/music/photo_new/T002R300x300M000\(mid).jpg"), kind: string(row["albumType"]) ?? "")
+        }
+        let total = integer(data["total"]) ?? 0
+        return SingerPage(items: albums, more: !list.isEmpty && max(0, offset) + list.count < total)
+    }
+    /// A page of a singer's songs, most played first.
+    func singerSongs(_ singerMID: String, offset: Int, cookies: [MusicSessionCookie]) async throws -> SingerPage<Track> {
+        guard validID(singerMID) else { throw malformed() }
+        let account = try session(cookies)
+        let data = try await rpc(module: "musichall.song_list_server", method: "GetSingerSongList", parameters: ["singerMid": singerMID, "order": 1, "begin": max(0, offset), "num": 30], account: account, cookies: cookies)
+        let list = (data["songList"] as? [[String: Any]]) ?? []
+        let total = integer(data["totalNum"]) ?? 0
+        return SingerPage(items: uniqueTracks(list.compactMap(track)), more: !list.isEmpty && max(0, offset) + list.count < total)
+    }
+    /// Every song of one album, in the album's order.
+    func albumSongs(_ albumMID: String, cookies: [MusicSessionCookie]) async throws -> [Track] {
+        guard validID(albumMID) else { throw malformed() }
+        let account = try session(cookies)
+        var result: [Track] = [], begin = 0
+        while begin < 1000 {
+            let data = try await rpc(module: "music.musichallAlbum.AlbumSongList", method: "GetAlbumSongList", parameters: ["albumMid": albumMID, "albumID": 0, "begin": begin, "num": 100, "order": 2], account: account, cookies: cookies)
+            let list = (data["songList"] as? [[String: Any]]) ?? []
+            result += list.compactMap(track)
+            begin += list.count
+            if list.isEmpty || begin >= (integer(data["totalNum"]) ?? 0) { break }
+        }
+        return uniqueTracks(result)
+    }
     func lyrics(_ track: Track, cookies: [MusicSessionCookie]) async throws -> LyricsPayload? {
         guard track.source == .qq, let mid = track.sourceID, validID(mid) else { throw MusicError.message(L10n.string("歌曲缺少有效的 QQ 音乐标识，无法读取歌词。")) }
         let account = try session(cookies)

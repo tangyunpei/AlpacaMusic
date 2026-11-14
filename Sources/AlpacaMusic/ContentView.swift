@@ -28,18 +28,34 @@ struct ContentView: View {
                         AppHeader(model: model)
                         HStack(spacing: 0) {
                             ZStack {
-                                ScrollView {
-                                    Group {
-                                        switch model.destination {
-                                        case .sources: SourcesView(model: model)
-                                        case .albums: AlbumsView(model: model)
-                                        case .album: AlbumDetailView(model: model)
-                                        default: LibraryView(model: model)
-                                        }
-                                    }.padding(.horizontal, 34).padding(.top, 30).padding(.bottom, 24)
+                                // The results stay alive, hidden, under a page opened from them,
+                                // so Back finds them scrolled exactly where they were.
+                                if model.searchResults.active && (model.destination == .search || model.trail.contains(.search)) {
+                                    let shown = model.destination == .search
+                                    SearchPageView(model: model)
+                                        .opacity(shown ? 1 : 0)
+                                        .allowsHitTesting(shown)
+                                        .accessibilityHidden(!shown)
+                                        .transition(.opacity.combined(with: .offset(y: 7)))
                                 }
-                                .id(model.destination)
-                                .transition(.opacity.combined(with: .offset(y: 7)))
+                                if model.destination != .search {
+                                    ScrollView {
+                                        Group {
+                                            switch model.destination {
+                                            case .sources: SourcesView(model: model)
+                                            case .albums: AlbumsView(model: model)
+                                            case .album: AlbumDetailView(model: model)
+                                            case .singer(let id):
+                                                if let store = model.singerStores[id] { SingerPageView(model: model, singer: store) }
+                                            case .remoteAlbum(let id):
+                                                if let store = model.albumStores[id] { RemoteAlbumView(model: model, store: store) }
+                                            default: LibraryView(model: model)
+                                            }
+                                        }.padding(.horizontal, 34).padding(.top, 30).padding(.bottom, 24)
+                                    }
+                                    .id(model.destination)
+                                    .transition(.opacity.combined(with: .offset(y: 7)))
+                                }
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
                             .animation(ExperienceMotion.navigation, value: model.destination)
@@ -201,7 +217,7 @@ struct ContentView: View {
             if model.queueOpen { model.queueOpen = false }
             else if model.immersive { model.immersive = false }
             else if model.destination == .home, model.browse.opened != nil { model.browse.close() }
-            else { model.navigate(model.destination) }
+            else { model.escape() }
         }
         .transaction { if reduceMotion || model.visual.reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
     }
@@ -284,12 +300,37 @@ struct AppHeader: View {
     @FocusState private var searchFocused: Bool
     var body: some View {
         HStack(spacing: 18) {
-            Text(model.pageTitle).foregroundStyle(palette.secondary).lineLimit(1).font(.system(size: 10))
+            if model.canGoBack || model.destination == .search {
+                HStack(spacing: 10) {
+                    Button { model.goBack() } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 12, weight: .medium)).frame(width: 22, height: 28).contentShape(.rect)
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.secondary).disabled(!model.canGoBack)
+                    .keyboardShortcut("[", modifiers: .command)
+                    .help(L10n.string("返回")).accessibilityLabel(L10n.string("返回")).accessibilityIdentifier("search-back")
+                    trail
+                }
+            } else {
+                Text(model.pageTitle).foregroundStyle(palette.secondary).lineLimit(1).font(.system(size: 10))
+            }
             Spacer(minLength: 10)
             MusicSearchField(model: model, focused: $searchFocused, fill: palette.panel, line: palette.line, hint: palette.faint)
             Button { searchFocused = true } label: { EmptyView() }.keyboardShortcut("k", modifiers: .command).hidden().frame(width: 0)
             ImportMenu(model: model)
         }.padding(.horizontal, 34).frame(height: 57).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
+    }
+    /// Where the listener is: the search, then the page opened from it.
+    @ViewBuilder private var trail: some View {
+        // The pages from the search on: each earlier one is a link back to it.
+        let steps = model.trail.drop { $0 != .search }
+        HStack(spacing: 6) {
+            ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                Button(model.title(of: step)) { model.goBack(to: step) }.buttonStyle(.plain).foregroundStyle(palette.accent)
+                Image(systemName: "chevron.right").font(.system(size: 7, weight: .semibold)).foregroundStyle(palette.faint)
+            }
+            Text(model.pageTitle).foregroundStyle(palette.secondary)
+        }
+        .font(.system(size: 10)).lineLimit(1)
     }
 }
 

@@ -67,12 +67,14 @@ struct AppSheetView: View {
                 field(L10n.string("歌单名称"), placeholder: L10n.string("输入歌单名称"), value: $name)
                 Button { let clean = name.trimmingCharacters(in: .whitespacesAndNewlines); guard !clean.isEmpty else { return }; _ = model.library.createPlaylist(String(clean.prefix(60))); model.notify(L10n.string("已创建「\(clean)」")); dismiss() } label: { Label(L10n.string("创建歌单"), systemImage: "plus").frame(maxWidth: .infinity) }.buttonStyle(PrimaryButtonStyle()).disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).keyboardShortcut(.defaultAction)
             case .addToPlaylist:
-                SheetHeading(title: L10n.string("添加到歌单"), subtitle: model.selectedTrack?.title ?? "") { dismiss() }
-                if let track = model.selectedTrack {
+                let tracks = model.playlistSheetTracks
+                SheetHeading(title: L10n.string("添加到歌单"), subtitle: tracks.count > 1 ? L10n.string("\(tracks.count) 首歌曲") : tracks.first?.title ?? "") { dismiss() }
+                if !tracks.isEmpty {
                     ScrollView { VStack(spacing: 8) { ForEach(model.library.playlists) { playlist in
-                        Button { model.library.addToPlaylist(playlist.id, track: track); model.notify(L10n.string("已添加到「\(playlist.name)」")); dismiss() } label: { HStack(spacing: 12) { Image(systemName: "music.note.list"); Text(playlist.name).font(.system(size: 12)); Spacer(); Text(playlist.trackIDs.contains(track.id) ? L10n.string("已添加") : L10n.string("\(playlist.trackIDs.count) 首")).font(.system(size: 10)).foregroundStyle(palette.secondary); Image(systemName: "chevron.right").font(.system(size: 9)) }.padding(15).background(palette.accent.opacity(0.04), in: .rect(cornerRadius: 8)).foregroundStyle(palette.text) }.buttonStyle(.plain)
+                        let holds = tracks.allSatisfy { playlist.trackIDs.contains($0.id) }
+                        Button { model.add(tracks, toPlaylist: playlist.id); model.notify(L10n.string("已添加到「\(playlist.name)」")); dismiss() } label: { HStack(spacing: 12) { Image(systemName: "music.note.list"); Text(playlist.name).font(.system(size: 12)); Spacer(); Text(holds ? L10n.string("已添加") : L10n.string("\(playlist.trackIDs.count) 首")).font(.system(size: 10)).foregroundStyle(palette.secondary); Image(systemName: "chevron.right").font(.system(size: 9)) }.padding(15).background(palette.accent.opacity(0.04), in: .rect(cornerRadius: 8)).foregroundStyle(palette.text) }.buttonStyle(.plain)
                     } } }.frame(maxHeight: 300)
-                    HStack { TextField(L10n.string("新歌单名称"), text: $name).textFieldStyle(.roundedBorder); Button(L10n.string("创建并添加")) { let clean = name.trimmingCharacters(in: .whitespacesAndNewlines); guard !clean.isEmpty else { return }; let playlist = model.library.createPlaylist(String(clean.prefix(60))); model.library.addToPlaylist(playlist.id, track: track); model.notify(L10n.string("已添加到新歌单「\(clean)」")); dismiss() }.buttonStyle(QuietButtonStyle()).disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+                    HStack { TextField(L10n.string("新歌单名称"), text: $name).textFieldStyle(.roundedBorder); Button(L10n.string("创建并添加")) { let clean = name.trimmingCharacters(in: .whitespacesAndNewlines); guard !clean.isEmpty else { return }; let playlist = model.library.createPlaylist(String(clean.prefix(60))); model.add(tracks, toPlaylist: playlist.id); model.notify(L10n.string("已添加到新歌单「\(clean)」")); dismiss() }.buttonStyle(QuietButtonStyle()).disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
                 }
             }
         }.padding(29).frame(width: sheet == .visual ? 620 : 500).background(palette.panel).foregroundStyle(palette.text)

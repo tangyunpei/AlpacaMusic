@@ -19,6 +19,7 @@ import Testing
         AppleMusicCapabilities(canPlayCatalog: true, hasCloudLibrary: true)
     }
     func search(_ query: String) async throws -> [Track] { [] }
+    func search(_ query: String, offset: Int) async throws -> [Track] { [] }
     func librarySongs(validate: @MainActor () throws -> Void, progress: @MainActor (ImportProgress) -> Void) async throws -> [Track] {
         songRequests += 1
         progress(ImportProgress(completed: 0, total: 1))

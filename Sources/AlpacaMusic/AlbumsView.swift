@@ -47,7 +47,6 @@ struct AlbumsView: View {
     }
 
     private var emptyTitle: String {
-        if !model.searchTerm.isEmpty { return L10n.string("没有找到专辑") }
         if model.sourceFilter != nil { return L10n.string("没有符合筛选条件的专辑") }
         return L10n.string("还没有专辑")
     }
@@ -111,8 +110,8 @@ struct AlbumDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 26) {
-            Button { model.navigate(.albums) } label: {
-                Label(L10n.string("返回专辑"), systemImage: "chevron.left")
+            Button { if model.canGoBack { model.goBack() } else { model.navigate(.albums) } } label: {
+                Label(model.trail.last == .search ? L10n.string("返回搜索结果") : L10n.string("返回专辑"), systemImage: "chevron.left")
                     .font(.system(size: 11)).foregroundStyle(palette.secondary)
                     .padding(.vertical, 5).contentShape(.rect)
             }.buttonStyle(.plain).accessibilityIdentifier("album-back")

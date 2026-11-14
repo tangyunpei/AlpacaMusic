@@ -19,8 +19,7 @@ struct LibraryView: View {
                 Button { if let track = tracks.first { model.play(track) } } label: { Label(L10n.string("播放全部"), systemImage: "play.fill") }.buttonStyle(PrimaryButtonStyle()).disabled(tracks.isEmpty)
                 ScrollView(.horizontal) { HStack(spacing: 5) { filter(L10n.string("全部"), nil); ForEach(MusicSource.allCases.filter(MusicSourceAvailability.isVisible), id: \.self) { source in filter(source.title, source) } } }.scrollIndicators(.hidden)
             }
-            if !model.searchTerm.isEmpty { SearchResultsView(model: model) }
-            else if !tracks.isEmpty { TrackList(model: model, tracks: tracks) }
+            if !tracks.isEmpty { TrackList(model: model, tracks: tracks) }
             else {
                 EmptyState(symbol: model.destination == .favorites ? "heart" : "music.note", title: emptyTitle, actionTitle: model.destination == .library ? L10n.string("添加音乐") : L10n.string("浏览音乐库")) { if model.destination == .library { model.beginImport(folder: false) } else { model.navigate(.library) } }
             }
@@ -47,8 +46,6 @@ struct TrackList: View {
     var compact = false
     /// Column titles; a second list in the same page can omit them.
     var showsHeader = true
-    /// Rows are online search results rather than library songs.
-    var online = false
     /// What a row's play button queues; the shown rows unless a longer list
     /// is only partly shown.
     var queue: [Track]? = nil
@@ -78,7 +75,7 @@ struct TrackList: View {
     }
     private var rows: some View {
         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-            TrackRow(track: track, index: index, tracks: queue ?? tracks, model: model, compact: compact, online: online)
+            TrackRow(track: track, index: index, tracks: queue ?? tracks, model: model, compact: compact)
         }
     }
 }
@@ -90,7 +87,6 @@ struct TrackRow: View {
     var tracks: [Track]
     @Bindable var model: AppModel
     var compact = false
-    var online = false
     @State private var hovered = false
     private var current: Bool { model.player.current?.id == track.id }
     private var displayTrack: Track { current ? model.player.current ?? track : track }
@@ -102,17 +98,15 @@ struct TrackRow: View {
             Button { model.play(track, context: tracks) } label: {
                 HStack(spacing: 12) {
                     ArtworkView(track: track, radius: 6).frame(width: 43, height: 43)
-                    VStack(alignment: .leading, spacing: 6) { HStack(spacing: 5) { Text(track.title).font(.system(size: 12, weight: .medium)).foregroundStyle(current ? palette.accent : palette.text).lineLimit(1); if online { LibraryMatchMark(track: track, model: model) } }; Text(track.unavailable ? (track.source == .local ? L10n.string("\(track.artist) · 请重新导入") : L10n.string("\(track.artist) · 当前不可播放")) : track.artist).font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1) }
+                    VStack(alignment: .leading, spacing: 6) { Text(track.title).font(.system(size: 12, weight: .medium)).foregroundStyle(current ? palette.accent : palette.text).lineLimit(1); Text(track.unavailable ? (track.source == .local ? L10n.string("\(track.artist) · 请重新导入") : L10n.string("\(track.artist) · 当前不可播放")) : track.artist).font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1) }
                     Spacer(minLength: 1)
                 }.contentShape(.rect)
             }.buttonStyle(.plain).disabled(track.unavailable).frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel(L10n.string("播放 \(track.title)，\(track.artist)"))
-                .accessibilityValue(online && model.searchResultMatchesLibrary(track) ? L10n.string("已在音乐库") : "")
             if !model.queueOpen && !compact { Text(track.album.isEmpty ? "—" : track.album).font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1).frame(width: 140, alignment: .leading) }
             SourceBadge(source: track.source, isPreview: displayTrack.source == .soda && displayTrack.sodaPlayback?.isPreview == true).frame(width: 72, alignment: .leading)
             Text(displayTrack.duration > 0 ? formattedTime(displayTrack.duration) : "—").font(.system(size: 9, design: .monospaced)).foregroundStyle(palette.faint).frame(width: 48)
             HStack(spacing: 1) {
-                if online { LibraryAddButton(track: track, model: model) }
-                else { ToolButton(symbol: model.library.favorites.contains(track.id) ? "heart.fill" : "heart", label: L10n.string("喜欢 \(track.title)"), active: model.library.favorites.contains(track.id)) { model.favorite(track) } }
+                ToolButton(symbol: model.library.favorites.contains(track.id) ? "heart.fill" : "heart", label: L10n.string("喜欢 \(track.title)"), active: model.library.favorites.contains(track.id)) { model.favorite(track) }
                 Menu { TrackActions(track: track, model: model) } label: { Image(systemName: "ellipsis").frame(width: 25, height: 28).foregroundStyle(palette.secondary) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L10n.string("\(track.title) 更多操作"))
             }.frame(width: 61)
         }.padding(.horizontal, 8).padding(.vertical, 10)
@@ -132,283 +126,6 @@ struct TrackActions: View {
         Button(L10n.string("添加到歌单…"), systemImage: "music.note.list") { model.selectedTrack = track; model.sheet = .addToPlaylist }
         if let playlist = model.selectedPlaylist { Button(L10n.string("从歌单移除"), systemImage: "minus.circle") { model.library.removeFromPlaylist(playlist.id, trackID: track.id) } }
         if model.library.tracks.contains(where: { $0.id == track.id }) { Divider(); Button(L10n.string("从音乐库移除"), systemImage: "trash", role: .destructive) { model.remove(track) } }
-    }
-}
-
-/// Search results grouped by provenance: library songs and albums first,
-/// then online results, with one compact strip of per-source status.
-struct SearchResultsView: View {
-    @Environment(\.accessibilityReduceMotion) private var systemReduced
-    @Environment(\.appReducedMotion) private var appReduced
-    @Bindable var model: AppModel
-    private var reduced: Bool { systemReduced || appReduced || model.visual.reduceMotion }
-    var body: some View {
-        let local = model.searchLibraryMatches
-        let albums = model.searchAlbumMatches
-        let online = model.searchOnlineResults
-        let link = model.searchLink
-        VStack(alignment: .leading, spacing: 24) {
-            if !model.visibleSearchStatuses.isEmpty { SearchSourceStrip(model: model) }
-            if let link { SearchLinkRow(model: model, url: link) }
-            if !local.isEmpty || !albums.isEmpty {
-                VStack(alignment: .leading, spacing: 14) {
-                    SearchSectionTitle(title: L10n.string("音乐库"), symbol: "music.note.house", count: local.count)
-                    if !albums.isEmpty { SearchAlbumRow(model: model, albums: albums) }
-                    if !local.isEmpty { TrackList(model: model, tracks: local) }
-                }
-            }
-            if !online.isEmpty {
-                VStack(alignment: .leading, spacing: 14) {
-                    SearchSectionTitle(title: L10n.string("在线"), symbol: "globe", count: online.count)
-                    TrackList(model: model, tracks: online, showsHeader: local.isEmpty, online: true)
-                }
-            }
-            if local.isEmpty && albums.isEmpty && online.isEmpty && !model.searching && link == nil {
-                EmptyState(symbol: "magnifyingglass", title: L10n.string("没有找到歌曲"), actionTitle: L10n.string("管理音源")) { model.navigate(.sources) }
-            }
-        }
-        .environment(\.appReducedMotion, reduced)
-        .animation(reduced ? nil : ExperienceMotion.control, value: model.visibleSearchStatuses)
-    }
-}
-
-private struct SearchSectionTitle: View {
-    @Environment(\.appPalette) private var palette
-    var title: String
-    var symbol: String
-    var count: Int
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: symbol).font(.system(size: 10)).foregroundStyle(palette.secondary).accessibilityHidden(true)
-            Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
-            Text(count, format: .number).font(.system(size: 10, design: .monospaced)).foregroundStyle(palette.faint)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
-    }
-}
-
-/// One chip per searched source: a spinner while it runs, the result count
-/// when done, and an orange retry glyph when it failed, with the first
-/// failure as one compact orange line below.
-private struct SearchSourceStrip: View {
-    @Bindable var model: AppModel
-    var body: some View {
-        let statuses = model.visibleSearchStatuses
-        VStack(alignment: .leading, spacing: 6) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 6) {
-                    ForEach(statuses) { status in
-                        SearchSourceChip(status: status) { model.query = model.searchTerm; model.search() }
-                    }
-                }
-            }
-            .scrollIndicators(.hidden)
-            SearchFailureLine(statuses: statuses)
-        }
-    }
-}
-
-/// The first failed source as one short orange line; full text in the tooltip.
-private struct SearchFailureLine: View {
-    var statuses: [SearchSourceStatus]
-    private var failure: (source: MusicSource, message: String)? {
-        for status in statuses {
-            if case .failed(let message) = status.state { return (source: status.source, message: message) }
-        }
-        return nil
-    }
-    var body: some View {
-        if let failure {
-            Text(L10n.string("\(failure.source.title)：\(failure.message)"))
-                .font(.system(size: 10)).foregroundStyle(Color.orange.opacity(0.85))
-                .lineLimit(1).truncationMode(.tail)
-                .textSelection(.enabled).help(failure.message)
-        }
-    }
-}
-
-private struct SearchSourceChip: View {
-    @Environment(\.appPalette) private var palette
-    var status: SearchSourceStatus
-    var retry: () -> Void
-    private var failed: Bool {
-        switch status.state { case .failed: true; default: false }
-    }
-    private var detail: String {
-        switch status.state {
-        case .searching: L10n.string("搜索歌曲")
-        case .done(let count): L10n.string("\(count) 首")
-        case .failed(let message): message
-        }
-    }
-    var body: some View {
-        let description = L10n.string("\(status.source.title)：\(detail)")
-        Group {
-            if failed {
-                Button(action: retry) { content }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(description)
-                    .accessibilityHint(L10n.string("重试「\(status.source.title)」"))
-            } else {
-                content.accessibilityElement(children: .ignore).accessibilityLabel(description)
-            }
-        }
-        .help(description)
-    }
-    private var content: some View {
-        HStack(spacing: 5) {
-            Image(systemName: status.source.symbol).font(.system(size: 9)).foregroundStyle(palette.secondary)
-            Text(status.source.title).font(.system(size: 10)).foregroundStyle(palette.secondary).lineLimit(1)
-            indicator.frame(minWidth: 9, minHeight: 9)
-        }
-        .padding(.horizontal, 9).frame(height: 24)
-        .background(failed ? Color.orange.opacity(0.06) : palette.accent.opacity(0.04), in: .rect(cornerRadius: 6))
-        .contentShape(.rect)
-    }
-    @ViewBuilder private var indicator: some View {
-        switch status.state {
-        case .searching:
-            ImportStatusGlyph(state: .working(nil), size: 9)
-        case .done(let count):
-            Text(count, format: .number).font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(count > 0 ? palette.text : palette.faint)
-                .contentTransition(.numericText(value: Double(count)))
-        case .failed:
-            Image(systemName: "arrow.clockwise").font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.orange)
-        }
-    }
-}
-
-/// A pasted HTTP(S) address: offered as one row to add, never searched.
-private struct SearchLinkRow: View {
-    @Environment(\.appPalette) private var palette
-    @Bindable var model: AppModel
-    var url: URL
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "link").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.accent)
-                .frame(width: 30, height: 30).background(palette.accent.opacity(0.06), in: .rect(cornerRadius: 7))
-                .accessibilityLabel(L10n.string("音频链接"))
-            Text(url.host() ?? url.absoluteString).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
-                .lineLimit(1).truncationMode(.middle).textSelection(.enabled).help(url.absoluteString)
-            Spacer(minLength: 8)
-            Button {
-                do { try model.addLink(title: "", address: model.searchTerm) } catch { model.notify(error.localizedDescription) }
-            } label: { Label(L10n.string("添加到音乐库"), systemImage: "plus") }
-                .buttonStyle(QuietButtonStyle())
-        }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(palette.accent.opacity(0.035), in: .rect(cornerRadius: 9))
-        .accessibilityElement(children: .contain)
-    }
-}
-
-/// Matching albums from the album library; a tile opens the album page.
-private struct SearchAlbumRow: View {
-    @Bindable var model: AppModel
-    var albums: [MusicAlbum]
-    var body: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: 16) {
-                ForEach(albums) { album in SearchAlbumTile(model: model, album: album) }
-            }
-        }
-        .scrollIndicators(.hidden)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(L10n.string("专辑"))
-    }
-}
-
-private struct SearchAlbumTile: View {
-    @Environment(\.appPalette) private var palette
-    @Environment(\.accessibilityReduceMotion) private var systemReduced
-    @Environment(\.appReducedMotion) private var appReduced
-    @Bindable var model: AppModel
-    var album: MusicAlbum
-    @State private var hovered = false
-    /// The first track with artwork; the album's own artwork wins when it has
-    /// one, carried by a lightweight track if no song is loaded yet.
-    private var coverTrack: Track? {
-        let ids = album.artworkURL == nil ? album.trackIDs : Array(album.trackIDs.prefix(1))
-        let tracks = model.library.tracks(withIDs: ids)
-        let found = tracks.first { $0.artworkData?.isEmpty == false || $0.artworkURL != nil } ?? tracks.first
-        guard let url = album.artworkURL else { return found }
-        var track = found ?? Track(id: album.id, title: album.name, artist: album.artist, album: album.name, duration: 0, source: album.source)
-        track.artworkURL = url
-        track.artworkData = nil
-        return track
-    }
-    var body: some View {
-        let count = album.trackIDs.count
-        Button { model.navigate(.album(album.id)) } label: {
-            VStack(alignment: .leading, spacing: 7) {
-                ArtworkView(track: coverTrack, radius: 7).frame(width: 96, height: 96)
-                    .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(hovered ? palette.accent.opacity(0.45) : palette.line) }
-                Text(album.name).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
-                HStack(spacing: 4) {
-                    Text(album.artist).lineLimit(1)
-                    Text(verbatim: "·").foregroundStyle(palette.faint)
-                    Text(count, format: .number).monospacedDigit()
-                }
-                .font(.system(size: 9)).foregroundStyle(palette.secondary)
-            }
-            .frame(width: 96, alignment: .leading).contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .help(L10n.string("打开专辑 \(album.name)"))
-        .accessibilityLabel(L10n.string("打开专辑 \(album.name)"))
-        .accessibilityValue([album.artist, album.source.title, L10n.string("\(count) 首歌曲")].filter { !$0.isEmpty }.joined(separator: " · "))
-        .accessibilityIdentifier("search-album-\(album.id)")
-        .animation(systemReduced || appReduced ? nil : ExperienceMotion.control, value: hovered)
-    }
-}
-
-/// Small accent check beside an online result whose title and artist
-/// already exist in the library.
-private struct LibraryMatchMark: View {
-    @Environment(\.appPalette) private var palette
-    var track: Track
-    @Bindable var model: AppModel
-    var body: some View {
-        if model.searchResultMatchesLibrary(track) && !model.isLibraryTrack(track) {
-            Image(systemName: "checkmark.circle").font(.system(size: 9, weight: .medium)).foregroundStyle(palette.accent)
-                .help(L10n.string("已在音乐库")).accessibilityLabel(L10n.string("已在音乐库"))
-        }
-    }
-}
-
-/// Quick add for an online result; springs into a check once saved.
-private struct LibraryAddButton: View {
-    @Environment(\.appPalette) private var palette
-    @Environment(\.accessibilityReduceMotion) private var systemReduced
-    @Environment(\.appReducedMotion) private var appReduced
-    var track: Track
-    @Bindable var model: AppModel
-    var body: some View {
-        let added = model.isLibraryTrack(track)
-        let reduced = systemReduced || appReduced
-        ZStack {
-            if added {
-                // Once saved it is a plain status mark, not a button that does nothing.
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(palette.accent)
-                    .font(.system(size: 15, weight: .regular)).frame(width: 30, height: 30)
-                    .help(L10n.string("已在音乐库")).accessibilityLabel(L10n.string("已在音乐库"))
-                    .transition(reduced ? AnyTransition.opacity : AnyTransition.scale(scale: 0.4).combined(with: .opacity))
-            } else {
-                let label = L10n.string("添加「\(track.title)」到音乐库")
-                Button { model.addToLibrary(track) } label: {
-                    Image(systemName: "plus.circle").foregroundStyle(palette.secondary)
-                        .font(.system(size: 15, weight: .regular)).frame(width: 30, height: 30).contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .help(label).accessibilityLabel(label)
-                .transition(AnyTransition.opacity)
-            }
-        }
-        .frame(width: 30, height: 30)
-        .animation(reduced ? nil : Animation.spring(response: 0.32, dampingFraction: 0.62), value: added)
     }
 }
 

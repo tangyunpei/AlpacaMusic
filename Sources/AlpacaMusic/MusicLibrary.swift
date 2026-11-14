@@ -352,7 +352,7 @@ private actor LibraryStorage {
         await load()
         try Task.checkCancellation()
         guard !persistenceBlocked else { throw MusicError.message(L10n.string("音乐资料库当前无法读取，未导入；请重新打开应用后重试。")) }
-        guard (album.source == .appleMusic || album.source == .netease),
+        guard [.appleMusic, .netease, .qq].contains(album.source),
               !album.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !album.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               incoming.allSatisfy({
