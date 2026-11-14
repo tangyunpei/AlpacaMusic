@@ -125,6 +125,8 @@ enum SearchLayout {
         // Gaps between the row's parts: six, or seven with the album column.
         let gaps: CGFloat = 72 + 12 * min(1, album / 150)
         let song = max(0, min(480, list - (rowFixed + album + gaps)))
-        return SearchMetrics(contentWidth: content, listWidth: list, asideWidth: aside, albumColumn: album, songColumn: song)
+        // Half points, so the frames at the end of a spring compare equal and are skipped.
+        func snap(_ value: CGFloat) -> CGFloat { (value * 2).rounded() / 2 }
+        return SearchMetrics(contentWidth: content, listWidth: snap(list), asideWidth: snap(aside), albumColumn: snap(album), songColumn: snap(song))
     }
 }

@@ -142,36 +142,52 @@ private struct SearchSourceBar: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        let store = model.searchResults
-        let waiting = store.held
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                pill(L10n.string("全部"), count: waiting ? "" : allCount(store), filter: .all)
-                pill(L10n.string("音乐库"), count: waiting ? "" : "\(store.libraryCount)", filter: .library, spinning: waiting)
-                pill(L10n.string("未保存"), count: "", filter: .notSaved)
-                ForEach(store.sources) { state in
-                    pill(state.source.title, count: count(state), filter: .source(state.source), mark: state.source,
-                         spinning: state.status == .searching, failed: state.failed)
-                }
-                Rectangle().fill(palette.line.opacity(1.2)).frame(width: 1, height: 18).padding(.horizontal, 8)
-                SongsOnlySwitch(on: Binding(get: { store.songsOnly }, set: { store.songsOnly = $0 }))
+        // In a narrow page the pills scroll sideways and the switch stays in view.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 0) { pills; songsOnly }
+            HStack(spacing: 0) {
+                ScrollView(.horizontal) { pills }.scrollIndicators(.hidden)
+                songsOnly
             }
-            .frame(height: 34)
         }
-        .scrollIndicators(.hidden)
-        .scrollDisabled(true)
         .frame(height: 34)
     }
 
+    private var pills: some View {
+        let store = model.searchResults
+        let waiting = store.held
+        return HStack(spacing: 6) {
+            pill(L10n.string("全部"), count: waiting ? "" : allCount(store), filter: .all)
+            pill(L10n.string("音乐库"), count: waiting || store.libraryCount == 0 ? "" : "\(store.libraryCount)", filter: .library, spinning: waiting)
+            pill(L10n.string("未保存"), count: "", filter: .notSaved)
+            ForEach(store.sources) { state in
+                pill(state.source.title, count: count(state), filter: .source(state.source), mark: state.source,
+                     spinning: state.status == .searching, failed: state.failed)
+            }
+        }
+        .frame(height: 34)
+    }
+
+    private var songsOnly: some View {
+        let store = model.searchResults
+        return HStack(spacing: 0) {
+            Rectangle().fill(palette.line.opacity(1.2)).frame(width: 1, height: 18).padding(.horizontal, 8)
+            SongsOnlySwitch(on: Binding(get: { store.songsOnly }, set: { store.songsOnly = $0 }))
+        }
+        .fixedSize()
+    }
+
+    /// No count for nothing found, as drawn.
     private func allCount(_ store: SearchStore) -> String {
+        guard !store.rows.isEmpty else { return "" }
         let more = store.sources.contains { $0.paging != .end && !$0.failed }
-        return "\(store.rows.count)" + (more && !store.rows.isEmpty ? "+" : "")
+        return "\(store.rows.count)" + (more ? "+" : "")
     }
     private func count(_ state: SearchSourceState) -> String {
         switch state.status {
         case .searching: ""
         case .failed: L10n.string("失败")
-        case .done: "\(state.count)" + (state.paging == .more ? "+" : "")
+        case .done: state.count == 0 ? "" : "\(state.count)" + (state.paging == .more ? "+" : "")
         }
     }
 
@@ -617,7 +633,7 @@ private struct SearchSongRow: View {
             HStack(spacing: 0) {
                 ToolButton(symbol: liked ? "heart.fill" : "heart", label: liked ? L10n.string("取消喜欢") : L10n.string("喜欢 \(track.title)"),
                            active: liked) { model.favorite(target) }
-                ToolButton(symbol: "text.badge.plus", label: L10n.string("添加到歌单…")) { model.selectedTrack = target; model.sheet = .addToPlaylist }
+                ToolButton(symbol: "text.append", label: L10n.string("添加到歌单…")) { model.selectedTrack = target; model.sheet = .addToPlaylist }
                 Menu { TrackActions(track: target, model: model) } label: {
                     Image(systemName: "ellipsis").frame(width: 28, height: 28).foregroundStyle(palette.secondary)
                 }
