@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// A few seconds of measured spectra laid out as a landscape that recedes to a
-/// horizon. Rows are captured from real FFT data only, at a fixed rate of
+/// Four seconds of measured spectra laid out as a landscape that recedes to a
+/// horizon: 16 rows, one every quarter second, each keeping the loudest level
+/// every band reached in its quarter second, and in front of them the sound
+/// right now. Rows are captured from real FFT data only, at a fixed rate of
 /// animation time, so the landscape scrolls only while measured audio keeps
 /// arriving. Unavailable audio shows a static waiting horizon and real silence
 /// a static silent one; nothing is synthesized from the clock, the beat or the
@@ -18,9 +20,9 @@ struct SpectralHorizonHistory: Equatable, Sendable {
         var levels: [Double]
     }
 
-    static let capacity = 40
+    static let capacity = 16
     static let columnCount = 96
-    static let captureInterval = 1.0 / 10
+    static let captureInterval = 1.0 / 4
     static let lowestFrequency = 30.0
     static let highestFrequency = 16_000.0
     /// Levels within this distance of the fixed-dB spectrum's -80 dBFS floor
@@ -34,6 +36,10 @@ struct SpectralHorizonHistory: Equatable, Sendable {
 
     /// Newest row first. Every row holds `columnCount` levels in 0...1.
     private(set) var rows: [[Double]] = []
+    /// The sound right now: the latest measured columns.
+    private(set) var live: [Double] = []
+    /// The loudest level of each column since the newest row was captured.
+    private(set) var forming: [Double] = []
     /// Animation seconds since the newest row was captured.
     private(set) var elapsed: Double = 0
     private(set) var format: Format?
@@ -52,8 +58,18 @@ struct SpectralHorizonHistory: Equatable, Sendable {
 
     mutating func reset() {
         rows.removeAll()
+        live.removeAll()
+        forming.removeAll()
         elapsed = 0
         format = nil
+    }
+
+    private mutating func start(_ measured: Columns) {
+        reset()
+        format = measured.format
+        rows = [measured.levels]
+        live = measured.levels
+        forming = measured.levels
     }
 
     /// Advances by `dt` seconds of animation time. A frozen frame (zero,
@@ -68,11 +84,11 @@ struct SpectralHorizonHistory: Equatable, Sendable {
             return
         }
         if rows.isEmpty || measured.format != format {
-            reset()
-            format = measured.format
-            rows = [measured.levels]
+            start(measured)
             return
         }
+        live = measured.levels
+        forming = forming.count == live.count ? zip(forming, live).map { max($0, $1) } : live
         // Real silence over an already flat landscape is a static composition:
         // nothing scrolls until measured sound returns. Silence still pushes
         // earlier measured rows back towards the horizon.
@@ -81,7 +97,8 @@ struct SpectralHorizonHistory: Equatable, Sendable {
         elapsed += step
         var captures = 0
         while elapsed >= Self.captureInterval, captures < Self.capacity {
-            rows.insert(measured.levels, at: 0)
+            rows.insert(forming, at: 0)
+            forming = live
             elapsed -= Self.captureInterval
             captures += 1
         }
@@ -94,9 +111,7 @@ struct SpectralHorizonHistory: Equatable, Sendable {
     mutating func captureSnapshot(audio: VisualizationAudio) {
         guard let measured = Self.measure(audio) else { return }
         guard rows.isEmpty || measured.format != format else { return }
-        reset()
-        format = measured.format
-        rows = [measured.levels]
+        start(measured)
     }
 
     /// Resamples a measured spectrum onto log-spaced columns between 30 Hz and
@@ -170,17 +185,30 @@ struct SpectralHorizonRidge: Equatable, Sendable {
 struct SpectralHorizonGeometry: Equatable, Sendable {
     /// Back to front: farther ridges first so nearer ones occlude them.
     var ridges: [SpectralHorizonRidge]
+    /// The sound right now, in front of every row.
+    var front: SpectralHorizonRidge?
     var horizonY: CGFloat
     var plotRect: CGRect
     var state: WaveformGeometry.State
 }
 
+/// The landscape drawn on the room itself, with no sky and no glow band:
+/// pale-blue rows dimmer with distance, a yellow front line for the sound
+/// right now and a soft-red sun on the horizon, placed by the song. Nearer
+/// land hides what is behind it by clearing it, so the room shows through.
 enum SpectralHorizonRenderer {
-    static let horizonFraction: CGFloat = 0.38
+    static let horizonFraction: CGFloat = 0.36
     static let nearBaseFraction: CGFloat = 0.90
-    static let waitingRowCount = 9
+    /// The nearest row's half width, as a share of the scene's width.
+    static let nearHalfWidth: CGFloat = 0.365
+    static let waitingRowCount = 6
     private static let perspective = 2.0
     private static let maximumPointsPerRidge = 512
+
+    static let paleBlue = SpectrumBarsRenderer.paleBlue
+    static let yellow = SpectrumBarsRenderer.yellow
+    static let softRed = SpectrumBarsRenderer.softRed
+    static let cream = WaveformRenderer.cream
 
     /// Perspective scale for a row at `depth` (0 newest, 1 oldest), normalized
     /// so the nearest row is 1 and the oldest reaches the horizon at 0.
@@ -193,16 +221,18 @@ enum SpectralHorizonRenderer {
 
     /// Pure layout. There is no time input: only captured rows (and the phase
     /// that advances while measured audio arrives) shape the landscape. The
-    /// waiting and silent states use a fixed composition of flat rows.
+    /// waiting and silent states show six flat rows.
     static func geometry(history: SpectralHorizonHistory, size: CGSize) -> SpectralHorizonGeometry {
         guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else {
-            return .init(ridges: [], horizonY: 0, plotRect: .zero, state: .waiting)
+            return .init(ridges: [], front: nil, horizonY: 0, plotRect: .zero, state: .waiting)
         }
         let horizonY = size.height * horizonFraction
         let nearBase = size.height * nearBaseFraction
-        let plot = CGRect(x: 0, y: horizonY, width: size.width, height: nearBase - horizonY)
+        let nearHalf = size.width * nearHalfWidth
+        let plot = CGRect(x: size.width / 2 - nearHalf, y: horizonY, width: nearHalf * 2, height: nearBase - horizonY)
         let state = history.state
         var ridges: [SpectralHorizonRidge] = []
+        var front: SpectralHorizonRidge?
         if state == .waiting || state == .silent {
             ridges.reserveCapacity(waitingRowCount)
             for index in stride(from: waitingRowCount - 1, through: 0, by: -1) {
@@ -215,12 +245,11 @@ enum SpectralHorizonRenderer {
             ridges.reserveCapacity(rows.count)
             for age in stride(from: rows.count - 1, through: 0, by: -1) {
                 let depth = (Double(age) + phase) / Double(SpectralHorizonHistory.capacity)
-                var shaped = ridge(levels: rows[age], depth: depth, size: size, horizonY: horizonY, nearBase: nearBase)
-                if age == 0, rows.count > 1 { shaped.presence = 0.35 + 0.65 * phase }
-                ridges.append(shaped)
+                ridges.append(ridge(levels: rows[age], depth: depth, size: size, horizonY: horizonY, nearBase: nearBase))
             }
+            front = ridge(levels: history.live, depth: 0, size: size, horizonY: horizonY, nearBase: nearBase)
         }
-        return .init(ridges: ridges, horizonY: horizonY, plotRect: plot, state: state)
+        return .init(ridges: ridges, front: front, horizonY: horizonY, plotRect: plot, state: state)
     }
 
     private static func ridge(levels: [Double], depth: Double, size: CGSize,
@@ -228,23 +257,21 @@ enum SpectralHorizonRenderer {
         let near = nearness(depth: depth)
         let t = CGFloat(near)
         let baseY = horizonY + (nearBase - horizonY) * t
-        let halfWidth = size.width * (0.17 + 0.29 * t)
+        let halfWidth = size.width * nearHalfWidth * (0.40 + 0.60 * t)
         let center = size.width / 2
-        let amplitude = size.height * (0.012 + 0.27 * t)
+        let amplitude = size.height * 0.25 * t
         let minX = center - halfWidth, maxX = center + halfWidth
         let count = min(levels.count, maximumPointsPerRidge)
         guard count >= 2 else {
             return .init(points: [CGPoint(x: minX, y: baseY), CGPoint(x: maxX, y: baseY)],
                          baseY: baseY, minX: minX, maxX: maxX, nearness: near)
         }
-        let span = halfWidth * 2 * 0.96
-        let start = center - span / 2
         var points: [CGPoint] = []
         points.reserveCapacity(count)
         for index in 0..<count {
             let raw = levels[index]
             let level = raw.isFinite ? min(1, max(0, raw)) : 0
-            let x = start + span * CGFloat(index) / CGFloat(count - 1)
+            let x = minX + halfWidth * 2 * CGFloat(index) / CGFloat(count - 1)
             points.append(CGPoint(x: x, y: baseY - CGFloat(level) * amplitude))
         }
         return .init(points: points, baseY: baseY, minX: minX, maxX: maxX, nearness: near)
@@ -262,81 +289,47 @@ enum SpectralHorizonRenderer {
     /// the track seed and never moves with time or audio.
     static func sunCenterX(size: CGSize, seed: UInt64) -> CGFloat {
         let fraction = Double((seed >> 17) % 1_000) / 999
-        return size.width * CGFloat(0.22 + 0.56 * fraction)
+        return size.width / 2 + size.width * nearHalfWidth * CGFloat(fraction * 1.1 - 0.55)
     }
 
-    private static func sunPath(size: CGSize, horizonY: CGFloat, seed: UInt64) -> Path {
-        let radius = min(size.width, size.height) * 0.07
-        let centerX = sunCenterX(size: size, seed: seed)
-        var path = Path()
-        let segments = 40
-        for index in 0...segments {
-            let angle = Double.pi * Double(index) / Double(segments)
-            let point = CGPoint(x: centerX - radius * CGFloat(cos(angle)),
-                                y: horizonY - radius * CGFloat(sin(angle)))
-            if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
-        }
-        path.closeSubpath()
-        return path
-    }
+    static func sunRadius(size: CGSize) -> CGFloat { min(size.width, size.height) * 0.065 }
 
-    private static func groundColor(_ nearness: Double) -> Color {
-        Color(red: 0.047 + 0.020 * nearness, green: 0.060 + 0.024 * nearness, blue: 0.090 + 0.032 * nearness)
-    }
-
-    /// Dusk blue at the horizon to warm cream at the viewer.
-    private static func depthColor(_ nearness: Double) -> Color {
-        let t = pow(min(1, max(0, nearness)), 0.8)
-        return Color(red: 0.290 + (0.945 - 0.290) * t,
-                     green: 0.400 + (0.922 - 0.400) * t,
-                     blue: 0.600 + (0.867 - 0.600) * t)
-    }
-
-    /// Shared production/offscreen entry point.
+    /// Shared production/offscreen entry point. Draws on whatever is behind it.
     static func draw(in context: inout GraphicsContext, size: CGSize,
-                     history: SpectralHorizonHistory, glow: Bool, seed: UInt64) {
+                     history: SpectralHorizonHistory, glow _: Bool, seed: UInt64) {
         let geometry = geometry(history: history, size: size)
         guard geometry.plotRect.width > 0, geometry.plotRect.height > 0 else { return }
-        let waiting = geometry.state == .waiting
+        let signal = geometry.state == .signal
         let horizonY = geometry.horizonY
-        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(groundColor(0)))
-        context.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: horizonY)), with: .linearGradient(
-            Gradient(colors: [Color(red: 0.030, green: 0.038, blue: 0.060), Color(red: 0.068, green: 0.082, blue: 0.122)]),
-            startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: horizonY)))
-        if glow {
-            let reach = size.height * 0.14
-            let strength = waiting ? 0.035 : 0.085
-            let warm = Color(red: 0.894, green: 0.737, blue: 0.208)
-            context.fill(Path(CGRect(x: 0, y: horizonY - reach, width: size.width, height: reach * 1.3)), with: .linearGradient(
-                Gradient(stops: [.init(color: warm.opacity(0), location: 0),
-                                 .init(color: warm.opacity(strength), location: 0.77),
-                                 .init(color: warm.opacity(0), location: 1)]),
-                startPoint: CGPoint(x: 0, y: horizonY - reach),
-                endPoint: CGPoint(x: 0, y: horizonY + reach * 0.3)))
-        }
-        let sun = sunPath(size: size, horizonY: horizonY, seed: seed)
-        context.fill(sun, with: .color(Color(red: 0.722, green: 0.196, blue: 0.157).opacity(waiting ? 0.30 : 0.72)))
+        var sun = Path()
+        sun.addArc(center: CGPoint(x: sunCenterX(size: size, seed: seed), y: horizonY), radius: sunRadius(size: size),
+                   startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
+        sun.closeSubpath()
+        context.fill(sun, with: .color(softRed.opacity(signal ? 0.92 : 0.35)))
         var rule = Path()
-        rule.move(to: CGPoint(x: 0, y: horizonY))
-        rule.addLine(to: CGPoint(x: size.width, y: horizonY))
-        context.stroke(rule, with: .color(Color(red: 0.945, green: 0.922, blue: 0.867).opacity(waiting ? 0.10 : 0.16)),
-                       lineWidth: 0.6)
-        for ridge in geometry.ridges {
-            let near = ridge.nearness
-            let edge = outline(for: ridge)
-            var land = edge
+        rule.move(to: CGPoint(x: geometry.plotRect.minX, y: horizonY))
+        rule.addLine(to: CGPoint(x: geometry.plotRect.maxX, y: horizonY))
+        context.stroke(rule, with: .color(cream.opacity(signal ? 0.16 : 0.10)), lineWidth: 1)
+
+        func ink(_ ridge: SpectralHorizonRidge, tone: Color) {
+            var land = outline(for: ridge)
             land.closeSubpath()
-            context.fill(land, with: .color(groundColor(near)))
-            let tone = depthColor(near)
-            let presence = ridge.presence.isFinite ? min(1, max(0, ridge.presence)) : 1
-            if glow, !waiting, near > 0.55 {
-                context.stroke(edge, with: .color(tone.opacity(0.07 * presence)),
-                               style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round))
+            // Nearer land hides what is behind it by clearing it, so the room shows through.
+            var eraser = context
+            eraser.blendMode = .clear
+            eraser.fill(land, with: .color(.black))
+            var line = Path()
+            if let first = ridge.points.first {
+                line.move(to: first)
+                for point in ridge.points.dropFirst() { line.addLine(to: point) }
             }
-            let opacity = (waiting ? 0.10 + 0.16 * near : 0.12 + 0.80 * near) * presence
-            context.stroke(edge, with: .color(tone.opacity(opacity)),
-                           style: StrokeStyle(lineWidth: 0.45 + 0.85 * CGFloat(near), lineCap: .round, lineJoin: .round))
+            let near = ridge.nearness
+            let opacity = signal ? 0.14 + 0.78 * near : 0.10 + 0.16 * near
+            context.stroke(line, with: .color(tone.opacity(opacity)),
+                           style: StrokeStyle(lineWidth: 0.8 + 0.9 * CGFloat(near), lineCap: .round, lineJoin: .round))
         }
+        for ridge in geometry.ridges { ink(ridge, tone: paleBlue) }
+        if let front = geometry.front { ink(front, tone: yellow) }
     }
 }
 
@@ -392,7 +385,7 @@ struct SpectralHorizonStage: View {
             let levels = isPlaying && isActive ? signal() : AudioLevels()
             let history = engine.frame(at: timeline.date, trackID: trackID, animated: animate, levels: levels,
                                        playing: isPlaying, captureStaticSignal: reduceMotion && isPlaying && isActive)
-            Canvas(opaque: true, rendersAsynchronously: false) { context, size in
+            Canvas(opaque: false, rendersAsynchronously: false) { context, size in
                 SpectralHorizonRenderer.draw(in: &context, size: size, history: history, glow: glow, seed: seed)
             }
             .allowsHitTesting(false)

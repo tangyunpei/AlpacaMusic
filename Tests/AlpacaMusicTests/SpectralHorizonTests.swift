@@ -198,9 +198,9 @@ import Testing
         #expect(SpectralHorizonRenderer.nearness(depth: 1) == 0)
         #expect(SpectralHorizonRenderer.nearness(depth: .nan) == 0)
         let geometry = SpectralHorizonRenderer.geometry(history: filled(audio(), captures: 20), size: Self.size)
-        #expect(abs(geometry.horizonY - Self.size.height * 0.38) < 0.001)
+        #expect(abs(geometry.horizonY - Self.size.height * 0.36) < 0.001)
         let ridges = geometry.ridges
-        #expect(ridges.count == 21)
+        #expect(ridges.count == SpectralHorizonHistory.capacity)
         for (far, near) in zip(ridges, ridges.dropFirst()) {
             #expect(near.baseY > far.baseY)
             #expect(near.maxX - near.minX > far.maxX - far.minX)
@@ -210,6 +210,9 @@ import Testing
             #expect(nearLift > farLift)
         }
         #expect(ridges.allSatisfy { $0.baseY >= geometry.horizonY })
+        // The sound right now stands in front of every row.
+        let front = try! #require(geometry.front)
+        #expect(front.nearness == 1 && ridges.allSatisfy { $0.baseY <= front.baseY })
     }
 
     @Test func malformedInputStaysFiniteInsideTheCanvas() {
@@ -278,7 +281,7 @@ import Testing
                                    levels: levels, playing: true, captureStaticSignal: false)
         }
         #expect(history.state == .signal)
-        #expect(history.rows.count > 5)
+        #expect(history.rows.count >= 3)
         // Paused, inactive or reduced-motion frames neither capture nor scroll.
         for frame in 30..<120 {
             let frozen = engine.frame(at: start.addingTimeInterval(Double(frame) / 30), trackID: "a", animated: false,
@@ -329,36 +332,77 @@ import Testing
     @Test @MainActor func renderedLandscapeDependsOnMeasuredSpectraNotTime() throws {
         let size = CGSize(width: 320, height: 180)
         @MainActor func pixels(_ history: SpectralHorizonHistory, seed: UInt64, glow: Bool) throws -> [UInt8] {
-            let view = Canvas(opaque: true, rendersAsynchronously: false) { context, canvasSize in
+            // Drawn on the room, as in the app: the land clears what is behind it.
+            let view = Canvas(opaque: false, rendersAsynchronously: false) { context, canvasSize in
                 SpectralHorizonRenderer.draw(in: &context, size: canvasSize, history: history, glow: glow, seed: seed)
             }
             return try TemporalDesignExport.rgba(TemporalDesignExport.image(view, size: size))
+        }
+        // Clearing land behind nearer land can leave a few pixels one step
+        // apart between renders of the same picture; compare with that margin.
+        func same(_ first: [UInt8], _ second: [UInt8]) -> Bool {
+            TemporalDesignExport.difference(first, second).meanChannelDifference < 0.01
         }
         let waiting = try pixels(SpectralHorizonHistory(), seed: 7, glow: true)
         var stillWaiting = SpectralHorizonHistory()
         for _ in 0..<240 { stillWaiting.advance(dt: 1.0 / 60, audio: VisualizationAudio()) }
         let waitingLater = try pixels(stillWaiting, seed: 7, glow: true)
-        #expect(waitingLater == waiting)
+        #expect(same(waitingLater, waiting))
 
         var landscape = filled(audio(peak: 700, magnitude: 0.9), captures: 12)
         let measured = try pixels(landscape, seed: 7, glow: true)
-        #expect(measured != waiting)
+        #expect(!same(measured, waiting))
         let repeated = try pixels(landscape, seed: 7, glow: true)
-        #expect(repeated == measured)
+        #expect(same(repeated, measured))
         landscape.advance(dt: 0, audio: audio(peak: 5_000))
         let frozen = try pixels(landscape, seed: 7, glow: true)
-        #expect(frozen == measured)
+        #expect(same(frozen, measured))
 
         let silent = try pixels(filled(silence, captures: 12), seed: 7, glow: true)
         #expect(TemporalDesignExport.difference(silent, measured).changedPixelFraction > 0.001)
         let otherSeed = try pixels(landscape, seed: 99_999_999, glow: true)
-        #expect(otherSeed != measured)
+        #expect(!same(otherSeed, measured))
 
-        // The glow setting is respected: the halo appears only when it is on.
+        // The landscape has no glow band any more: the setting changes nothing.
         let unlit = try pixels(landscape, seed: 7, glow: false)
-        #expect(unlit != measured)
+        #expect(same(unlit, measured))
         let waitingUnlit = try pixels(SpectralHorizonHistory(), seed: 7, glow: false)
         let waitingUnlitAgain = try pixels(SpectralHorizonHistory(), seed: 7, glow: false)
-        #expect(waitingUnlitAgain == waitingUnlit)
+        #expect(same(waitingUnlitAgain, waitingUnlit))
+    }
+
+    /// 16 rows, one every quarter second: four seconds of land. A row keeps
+    /// the loudest level each band reached in its quarter second; the front
+    /// line is the sound right now.
+    @Test func aRowKeepsTheLoudestLevelOfItsQuarterSecond() throws {
+        #expect(SpectralHorizonHistory.capacity == 16 && SpectralHorizonHistory.captureInterval == 0.25)
+        func tone(_ level: Float) -> VisualizationAudio {
+            var spectrum = [Float](repeating: 0, count: 1_024)
+            spectrum[46] = level
+            return VisualizationAudio(AudioLevels(spectrum: spectrum, available: true, sampleRate: 44_100, spectrumBinWidth: 44_100.0 / 2_048))
+        }
+        var history = SpectralHorizonHistory()
+        history.advance(dt: 0.05, audio: tone(0.2))
+        history.advance(dt: 0.05, audio: tone(0.9))
+        history.advance(dt: 0.05, audio: tone(0.3))
+        let column = try #require(SpectralHorizonHistory.measure(tone(0.9))?.levels.firstIndex { $0 > 0 })
+        #expect(history.live[column] == SpectralHorizonHistory.measure(tone(0.3))!.levels[column])
+        history.advance(dt: 0.15, audio: tone(0.3))
+        #expect(history.rows.count == 2)
+        #expect(history.rows[0][column] == SpectralHorizonHistory.measure(tone(0.9))!.levels[column])
+        let size = CGSize(width: 1440, height: 676)
+        let geometry = SpectralHorizonRenderer.geometry(history: history, size: size)
+        #expect(geometry.front?.points.map(\.y).min() ?? 0 > 0)
+        #expect(abs(geometry.plotRect.width - size.width * 0.73) < 0.01)
+    }
+
+    @Test func waitingShowsSixFlatRowsAndTheSunSitsOnTheHorizonBySong() {
+        let size = CGSize(width: 1440, height: 676)
+        let waiting = SpectralHorizonRenderer.geometry(history: SpectralHorizonHistory(), size: size)
+        #expect(waiting.ridges.count == 6 && waiting.front == nil)
+        let sunA = SpectralHorizonRenderer.sunCenterX(size: size, seed: 1 << 17)
+        let sunB = SpectralHorizonRenderer.sunCenterX(size: size, seed: 900 << 17)
+        #expect(sunA != sunB)
+        for x in [sunA, sunB] { #expect(abs(x - size.width / 2) <= size.width * 0.365 * 0.55 + 0.01) }
     }
 }
