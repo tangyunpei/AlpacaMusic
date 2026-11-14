@@ -32,7 +32,7 @@ enum SearchArrangement: Equatable, Sendable {
 
 struct SearchLayoutChoice: Equatable, Sendable {
     var arrangement: SearchArrangement
-    /// The content is wide enough that the list stops at 960, in every state.
+    /// The content is wide enough for the singer to stand beside a 960-point list.
     var wide: Bool
     /// The singers line of a song-title search shows above the songs.
     var singersLine: Bool
@@ -110,7 +110,7 @@ enum SearchLayout {
         let shaped = !input.songsOnly
         let singer = shaped && input.layer == .singer
         let arrangement: SearchArrangement = !singer ? .plain : wide ? .columns : input.height < compactBelow ? .compact : .band
-        let list = wide ? listCap : content
+        let list = arrangement == .columns ? listCap : content
         return SearchLayoutChoice(arrangement: arrangement, wide: wide, singersLine: shaped && input.layer == .singers,
                                   albumColumn: albumColumn(forList: list))
     }
@@ -119,8 +119,10 @@ enum SearchLayout {
 
     static func metrics(width: CGFloat, blend: SearchLayoutBlend) -> SearchMetrics {
         let content = contentWidth(width)
-        let list = content + (min(listCap, content) - content) * blend.wide
-        let aside = max(0, content - listCap - asideGap) * blend.wide
+        // The list stops at 960 only to make room for the singer beside it;
+        // with nothing beside it, it fills the width (the owner's call, 14 November).
+        let list = content + (min(listCap, content) - content) * blend.columns
+        let aside = max(0, content - listCap - asideGap) * blend.columns
         let album = max(0, blend.albumColumn)
         // Gaps between the row's parts: six, or seven with the album column.
         let gaps: CGFloat = 72 + 12 * min(1, album / 150)

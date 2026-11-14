@@ -34,13 +34,22 @@ private struct CanvasWindow: CustomTestStringConvertible, Sendable {
         #expect(choice.albumColumn == window.albumColumn)
     }
 
-    @Test func theListStopsAt960FromFifteenHundredPointsOfContentInEveryState() {
-        let below = SearchLayoutInput(width: 1499 + 68, height: 700, songsOnly: true)
-        let at = SearchLayoutInput(width: 1500 + 68, height: 700, songsOnly: true)
-        #expect(!SearchLayout.choice(for: below).wide)
-        #expect(SearchLayout.choice(for: at).wide)
-        #expect(SearchLayout.choice(for: at).arrangement == .plain)
+    @Test func theListStopsAt960OnlyWhenTheSingerStandsBesideIt() {
+        let below = SearchLayoutInput(width: 1499 + 68, height: 700, layer: .singer)
+        let at = SearchLayoutInput(width: 1500 + 68, height: 700, layer: .singer)
+        #expect(SearchLayout.choice(for: below).arrangement == .band)
+        #expect(SearchLayout.choice(for: at).arrangement == .columns)
         #expect(SearchLayout.metrics(width: at.width, blend: SearchLayout.choice(for: at).blend).listWidth == 960)
+        // Songs only, or no singer: the list fills the width.
+        for input in [SearchLayoutInput(width: 1712 + 68, height: 700, songsOnly: true, layer: .singer),
+                      SearchLayoutInput(width: 1712 + 68, height: 700, layer: .none),
+                      SearchLayoutInput(width: 1712 + 68, height: 700, layer: .singers)] {
+            let choice = SearchLayout.choice(for: input)
+            let metrics = SearchLayout.metrics(width: input.width, blend: choice.blend)
+            #expect(metrics.listWidth == 1712)
+            #expect(metrics.asideWidth == 0)
+            #expect(choice.albumColumn == 220)
+        }
         // The singer stands beside the list in what is left, 40 points away.
         let singer = SearchLayoutInput(width: 1712 + 68, height: 700, layer: .singer)
         let metrics = SearchLayout.metrics(width: singer.width, blend: SearchLayout.choice(for: singer).blend)

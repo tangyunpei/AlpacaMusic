@@ -64,7 +64,7 @@ private struct SearchPageBody: View, Animatable {
                 .padding(.top, SearchLayout.topPadding)
             SearchFailureLines(model: model)
             ScrollView(.vertical) {
-                HStack(alignment: .top, spacing: SearchLayout.asideGap * blend.wide) {
+                HStack(alignment: .top, spacing: SearchLayout.asideGap * blend.columns) {
                     VStack(alignment: .leading, spacing: 0) {
                         if let link = store.link {
                             SearchLinkRow(model: model, url: link).padding(.top, 18)
