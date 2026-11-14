@@ -1274,3 +1274,5 @@
 "返回搜索结果" = "Back to Results";
 "这些歌曲的歌手" = "SINGERS IN THESE SONGS";
 "重试 %@" = "Retry %@";
+"这里的歌曲都已在你的音乐库中。" = "Every song here is already in your library.";
+"这个筛选下没有歌曲。" = "No songs under this filter.";

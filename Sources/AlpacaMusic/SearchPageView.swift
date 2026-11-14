@@ -530,6 +530,10 @@ private struct SearchSongList: View {
                     }
                 }
                 .scrollTargetLayout()
+                if rows.isEmpty, !store.rows.isEmpty {
+                    Text(store.filter == .notSaved ? L10n.string("这里的歌曲都已在你的音乐库中。") : L10n.string("这个筛选下没有歌曲。"))
+                        .font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.vertical, 24)
+                }
                 if !store.rows.isEmpty { SearchListFooter(model: model) }
             }
         }
