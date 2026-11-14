@@ -245,7 +245,9 @@ struct SingerPageView: View {
             pill(L10n.string("全部"), count: "", source: nil)
             ForEach(singer.profiles, id: \.source) { profile in
                 let count = singer.albumCount(profile.source)
-                pill(profile.source.title, count: count > 0 ? L10n.string("\(count) 张专辑") : L10n.string("仅歌曲"), source: profile.source)
+                // "30+" while the service has more albums than the page read so far.
+                let shown = "\(count)" + (singer.albumLoads[profile.source]?.more == true ? "+" : "")
+                pill(profile.source.title, count: count > 0 ? L10n.string("\(shown) 张专辑") : L10n.string("仅歌曲"), source: profile.source)
             }
         }
     }
