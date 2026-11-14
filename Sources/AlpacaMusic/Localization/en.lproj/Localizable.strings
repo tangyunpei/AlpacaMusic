@@ -1280,3 +1280,4 @@
 "查找歌手" = "Find singer";
 "读取歌手专辑" = "Read singer's albums";
 "读取歌手歌曲" = "Read singer's songs";
+"已将「%@」的 %lld 首歌曲存入音乐库" = "Saved %2$lld songs of “%1$@” to your library";

@@ -1,7 +1,7 @@
 import SwiftUI
 import Observation
 
-enum Destination: Hashable { case home, library, albums, favorites, sources, playlist(String), album(String), search }
+enum Destination: Hashable { case home, library, albums, favorites, sources, playlist(String), album(String), search, singer(String), remoteAlbum(String) }
 enum AppSheet: String, Identifiable { case url, playlist, visual, addToPlaylist, appleMusicSetup, qqOfficialPlayback; var id: String { rawValue } }
 
 @MainActor @Observable
@@ -32,6 +32,11 @@ final class AppModel {
     var query = ""
     /// The current search's results; they outlive opening an album from them.
     let searchResults: SearchStore
+    /// The services a search, singer page or album page asks.
+    @ObservationIgnored let searchLoader: any SearchLoading
+    /// Singer and album pages opened from search, kept while Back can return to them.
+    private(set) var singerStores: [String: SingerStore] = [:]
+    private(set) var albumStores: [String: AlbumStore] = [:]
     var sodaPublicSearch: Bool {
         didSet { preferences.set(sodaPublicSearch, forKey: "soda-public-search") }
     }
@@ -146,7 +151,9 @@ final class AppModel {
         player = PlayerController(sources: sourceService, defaults: preferences, appleMusic: appleMusic, spotify: spotify)
         autoImport = AutoImportCoordinator(library: library, accounts: accounts, appleMusic: appleMusic, spotify: spotify)
         browse = BrowseStore(loader: browseLoader ?? PlatformBrowseLoader(accounts: accounts, appleMusic: appleMusic), defaults: preferences)
-        searchResults = SearchStore(loader: searchLoader ?? PlatformSearchLoader(sources: sourceService, appleMusic: appleMusic, spotify: spotify, native: native),
+        let loader = searchLoader ?? PlatformSearchLoader(sources: sourceService, appleMusic: appleMusic, spotify: spotify, native: native)
+        self.searchLoader = loader
+        searchResults = SearchStore(loader: loader,
                                     preferences: preferences)
         var savedVisual = (preferences.data(forKey: "visual-settings").flatMap { try? JSONDecoder().decode(VisualSettings.self, from: $0) } ?? .standard).validated()
         // Abstraction's default moved from 0.2 to 0 (true colours, every point).
@@ -262,7 +269,10 @@ final class AppModel {
 
     var pageTitle: String {
         switch destination {
-        case .search: return L10n.string("搜索「\(searchResults.term)」") case .home: return L10n.string("此刻"); case .library: return L10n.string("我的音乐库"); case .albums: return L10n.string("专辑库"); case .favorites: return L10n.string("喜欢的音乐"); case .sources: return L10n.string("音源"); case .playlist: return selectedPlaylist?.name ?? L10n.string("我的歌单"); case .album: return selectedAlbum?.name ?? L10n.string("专辑") }
+        case .search: return L10n.string("搜索「\(searchResults.term)」")
+        case .singer(let id): return singerStores[id]?.names.first ?? L10n.string("歌手")
+        case .remoteAlbum(let id): return albumStores[id]?.album.name ?? L10n.string("专辑")
+        case .home: return L10n.string("此刻"); case .library: return L10n.string("我的音乐库"); case .albums: return L10n.string("专辑库"); case .favorites: return L10n.string("喜欢的音乐"); case .sources: return L10n.string("音源"); case .playlist: return selectedPlaylist?.name ?? L10n.string("我的歌单"); case .album: return selectedAlbum?.name ?? L10n.string("专辑") }
     }
 
     func load() async {
@@ -288,8 +298,49 @@ final class AppModel {
     func stopLyricsSync() { lyricsSync?.stop() }
     /// Goes to a page from the sidebar or a page's own link. It ends a search
     /// and its trail.
+    /// The singer behind a search card, found once and kept for its page.
+    func singerStore(for card: SingerCard) -> SingerStore {
+        var query: [MusicSource: String] = [:]
+        for evidence in card.evidence where query[evidence.source] == nil { query[evidence.source] = evidence.name }
+        return singerStore(names: card.names, query: query)
+    }
+    /// A singer by name, from a row's credit or the singers line.
+    func singerStore(named name: String) -> SingerStore { singerStore(names: [name], query: [:]) }
+    private func singerStore(names: [String], query: [MusicSource: String]) -> SingerStore {
+        let key = SingerStore.key(names)
+        if let store = singerStores[key] { return store }
+        let store = SingerStore(names: names, query: query, sources: searchResults.sources.map(\.source), loader: searchLoader,
+                                isSaved: { [weak self] in self?.isInLibrary($0) ?? false })
+        singerStores[key] = store
+        return store
+    }
+    func openSinger(_ store: SingerStore) {
+        store.start()
+        open(.singer(store.id))
+    }
+    func openAlbum(_ album: SingerAlbum) {
+        let key = "album:" + album.id
+        let store = albumStores[key] ?? AlbumStore(album: album, loader: searchLoader)
+        albumStores[key] = store
+        store.start()
+        open(.remoteAlbum(key))
+    }
+    /// Back to an earlier page of the trail, as the header's trail links do.
+    func goBack(to target: Destination) {
+        guard trail.contains(target) else { return }
+        while destination != target, !trail.isEmpty { goBack() }
+    }
+    /// Saves an album opened from search to the library, with its songs.
+    func saveAlbum(_ store: AlbumStore) async {
+        guard !store.tracks.isEmpty, !store.saving else { return }
+        store.setSaving(true); defer { store.setSaving(false) }
+        do {
+            let count = try await library.importRemoteAlbumAndSave(store.album.remote, tracks: store.tracks)
+            notify(L10n.string("已将「\(store.album.name)」的 \(count) 首歌曲存入音乐库"))
+        } catch { notify(error.localizedDescription) }
+    }
     func navigate(_ target: Destination) {
-        searchResults.clear(); trail = []
+        searchResults.clear(); trail = []; singerStores = [:]; albumStores = [:]
         query = ""; sourceFilter = nil
         destination = target; immersive = false
     }
@@ -397,6 +448,7 @@ final class AppModel {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else { return }
         if destination != .search { trail = [trail.first ?? destination] } else if trail.isEmpty { trail = [.library] }
+        singerStores = [:]; albumStores = [:]
         destination = .search; immersive = false; sourceFilter = nil
         searchResults.start(term, library: library.tracks, configurations: library.sources, includeSodaPublicly: sodaPublicSearch,
                             isSaved: { [weak self] track in self?.isInLibrary(track) ?? false })

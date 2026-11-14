@@ -29,6 +29,26 @@ import Testing
         return pages[source]?[offset] ?? SearchPage(source: source, tracks: [], paging: .end)
     }
     func isActive(_ source: MusicSource) -> Bool { true }
+
+    var singerResults: [MusicSource: [SingerProfile]] = [:]
+    var singerQueries: [String] = []
+    var albumPages: [String: [Int: SingerPage<SingerAlbum>]] = [:]
+    var songPages: [String: [Int: SingerPage<Track>]] = [:]
+    var albumSongs: [String: [Track]] = [:]
+    func singers(_ name: String, source: MusicSource) async throws -> [SingerProfile] {
+        singerQueries.append("\(source.rawValue):\(name)")
+        return singerResults[source] ?? []
+    }
+    func albums(of singer: SingerProfile, offset: Int) async throws -> SingerPage<SingerAlbum> {
+        albumPages[singer.id]?[offset] ?? SingerPage(items: [], more: false)
+    }
+    func songs(of singer: SingerProfile, offset: Int) async throws -> SingerPage<Track> {
+        songPages[singer.id]?[offset] ?? SingerPage(items: [], more: false)
+    }
+    func tracks(in album: SingerAlbum) async throws -> [Track] {
+        guard let songs = albumSongs[album.id] else { throw MusicError.message("no album") }
+        return songs
+    }
 }
 
 private func songs(_ source: MusicSource, _ count: Int, from start: Int = 0, artist: String = "谭米洛", title: String = "Song") -> [Track] {
