@@ -11,6 +11,8 @@ struct MusicVisualizationView: View {
     /// The small label a signal display shows while playback has no audio to
     /// draw. Off on the Now stage, where it would land among the song's lines.
     var showsMissingAudioStatus = true
+    /// The room or the Now stage: effects drawn on either lay out for it.
+    var place: EffectPlace = .room
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var clock = VisualizationClock()
@@ -33,10 +35,11 @@ struct MusicVisualizationView: View {
                                             captureStaticSignal: reduceMotion && isPlaying && scenePhase == .active,
                                             spectrumBarsActive: mode == .spectrumBars)
                     ZStack {
-                        Canvas(opaque: true, rendersAsynchronously: false) { context, size in
+                        Canvas(opaque: mode == .waveform, rendersAsynchronously: false) { context, size in
                             switch mode {
                             case .spectrumBars:
-                                SpectrumBarsRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow, presentation: frame.spectrumBars)
+                                SpectrumBarsRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow,
+                                                          presentation: frame.spectrumBars, place: place)
                             default:
                                 WaveformRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow)
                             }

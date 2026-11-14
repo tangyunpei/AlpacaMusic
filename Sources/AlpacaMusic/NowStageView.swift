@@ -19,7 +19,7 @@ struct NowStageView: View {
             // shows instead. While one gives way to the other both are here; at
             // rest only one is, so a visual that is not shown costs nothing.
             if metrics.cover < 0.999 {
-                NowStageVisual(model: model)
+                NowStageVisual(model: model, stacked: metrics.stacked)
                     .frame(width: metrics.visualFrame.width, height: metrics.visualFrame.height)
                     .offset(x: metrics.visualFrame.minX, y: metrics.visualFrame.minY)
                     .opacity(Double(1 - metrics.cover))
@@ -78,6 +78,8 @@ struct NowStageView: View {
 private struct NowStageVisual: View {
     @Environment(\.nowMotion) private var motion
     let model: AppModel
+    /// How far the text has moved below the visual, 0 to 1.
+    let stacked: CGFloat
     /// The visual last drawn here.
     @State private var last: VisualizationMode?
 
@@ -89,7 +91,8 @@ private struct NowStageVisual: View {
                 MusicVisualizationView(track: model.activeTrack, mode: mode, settings: model.visual,
                                        // A visual on its way out for want of audio rests rather than wait for samples.
                                        isPlaying: model.player.status == .playing && !NowCover.standsIn(model),
-                                       signal: { model.player.readLevels() }, showsStatus: false, showsMissingAudioStatus: false)
+                                       signal: { model.player.readLevels() }, showsStatus: false, showsMissingAudioStatus: false,
+                                       place: .stage(stacked: stacked))
                     .id(mode).transition(.opacity)
             }
         }

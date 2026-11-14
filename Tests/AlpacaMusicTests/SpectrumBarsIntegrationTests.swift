@@ -58,7 +58,7 @@ import Testing
             #expect(difference.changedPixelFraction < 0.0001)
             #expect(difference.meanChannelDifference < 0.01)
             let geometry = SpectrumBarsRenderer.geometry(audio: bright.audio, size: size, presentation: bright.spectrumBars)
-            #expect(geometry.bars.count == 72)
+            #expect(geometry.bars.count == SpectrumBarsPresentation.barCount)
             #expect(geometry.bars.allSatisfy { $0.peakRect.minY >= geometry.plotRect.minY && $0.peakRect.maxX <= size.width })
         }
     }
@@ -69,17 +69,20 @@ import Testing
         let silent = VisualizationAudio(input())
         let silence = try pixels(.init(time: 0, audio: silent), size: size, glow: false)
         #expect(empty == silence)
-        // Sample a wide two-dimensional area away from the quiet baseline.
-        // Any dormant segmented wall, fake bars, or noise would add colors.
-        let background = Array(empty[(90 * 320 + 160) * 4..<(90 * 320 + 160) * 4 + 3])
-        var uniform = true
-        for y in stride(from: 55, through: 110, by: 3) {
-            for x in stride(from: 35, through: 285, by: 3) {
+        // Sample a wide two-dimensional area. Only the room and the disc
+        // behind the bars may show (its antialiased rim aside): any dormant
+        // segmented wall, fake bars or noise would add colours.
+        let disc = SpectrumBarsRenderer.layout(size: size, count: SpectrumBarsPresentation.barCount, place: .room).disc
+        var colours = Set<[UInt8]>()
+        for y in stride(from: 4, through: 176, by: 3) {
+            for x in stride(from: 4, through: 316, by: 3) {
+                let distance = hypot(CGFloat(x) + 0.5 - disc.midX, CGFloat(y) + 0.5 - disc.midY)
+                guard abs(distance - disc.width / 2) > 1.5 else { continue }
                 let offset = (y * 320 + x) * 4
-                uniform = uniform && Array(empty[offset..<offset + 3]) == background
+                colours.insert(Array(empty[offset..<offset + 3]))
             }
         }
-        #expect(uniform)
+        #expect(colours.count == 2)
     }
 
     @Test @MainActor func activeColumnReadsAsOneContinuousFrequencyShape() throws {
