@@ -35,13 +35,14 @@ struct MusicVisualizationView: View {
                                             captureStaticSignal: reduceMotion && isPlaying && scenePhase == .active,
                                             spectrumBarsActive: mode == .spectrumBars)
                     ZStack {
-                        Canvas(opaque: mode == .waveform, rendersAsynchronously: false) { context, size in
+                        Canvas(opaque: false, rendersAsynchronously: false) { context, size in
                             switch mode {
                             case .spectrumBars:
                                 SpectrumBarsRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow,
                                                           presentation: frame.spectrumBars, place: place)
                             default:
-                                WaveformRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow)
+                                WaveformRenderer.draw(in: &context, size: size, audio: frame.audio, time: frame.time, glow: settings.glow,
+                                                      peak: frame.scopePeak, place: place)
                             }
                         }
                         .allowsHitTesting(false)
@@ -151,6 +152,8 @@ struct VisualizationFrame {
     /// easing, for effects that answer a hit as it arrives. A frozen frame
     /// holds the reading it was frozen on.
     var measured = VisualizationAudio()
+    /// The oscilloscope's held widest swing, 0 to 1.
+    var scopePeak = 0.0
 }
 
 /// Timeline dates resume after pauses, while this clock only advances on active
@@ -162,12 +165,13 @@ struct VisualizationFrame {
     private var measured = VisualizationAudio()
     private var barsClock = SpectrumBarsMotionClock()
     private var barsPresentation = SpectrumBarsPresentation.empty
+    private var scopeHold = OscilloscopePeakHold()
 
     func resetFrameDate() { previousDate = nil }
-    func resetSpectrumBars() { barsClock.reset(); barsPresentation = .empty }
+    func resetSpectrumBars() { barsClock.reset(); barsPresentation = .empty; scopeHold.reset() }
     func resetSignal() {
         previousDate = nil; smoothed = VisualizationAudio(); measured = VisualizationAudio()
-        barsClock.reset(); barsPresentation = .empty
+        barsClock.reset(); barsPresentation = .empty; scopeHold.reset()
     }
 
     func frame(at date: Date, animated: Bool, levels: AudioLevels, playing: Bool,
@@ -187,7 +191,9 @@ struct VisualizationFrame {
                     if spectrumBarsActive { barsPresentation = barsClock.step(dt: 0, audio: initial, resetInput: true) }
                 }
             }
-            return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation, measured: measured)
+            if captureStaticSignal, playing, smoothed.available { _ = scopeHold.step(dt: 0, audio: smoothed) }
+            return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation, measured: measured,
+                                      scopePeak: scopeHold.peak)
         }
         let dt = previousDate.map { min(0.08, max(0, date.timeIntervalSince($0))) } ?? 0
         previousDate = date
@@ -197,7 +203,8 @@ struct VisualizationFrame {
         if spectrumBarsActive { barsPresentation = barsClock.step(dt: dt, audio: incoming) }
         guard incoming.available else {
             smoothed = incoming
-            return VisualizationFrame(time: time, audio: incoming, spectrumBars: barsPresentation, measured: incoming)
+            return VisualizationFrame(time: time, audio: incoming, spectrumBars: barsPresentation, measured: incoming,
+                                      scopePeak: scopeHold.step(dt: dt, audio: incoming))
         }
         let follow = 1 - exp(-dt * 12)
         smoothed.energy += (incoming.energy - smoothed.energy) * follow
@@ -227,7 +234,8 @@ struct VisualizationFrame {
         }
         smoothed.spectrumBinWidth = incoming.spectrumBinWidth
         smoothed.available = true
-        return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation, measured: incoming)
+        return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation, measured: incoming,
+                                  scopePeak: scopeHold.step(dt: dt, audio: smoothed))
     }
 }
 
