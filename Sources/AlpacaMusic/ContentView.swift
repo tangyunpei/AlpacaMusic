@@ -310,8 +310,8 @@ struct ImmersiveView: View {
                 if !model.lyricsVisible {
                     // Keep the light Bauhaus paper clear of the room's light-on-dark chrome.
                     ListeningScene(model: model)
-                        .padding(.top, model.visualMode == .bauhaus ? 68 : 56)
-                        .padding(.bottom, model.visualMode == .bauhaus ? 116 : 56)
+                        .padding(.top, model.shownVisualMode == .bauhaus ? 68 : 56)
+                        .padding(.bottom, model.shownVisualMode == .bauhaus ? 116 : 56)
                 } else if model.lyricPresentation == .scroll {
                     HStack(spacing: 30) {
                         VStack(spacing: 12) {
@@ -325,8 +325,8 @@ struct ImmersiveView: View {
                     // Full bleed, so the top strip and the space under the bar
                     // show the scene too. The point cloud takes drags, so it
                     // stays out of the strip where the window is dragged.
-                    ListeningScene(model: model).modifier(KineticBackdrop(mode: model.visualMode))
-                        .ignoresSafeArea(edges: model.visualMode == .pointCloud ? .bottom : .all)
+                    ListeningScene(model: model).modifier(KineticBackdrop(mode: model.shownVisualMode))
+                        .ignoresSafeArea(edges: model.shownVisualMode == .pointCloud ? .bottom : .all)
                     ImmersiveLyricsPanel(model: model).padding(.horizontal, geometry.size.width < 700 ? 24 : 42).padding(.top, 82).padding(.bottom, 105)
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
@@ -420,12 +420,14 @@ private struct ImmersiveChrome: View {
     let availableWidth: CGFloat
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     private var reduced: Bool { systemReduced || model.visual.reduceMotion }
+    private var coverWaiting: String { L10n.string("\(model.visualMode.title)需要实时音频，这个音源没有，暂由专辑封面代替。") }
     private var sourceStatus: String {
         let source = model.activeTrack?.sourcePlaybackTitle ?? L10n.string("未选择音源")
         if reduced { return L10n.string("\(source) · 减少动态效果开启") }
         if model.player.status != .playing { return L10n.string("\(source) · 已暂停") }
-        if model.activeTrack?.source.supportsAudioAnalysis == false {
-            return model.visualMode.isSignalDisplay ? L10n.string("\(source) · 尚无实时音频采样") : L10n.string("\(source) · 氛围动画")
+        // When the cover stands in, the effect button says why; the source line stays plain.
+        if model.activeTrack?.source.supportsAudioAnalysis == false, !model.visualMode.isSignalDisplay {
+            return L10n.string("\(source) · 氛围动画")
         }
         return source
     }
@@ -460,14 +462,18 @@ private struct ImmersiveChrome: View {
                     Text(model.lyrics.audioAlignmentStatus.description).font(.caption)
                 } label: {
                     if availableWidth >= 540 {
-                        Label(model.visualMode.title, systemImage: model.visualMode.symbol).font(.system(size: 11)).lineLimit(1)
+                        // While the cover stands in, the chosen effect is named dimmed with the reason.
+                        Label(model.coverStandsIn ? L10n.string("\(model.visualMode.title) · 无实时音频") : model.visualMode.title,
+                              systemImage: model.visualMode.symbol).font(.system(size: 11)).lineLimit(1)
                     } else {
                         Image(systemName: model.visualMode.symbol).font(.system(size: 13))
                     }
                 }
-                    .menuStyle(.borderlessButton).fixedSize().foregroundStyle(palette.accent)
+                    .menuStyle(.borderlessButton).fixedSize().foregroundStyle(model.coverStandsIn ? palette.secondary : palette.accent)
                     .accessibilityIdentifier("immersive-visual-effects-menu")
-                    .accessibilityLabel(L10n.string("选择视觉效果，当前为\(model.visualMode.title)")).help(L10n.string("视觉效果：\(model.visualMode.title)"))
+                    .accessibilityLabel(L10n.string("选择视觉效果，当前为\(model.visualMode.title)"))
+                    .accessibilityValue(model.coverStandsIn ? coverWaiting : "")
+                    .help(model.coverStandsIn ? coverWaiting : L10n.string("视觉效果：\(model.visualMode.title)"))
             }
             .onHover { model.immersiveChrome.hold(.pointerOnTopControls, $0) }
             }
@@ -520,27 +526,17 @@ struct KineticBackdrop: ViewModifier {
     }
 }
 
+/// The room's scene: the chosen effect, or the cover standing in for a
+/// "Needs live audio" effect while the song's source gives no live audio.
 struct ListeningScene: View {
-    @Environment(\.appPalette) private var palette
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduced
     var body: some View {
+        let mode = model.shownVisualMode
         ZStack {
-            MusicVisualizationView(track: model.activeTrack, mode: model.visualMode, settings: model.visual,
+            MusicVisualizationView(track: model.activeTrack, mode: mode, settings: model.visual,
                                    isPlaying: model.player.status == .playing, signal: { model.player.readLevels() }, showsStatus: false)
-                .id(model.visualMode).transition(.opacity)
-            if model.activeTrack?.source.supportsAudioAnalysis == false, model.visualMode.isSignalDisplay,
-               !model.immersive || !model.lyricsVisible || model.lyricPresentation == .scroll {
-                VStack(spacing: 10) {
-                    Text(L10n.string("\(model.activeTrack?.source.title ?? L10n.string("当前音源")) 暂无实时波形与频谱"))
-                        .font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
-                    Text(L10n.string("当前播放通道无法获取音频采样。"))
-                        .font(.system(size: 10)).foregroundStyle(palette.secondary)
-                        .multilineTextAlignment(.center)
-                }.padding(18).frame(maxWidth: 310)
-                    .background(palette.background.opacity(0.92), in: .rect(cornerRadius: 12))
-                    .padding(18)
-            }
-        }.animation(reduced || model.visual.reduceMotion ? nil : ExperienceMotion.visualization, value: model.visualMode)
+                .id(mode).transition(.opacity)
+        }.animation(reduced || model.visual.reduceMotion ? nil : ExperienceMotion.visualization, value: mode)
     }
 }

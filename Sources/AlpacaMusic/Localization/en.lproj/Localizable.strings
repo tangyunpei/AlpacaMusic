@@ -13,7 +13,6 @@
 "%@ ·「%@」未完整导入" = "%@ · “%@” was only partially imported";
 "%@ 使用氛围动画，无法根据实时音频变化。" = "%@ uses ambient animation without live audio response.";
 "%@ 封面" = "Artwork for %@";
-"%@ 暂无实时波形与频谱" = "Live waveform and spectrum unavailable for %@";
 "%@ 更多操作" = "More actions for %@";
 "%@ 歌曲标识与其他来源冲突，此次歌单未导入" = "%@ song IDs conflict with another source. The playlist was not imported.";
 "%@。%@（%@）" = "%@ %@ (%@)";
@@ -416,8 +415,6 @@
 "当前 Apple Music 账户不能播放订阅曲库，请检查订阅。" = "This Apple Music account cannot play subscription catalog songs. Check your subscription.";
 "当前播放使用官方分享音频，可能仅提供试听。" = "Playback uses official shared audio, which may be a preview only.";
 "当前播放通道尚无实时音频采样，显示静候画面" = "Live audio unavailable from this playback channel, showing a waiting visual";
-"当前播放通道无法获取音频采样。" = "Audio samples are unavailable from this playback channel.";
-"当前无法获取 %@ 实时音频，波形与频谱不随音乐变化。" = "Live audio from %@ is unavailable. Waveforms and spectra do not respond to music.";
 "当前歌词" = "Current Lyrics";
 "当前没有可列出的歌单" = "No playlists to show";
 "当前没有网络连接" = "No internet connection.";
@@ -1247,3 +1244,4 @@
 "来自封面" = "From the Cover";
 "图形" = "Shapes";
 "需要实时音频" = "Needs Live Audio";
+"%@ · 无实时音频" = "%@ · no live audio";

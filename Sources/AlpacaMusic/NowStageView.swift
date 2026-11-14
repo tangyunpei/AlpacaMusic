@@ -64,9 +64,7 @@ struct NowStageView: View {
     /// listener's choice is not touched, so it is back with the next song
     /// that has live audio. Whether a source can give audio decides this, not
     /// whether samples have arrived: a song still loading keeps its visual.
-    static func standsIn(_ model: AppModel) -> Bool {
-        model.player.current?.source.supportsAudioAnalysis == false && model.visualMode.isSignalDisplay
-    }
+    static func standsIn(_ model: AppModel) -> Bool { model.coverStandsIn }
     /// The cover shows: as the chosen visual, or standing in for one.
     static func shows(_ model: AppModel) -> Bool { model.visualMode == .artwork || standsIn(model) }
 }

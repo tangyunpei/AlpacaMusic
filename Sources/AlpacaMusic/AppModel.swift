@@ -167,6 +167,15 @@ final class AppModel {
 
     var activeTrack: Track? { player.current ?? library.tracks.first }
     var canVisualizeActiveTrack: Bool { activeTrack?.source.supportsAudioAnalysis ?? true }
+    /// A "Needs live audio" effect has nothing to draw for a source that
+    /// gives no audio (Apple Music, Spotify), so the cover stands in while
+    /// such a song is the current one, on the Now stage and in the room.
+    /// Decided when drawn: `visualMode` keeps the listener's choice, which is
+    /// back with the next song that has live audio. Whether the source can
+    /// give audio decides this, not whether samples have arrived yet.
+    var coverStandsIn: Bool { player.current?.source.supportsAudioAnalysis == false && visualMode.isSignalDisplay }
+    /// The effect actually drawn: the chosen one, or Album artwork standing in.
+    var shownVisualMode: VisualizationMode { coverStandsIn ? .artwork : visualMode }
     var selectedPlaylist: MusicPlaylist? {
         if case let .playlist(id) = destination { return library.playlists.first { $0.id == id } }
         return nil

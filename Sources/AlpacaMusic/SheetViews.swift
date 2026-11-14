@@ -148,7 +148,7 @@ struct VisualSettingsView: View {
             }
             if !model.canVisualizeActiveTrack {
                 Label(model.visualMode.isSignalDisplay
-                      ? L10n.string("当前无法获取 \(model.activeTrack?.source.title ?? L10n.string("此音源")) 实时音频，波形与频谱不随音乐变化。")
+                      ? L10n.string("\(model.visualMode.title)需要实时音频，这个音源没有，暂由专辑封面代替。")
                       : L10n.string("\(model.activeTrack?.source.title ?? L10n.string("此音源")) 使用氛围动画，无法根据实时音频变化。"), systemImage: "sparkles")
                     .font(.system(size: 10)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
             }

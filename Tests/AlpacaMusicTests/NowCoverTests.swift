@@ -65,3 +65,47 @@ import Testing
         #expect(!NowCover.standsIn(model) && NowCover.shows(model))
     }
 }
+
+/// The room follows the Now stage's rule: the cover stands in for a "Needs
+/// live audio" effect while the current song's source gives no live audio.
+@Suite @MainActor struct RoomCoverTests {
+    private struct SavedQueue: Codable { var tracks: [Track]; var currentID: String?; var position: Double }
+
+    private func model(restoring track: Track?, library: [Track] = []) async throws -> (model: AppModel, cleanUp: () -> Void) {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "room-cover-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let suite = "AlpacaRoomCoverTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        if let track {
+            defaults.set(try JSONEncoder().encode(SavedQueue(tracks: [track], currentID: track.id, position: 12)),
+                         forKey: "AlpacaMusic.NativePlayer.queue.v1")
+        }
+        let model = AppModel(directory: directory, preferences: defaults, ephemeralAccounts: true)
+        await model.library.load()
+        model.library.addTracks(library)
+        model.player.restoreQueue(model.library.tracks)
+        return (model, {
+            model.player.shutdown()
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        })
+    }
+
+    private func song(_ source: MusicSource) -> Track {
+        Track(id: "room-\(source.rawValue)", title: "Low Tide Radio", artist: "Mono Coast", album: "", duration: 281, source: source, sourceID: "1")
+    }
+
+    @Test(arguments: [MusicSource.appleMusic, .spotify, .netease, .qq, .local])
+    func theRoomShowsTheCoverExactlyWhenTheStageDoes(_ source: MusicSource) async throws {
+        let (model, cleanUp) = try await model(restoring: song(source)); defer { cleanUp() }
+        for mode in VisualizationMode.allCases {
+            model.visualMode = mode
+            let standsIn = !source.supportsAudioAnalysis && mode.isSignalDisplay
+            #expect(model.coverStandsIn == standsIn)
+            #expect(NowCover.standsIn(model) == model.coverStandsIn)
+            #expect(model.shownVisualMode == (standsIn ? .artwork : mode))
+            // The choice is never rewritten to make the cover show.
+            #expect(model.visualMode == mode)
+        }
+    }
+}
