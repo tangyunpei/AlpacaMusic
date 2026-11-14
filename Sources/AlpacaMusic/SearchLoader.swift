@@ -14,6 +14,22 @@ import Foundation
               includeSodaPublicly: Bool) async -> SearchPage
     /// False for a service switched off after the search began.
     func isActive(_ source: MusicSource) -> Bool
+    /// One service's singers whose name matches, best first.
+    func singers(_ name: String, source: MusicSource) async throws -> [SingerProfile]
+    /// A page of one service's albums for a singer.
+    func albums(of singer: SingerProfile, offset: Int) async throws -> SingerPage<SingerAlbum>
+    /// A page of one service's songs for a singer, most played first.
+    func songs(of singer: SingerProfile, offset: Int) async throws -> SingerPage<Track>
+    /// An album's songs, without importing it.
+    func tracks(in album: SingerAlbum) async throws -> [Track]
+}
+
+/// Loaders that find no singers: songs only.
+extension SearchLoading {
+    func singers(_ name: String, source: MusicSource) async throws -> [SingerProfile] { [] }
+    func albums(of singer: SingerProfile, offset: Int) async throws -> SingerPage<SingerAlbum> { SingerPage(items: [], more: false) }
+    func songs(of singer: SingerProfile, offset: Int) async throws -> SingerPage<Track> { SingerPage(items: [], more: false) }
+    func tracks(in album: SingerAlbum) async throws -> [Track] { [] }
 }
 
 /// The sources' fixed order: in the pills, and when the list takes turns.
@@ -107,6 +123,39 @@ enum SearchPagingRule {
         }
     }
 
+    func singers(_ name: String, source: MusicSource) async throws -> [SingerProfile] {
+        switch source {
+        case .appleMusic where appleMusic.isEnabled: return try await appleMusic.singers(name)
+        case .netease, .qq:
+            guard let native, await native.connectedSources().contains(source) else { return [] }
+            return try await native.singers(name, source: source)
+        default: return []
+        }
+    }
+    func albums(of singer: SingerProfile, offset: Int) async throws -> SingerPage<SingerAlbum> {
+        switch singer.source {
+        // MusicKit hands the whole list at once.
+        case .appleMusic: return SingerPage(items: offset == 0 ? try await appleMusic.singerAlbums(singer.remoteID) : [], more: false)
+        case .netease, .qq: return try await native?.singerAlbums(singer, offset: offset) ?? SingerPage(items: [], more: false)
+        default: return SingerPage(items: [], more: false)
+        }
+    }
+    func songs(of singer: SingerProfile, offset: Int) async throws -> SingerPage<Track> {
+        switch singer.source {
+        // The catalog gives a singer's top songs only.
+        case .appleMusic: return SingerPage(items: offset == 0 ? try await appleMusic.singerTopSongs(singer.remoteID) : [], more: false)
+        case .netease, .qq: return try await native?.singerSongs(singer, offset: offset) ?? SingerPage(items: [], more: false)
+        default: return SingerPage(items: [], more: false)
+        }
+    }
+    func tracks(in album: SingerAlbum) async throws -> [Track] {
+        switch album.source {
+        case .appleMusic:
+            return try await appleMusic.tracks(in: BrowseCollection(source: .appleMusic, kind: .album, remoteID: album.remoteID, title: album.name), limit: 300)
+        case .netease, .qq: return try await native?.albumSongs(album) ?? []
+        default: return []
+        }
+    }
     func isActive(_ source: MusicSource) -> Bool {
         switch source {
         case .spotify: spotify.isEnabled

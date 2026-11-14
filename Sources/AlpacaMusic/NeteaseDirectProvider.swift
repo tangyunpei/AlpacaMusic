@@ -34,6 +34,39 @@ struct NeteaseDirectProvider: DirectMusicProvider {
     }
     static let searchPageSize = 50
 
+    // Singer lookups for the search and singer pages. Each was tried live on
+    // 14 November 2026 with the owner's account; none is a documented API.
+
+    /// Singers whose name matches, best first (cloudsearch type 100).
+    func singers(_ query: String, cookies: [MusicSessionCookie]) async throws -> [SingerProfile] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return [] }
+        let response: NESingerSearchResponse = try await request("cloudsearch/pc", payload: ["s": term, "type": 100, "limit": 5, "offset": 0, "total": true], cookies: cookies, phase: L10n.string("查找歌手"))
+        return (response.result?.artists ?? []).compactMap { artist in
+            guard isValidID(artist.id.value), let name = artist.name?.nonempty else { return nil }
+            return SingerProfile(source: .netease, remoteID: artist.id.value, name: name, aliases: (artist.alias ?? []) + (artist.trans.map { [$0] } ?? []),
+                                 pictureURL: Self.coverURL(artist.picUrl ?? artist.img1v1Url), albumCount: artist.albumSize, songCount: artist.musicSize)
+        }
+    }
+    /// A page of a singer's albums and singles, newest first as NetEase lists them.
+    func singerAlbums(_ singerID: String, offset: Int, cookies: [MusicSessionCookie]) async throws -> SingerPage<SingerAlbum> {
+        try requireID(singerID)
+        let response: NEArtistAlbumsResponse = try await request("artist/albums/\(singerID)", payload: ["limit": 30, "offset": max(0, offset), "total": true], cookies: cookies, phase: L10n.string("读取歌手专辑"))
+        let albums = (response.hotAlbums ?? []).compactMap { album -> SingerAlbum? in
+            guard isValidID(album.id.value), let name = album.name?.nonempty else { return nil }
+            return SingerAlbum(source: .netease, remoteID: album.id.value, name: name, artist: album.artistName,
+                               date: album.publishTime.flatMap(ReleaseDate.init(milliseconds:)), trackCount: album.size,
+                               artworkURL: Self.coverURL(album.picUrl), kind: album.type ?? "")
+        }
+        return SingerPage(items: albums, more: response.more ?? false)
+    }
+    /// A page of a singer's songs, most played first.
+    func singerSongs(_ singerID: String, offset: Int, cookies: [MusicSessionCookie]) async throws -> SingerPage<Track> {
+        try requireID(singerID)
+        let response: NEArtistSongsResponse = try await request("v1/artist/songs", payload: ["id": singerID, "order": "hot", "offset": max(0, offset), "limit": 50, "private_cloud": "true", "work_type": 1], cookies: cookies, phase: L10n.string("读取歌手歌曲"))
+        return SingerPage(items: (response.songs ?? []).map(\.track), more: response.more ?? false)
+    }
+
     func playlists(profile: MusicAccountProfile, cookies: [MusicSessionCookie]) async throws -> [RemoteMusicPlaylist] {
         try requireID(profile.id)
         var result: [RemoteMusicPlaylist] = [], seen = Set<String>(), offset = 0
@@ -646,3 +679,23 @@ private struct NEPlaylistTracksResponse: Decodable {
     }
 }
 private extension String { var nonempty: String? { isEmpty ? nil : self } }
+
+private struct NESingerSearchResponse: Decodable {
+    var result: Result?
+    struct Result: Decodable { var artists: [NEArtist]? }
+}
+private struct NEArtist: Decodable {
+    var id: NEID; var name: String?; var alias: [String]?; var trans: String?
+    var picUrl: String?; var img1v1Url: String?; var albumSize: Int?; var musicSize: Int?
+}
+private struct NEArtistAlbumsResponse: Decodable {
+    var hotAlbums: [NEArtistAlbum]?; var more: Bool?
+}
+private struct NEArtistAlbum: Decodable {
+    var id: NEID; var name: String?; var publishTime: Double?; var size: Int?; var picUrl: String?; var type: String?
+    var artists: [NESong.Artist]?; var artist: NESong.Artist?
+    var artistName: String {
+        (artists ?? []).compactMap(\.name).filter { !$0.isEmpty }.joined(separator: " / ").nonempty ?? artist?.name ?? ""
+    }
+}
+private struct NEArtistSongsResponse: Decodable { var songs: [NESong]?; var more: Bool?; var total: Int? }

@@ -45,6 +45,12 @@ struct AppleMusicPlaybackSnapshot: Sendable {
     var hasCurrentEntry: Bool
 }
 
+/// Test adapters that never touch the catalog read no singers.
+extension AppleMusicAdapter {
+    func singers(_ query: String) async throws -> [SingerProfile] { [] }
+    func singerAlbums(_ id: String) async throws -> [SingerAlbum] { [] }
+    func singerTopSongs(_ id: String) async throws -> [Track] { [] }
+}
 /// The adapter is main-actor isolated so MusicKit player objects never cross
 /// executors. Tests substitute it without requesting access to a real account.
 @MainActor protocol AppleMusicAdapter: AnyObject {
@@ -54,6 +60,12 @@ struct AppleMusicPlaybackSnapshot: Sendable {
     func search(_ query: String) async throws -> [Track]
     /// One page of catalog songs, `offset` songs into the results.
     func search(_ query: String, offset: Int) async throws -> [Track]
+    /// Catalog singers whose name matches, best first.
+    func singers(_ query: String) async throws -> [SingerProfile]
+    /// A singer's albums and singles, as the catalog lists them.
+    func singerAlbums(_ id: String) async throws -> [SingerAlbum]
+    /// A singer's top songs; the catalog gives no full song list.
+    func singerTopSongs(_ id: String) async throws -> [Track]
     func librarySongs(validate: @MainActor () throws -> Void, progress: @MainActor (ImportProgress) -> Void) async throws -> [Track]
     func libraryPlaylists(validate: @MainActor () throws -> Void) async throws -> [AppleMusicLibraryPlaylist]
     func libraryTracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void,
@@ -237,6 +249,29 @@ final class AppleMusicService {
         guard generation == token else { throw CancellationError() }
         return tracks
     }
+    /// Catalog singers matching a name, for the search and singer pages.
+    func singers(_ query: String) async throws -> [SingerProfile] {
+        try await singerRead { try await self.adapter.singers(query) }
+    }
+    func singerAlbums(_ id: String) async throws -> [SingerAlbum] {
+        try await singerRead { try await self.adapter.singerAlbums(id) }
+    }
+    func singerTopSongs(_ id: String) async throws -> [Track] {
+        try await singerRead { try await self.adapter.singerTopSongs(id) }
+    }
+    private func singerRead<T>(_ read: () async throws -> T) async throws -> T {
+        try requireAccess()
+        let token = generation
+        let value: T
+        do { value = try await read() }
+        catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw AppleMusicErrorMessage.readable(error)
+        }
+        try Task.checkCancellation(); try requireAccess()
+        guard generation == token else { throw CancellationError() }
+        return value
+    }
     /// A later page of the same catalog search, for "More songs". The search
     /// above stays as it is for lyric matching.
     func searchPage(_ query: String, offset: Int) async throws -> [Track] {
@@ -383,6 +418,33 @@ final class AppleMusicService {
         var request = MusicCatalogSearchRequest(term: query, types: [Song.self]); request.limit = AppleMusicService.catalogSearchLimit
         let result = try await request.response()
         return result.songs.map { Self.catalogTrack($0) }
+    }
+    func singers(_ query: String) async throws -> [SingerProfile] {
+        var request = MusicCatalogSearchRequest(term: query, types: [Artist.self]); request.limit = 5
+        return try await request.response().artists.map {
+            SingerProfile(source: .appleMusic, remoteID: $0.id.rawValue, name: $0.name, pictureURL: $0.artwork?.url(width: 300, height: 300))
+        }
+    }
+    private func catalogArtist(_ id: String) async throws -> Artist? {
+        try await MusicCatalogResourceRequest<Artist>(matching: \.id, equalTo: MusicItemID(id)).response().items.first
+    }
+    func singerAlbums(_ id: String) async throws -> [SingerAlbum] {
+        guard let artist = try await catalogArtist(id) else { return [] }
+        var albums: [Album] = [], batch = try await artist.with([.albums]).albums, pages = 0
+        // At most four batches; a long discography is read when its page is opened.
+        while let current = batch, pages < 4 {
+            albums += current; pages += 1
+            batch = current.hasNextBatch ? try await current.nextBatch() : nil
+        }
+        return albums.map { album in
+            SingerAlbum(source: .appleMusic, remoteID: album.id.rawValue, name: album.title, artist: album.artistName,
+                        date: album.releaseDate.map(ReleaseDate.init(date:)), trackCount: album.trackCount,
+                        artworkURL: album.artwork?.url(width: 300, height: 300), kind: album.isSingle == true ? "Single" : "")
+        }
+    }
+    func singerTopSongs(_ id: String) async throws -> [Track] {
+        guard let artist = try await catalogArtist(id) else { return [] }
+        return (try await artist.with([.topSongs]).topSongs ?? []).map { Self.catalogTrack($0) }
     }
     func search(_ query: String, offset: Int) async throws -> [Track] {
         var request = MusicCatalogSearchRequest(term: query, types: [Song.self])
