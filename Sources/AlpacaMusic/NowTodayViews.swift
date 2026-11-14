@@ -279,13 +279,27 @@ private struct NowPicksRow: View {
     }
 
     private func cards(_ picks: BrowseRecommendations) -> some View {
-        ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: NowLayout.cardGap) {
+        let collections = Array(picks.collections.enumerated())
+        let far = collections.dropFirst(NowLayout.cardsLaidOutTogether)
+        return ScrollView(.horizontal) {
+            // The cards a window can show stand in a plain row. A lazy row works
+            // out its cards' places afresh whenever they change size, and while
+            // a row glides to another card count that is every frame: measured,
+            // such a frame took more than twice as long. Cards further along
+            // are made when the row is scrolled to them.
+            HStack(alignment: .top, spacing: NowLayout.cardGap) {
                 if let songs = picks.songList(for: source, title: NowBrowse.songsTitle(source)) {
                     NowDayCard(model: model, list: songs)
                 }
-                ForEach(Array(picks.collections.enumerated()), id: \.element.id) { index, collection in
+                ForEach(collections.prefix(NowLayout.cardsLaidOutTogether), id: \.element.id) { index, collection in
                     NowPosterCard(model: model, collection: collection, index: index)
+                }
+                if !far.isEmpty {
+                    LazyHStack(alignment: .top, spacing: NowLayout.cardGap) {
+                        ForEach(Array(far), id: \.element.id) { index, collection in
+                            NowPosterCard(model: model, collection: collection, index: index)
+                        }
+                    }
                 }
             }
             // Room for an open card's ring inside the scroll view.

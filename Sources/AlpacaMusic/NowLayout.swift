@@ -217,6 +217,8 @@ enum NowLayout {
     /// The part of the next card that shows at the end of a row.
     static let cardPeek: CGFloat = 0.4
     static let cardWidthRange: ClosedRange<CGFloat> = 180...280
+    /// Picks a row lays out together, more than the widest window shows at once; the rest are made when scrolled to.
+    static let cardsLaidOutTogether = 12
     static let connectHeight: CGFloat = 180
     static let nextStripHeight: CGFloat = 72
     static let nextItemWidth: CGFloat = 222
