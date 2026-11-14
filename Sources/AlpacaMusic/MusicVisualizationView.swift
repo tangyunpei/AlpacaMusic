@@ -8,6 +8,9 @@ struct MusicVisualizationView: View {
     let isPlaying: Bool
     let signal: @MainActor () -> AudioLevels
     var showsStatus = true
+    /// The small label a signal display shows while playback has no audio to
+    /// draw. Off where the surrounding surface says so itself.
+    var showsMissingAudioStatus = true
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var clock = VisualizationClock()
@@ -58,7 +61,7 @@ struct MusicVisualizationView: View {
                             }
                         }
                         .allowsHitTesting(false)
-                        if showsStatus || (isPlaying && !frame.audio.available) { statusLabel(audioAvailable: frame.audio.available) }
+                        if showsStatus || (showsMissingAudioStatus && isPlaying && !frame.audio.available) { statusLabel(audioAvailable: frame.audio.available) }
                     }
                 }
                 .accessibilityElement(children: .ignore)
@@ -69,7 +72,7 @@ struct MusicVisualizationView: View {
             case .harmonograph, .spectralHorizon:
                 ZStack {
                     composedStage
-                    if showsStatus || isPlaying { periodicStatus(whenAudioMissing: !showsStatus) }
+                    if showsStatus || (showsMissingAudioStatus && isPlaying) { periodicStatus(whenAudioMissing: !showsStatus) }
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(L10n.string("\(mode.title)，\(track?.title ?? "AlpacaMusic")"))

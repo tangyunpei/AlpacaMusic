@@ -149,6 +149,48 @@ struct NowMetrics: Equatable, Sendable {
     var expanded: CGFloat
 }
 
+/// What a section below the stage needs to place its heading and its row.
+/// A part that takes only this is left alone by changes it does not show,
+/// such as the stage growing with the window's height.
+struct NowRowMetrics: Equatable, Sendable {
+    var contentWidth: CGFloat
+    var gutter: CGFloat
+    var rowInset: CGFloat
+    var rowWidth: CGFloat
+    var headHeight: CGFloat
+}
+
+/// What the stage needs.
+struct NowStageMetrics: Equatable, Sendable {
+    var pageWidth: CGFloat
+    var contentWidth: CGFloat
+    var height: CGFloat
+    var gutter: CGFloat
+    var rowInset: CGFloat
+    var titleSize: CGFloat
+    var lyricSize: CGFloat
+    var lyricNextSize: CGFloat
+    var textHeight: CGFloat
+    var stacked: CGFloat
+    var visualFrame: CGRect
+    var action: CGFloat
+    var lyrics: CGFloat
+    var notice: CGFloat
+    var compactNext: CGFloat
+}
+
+extension NowMetrics {
+    var row: NowRowMetrics {
+        NowRowMetrics(contentWidth: contentWidth, gutter: gutter, rowInset: rowInset, rowWidth: rowWidth, headHeight: headHeight)
+    }
+    var stage: NowStageMetrics {
+        NowStageMetrics(pageWidth: pageWidth, contentWidth: contentWidth, height: stageHeight, gutter: gutter, rowInset: rowInset,
+                        titleSize: titleSize, lyricSize: lyricSize, lyricNextSize: lyricNextSize, textHeight: textHeight,
+                        stacked: stacked, visualFrame: visualFrame, action: action, lyrics: lyrics, notice: notice, compactNext: compactNext)
+    }
+    var cardSize: CGSize { CGSize(width: cardWidth, height: cardHeight) }
+}
+
 /// How much of each chart grid shows while the page changes between them.
 struct NowChartColumns: Equatable, Sendable {
     var two: CGFloat
@@ -217,44 +259,56 @@ enum NowLayout {
     // MARK: Sizes
 
     static func metrics(width: CGFloat, height: CGFloat, blend: NowLayoutBlend) -> NowMetrics {
-        let panel = unit(blend.panel), dock = unit(blend.dock)
-        let pageWidth = max(320, width - panelWidth * panel * dock)
+        let panel = share(blend.panel), dock = share(blend.dock)
+        let pageWidth = pixel(max(320, width - panelWidth * panel * dock))
         let contentWidth = pageWidth - 2 * sidePadding
-        let gutter = unit(blend.gutter)
+        let gutter = share(blend.gutter)
         // The inset may overshoot with the spring; sizes that cannot go negative use the bounded amount.
-        let rowInset = gutterSpan * blend.gutter
+        let rowInset = pixel(gutterSpan * blend.gutter)
         let rowWidth = max(120, contentWidth - rowInset)
         let cards = max(1, blend.cards)
-        let cardWidth = clamp((rowWidth - cardGap * cards) / (cards + cardPeek), cardWidthRange.lowerBound, cardWidthRange.upperBound)
-        let cardHeight = cardWidth * 4 / 3
-        let headHeight = Self.headHeight * (1 - gutter)
-        let connect = unit(blend.connect)
-        let todayRowHeight = cardHeight + (connectHeight - cardHeight) * connect
+        // Whole points, as on the canvas. A card then keeps its size over several
+        // steps of a resize, and a step that leaves it alone costs it nothing.
+        let cardWidth = clamp(((rowWidth - cardGap * cards) / (cards + cardPeek)).rounded(), cardWidthRange.lowerBound, cardWidthRange.upperBound)
+        let cardHeight = (cardWidth * 4 / 3).rounded()
+        let headHeight = pixel(Self.headHeight * (1 - gutter))
+        let connect = share(blend.connect)
+        let todayRowHeight = pixel(cardHeight + (connectHeight - cardHeight) * connect)
         let todayHeight = todayPadding.top + headHeight + todayRowHeight + todayPadding.bottom
-        let nextStrip = unit(blend.nextStrip)
-        let nextStripHeight = Self.nextStripHeight * nextStrip
-        let idle = unit(blend.idle)
+        let nextStrip = share(blend.nextStrip)
+        let nextStripHeight = pixel(Self.nextStripHeight * nextStrip)
+        let idle = share(blend.idle)
         let ceiling = max(stageFloor, min(stageCeiling, height * stageShare))
         let playing = clamp(height - nextStripHeight - todayHeight, stageFloor, ceiling)
-        let stageHeight = playing + (stageFloor - playing) * idle
-        let titleSize = clamp(stageHeight * 0.125, 34, 76)
-        let lyricSize = clamp(stageHeight * 0.052, 16, 30)
-        let lyricNextSize = max(13, lyricSize * 0.72)
-        let action = unit(blend.action), lyrics = unit(blend.lyrics)
-        let textHeight = 73 + titleSize * 1.08 + action * 55 + lyrics * (20 + lyricSize * 1.3 + lyricNextSize * 1.3)
-        let stacked = unit(blend.stacked)
-        let visualLeft = pageWidth * 0.38 * (1 - stacked)
-        let visualFrame = CGRect(x: visualLeft, y: 0, width: pageWidth - visualLeft, height: max(1, stageHeight - stacked * textHeight))
+        let stageHeight = pixel(playing + (stageFloor - playing) * idle)
+        // Type in whole points, as on the canvas: a size in between is set and drawn afresh at every step.
+        let titleSize = clamp((stageHeight * 0.125).rounded(), 34, 76)
+        let lyricSize = clamp((stageHeight * 0.052).rounded(), 16, 30)
+        let lyricNextSize = max(13, (lyricSize * 0.72).rounded())
+        let action = share(blend.action), lyrics = share(blend.lyrics)
+        let textHeight = pixel(73 + titleSize * 1.08 + action * 55 + lyrics * (20 + lyricSize * 1.3 + lyricNextSize * 1.3))
+        let stacked = share(blend.stacked)
+        let visualLeft = pixel(pageWidth * 0.38 * (1 - stacked))
+        let visualFrame = CGRect(x: visualLeft, y: 0, width: pageWidth - visualLeft, height: pixel(max(1, stageHeight - stacked * textHeight)))
         return NowMetrics(width: width, height: height, pageWidth: pageWidth, contentWidth: contentWidth, gutter: gutter,
                           rowInset: rowInset, rowWidth: rowWidth, cardWidth: cardWidth, cardHeight: cardHeight,
                           headHeight: headHeight, todayRowHeight: todayRowHeight, todayHeight: todayHeight,
-                          nextStrip: nextStrip, nextStripHeight: nextStripHeight, compactNext: unit(blend.compactNext),
+                          nextStrip: nextStrip, nextStripHeight: nextStripHeight, compactNext: share(blend.compactNext),
                           idle: idle, stageHeight: stageHeight, titleSize: titleSize, lyricSize: lyricSize,
                           lyricNextSize: lyricNextSize, textHeight: textHeight, stacked: stacked, visualFrame: visualFrame,
-                          action: action, lyrics: lyrics, notice: unit(blend.notice), connect: connect, panel: panel, dock: dock,
-                          columns: NowChartColumns(two: blend.columns2, three: blend.columns3, five: blend.columns5),
-                          expanded: unit(blend.expanded))
+                          action: action, lyrics: lyrics, notice: share(blend.notice), connect: connect, panel: panel, dock: dock,
+                          columns: NowChartColumns(two: fine(blend.columns2), three: fine(blend.columns3), five: fine(blend.columns5)),
+                          expanded: share(blend.expanded))
     }
+
+    /// A length on the half-point grid: a whole pixel on a Retina display.
+    static func pixel(_ value: CGFloat) -> CGFloat { (value * 2).rounded() / 2 }
+    /// An amount in steps too fine to see. The last stretch of a glide, where
+    /// nothing visibly moves any more, then gives the same sizes frame after
+    /// frame, and a frame with the same sizes redraws nothing.
+    static func fine(_ value: CGFloat) -> CGFloat { (value * 1024).rounded() / 1024 }
+    /// A fine amount between nothing and all.
+    static func share(_ value: CGFloat) -> CGFloat { fine(unit(value)) }
 
     /// The sizes the page rests at for a window and state.
     static func settledMetrics(for input: NowLayoutInput) -> NowMetrics {
@@ -276,6 +330,7 @@ enum NowLayout {
         max(1, (rowWidth - chartGap * CGFloat(columns - 1)) / CGFloat(columns))
     }
 
+
     /// A chart card's place in a grid of `columns`, rows running on below the
     /// ones shown, so a card that is about to join glides up from there.
     static func chartFrame(index: Int, columns: Int, rowWidth: CGFloat) -> CGRect {
@@ -291,13 +346,19 @@ enum NowLayout {
     }
 
     static func chartFrame(index: Int, metrics: NowMetrics) -> CGRect {
-        blended(metrics.columns) { chartFrame(index: index, columns: $0, rowWidth: metrics.rowWidth) }
+        chartFrame(index: index, columns: metrics.columns, rowWidth: metrics.rowWidth)
+    }
+    static func chartFrame(index: Int, columns: NowChartColumns, rowWidth: CGFloat) -> CGRect {
+        blended(columns) { chartFrame(index: index, columns: $0, rowWidth: rowWidth) }
     }
 
     static func chartGridHeight(count: Int, metrics: NowMetrics) -> CGFloat {
+        chartGridHeight(count: count, columns: metrics.columns, expanded: metrics.expanded)
+    }
+    static func chartGridHeight(count: Int, columns: NowChartColumns, expanded: CGFloat) -> CGFloat {
         guard count > 0 else { return 0 }
-        let height = zip(chartColumnOptions, metrics.columns.weights).reduce(CGFloat(0)) { total, pair in
-            let rows = chartRowCount(count: count, columns: pair.0, expanded: metrics.expanded)
+        let height = zip(chartColumnOptions, columns.weights).reduce(CGFloat(0)) { total, pair in
+            let rows = chartRowCount(count: count, columns: pair.0, expanded: expanded)
             return total + pair.1 * (rows * chartCardHeight + max(0, rows - 1) * chartGap)
         }
         return max(0, height)
@@ -306,8 +367,11 @@ enum NowLayout {
     /// How visible chart `index` is: fully in the rows a grid shows, and
     /// fading in below them as the list opens out.
     static func chartOpacity(index: Int, metrics: NowMetrics) -> CGFloat {
-        let value = zip(chartColumnOptions, metrics.columns.weights).reduce(CGFloat(0)) { total, pair in
-            total + pair.1 * (index < pair.0 * chartRows ? 1 : metrics.expanded)
+        chartOpacity(index: index, columns: metrics.columns, expanded: metrics.expanded)
+    }
+    static func chartOpacity(index: Int, columns: NowChartColumns, expanded: CGFloat) -> CGFloat {
+        let value = zip(chartColumnOptions, columns.weights).reduce(CGFloat(0)) { total, pair in
+            total + pair.1 * (index < pair.0 * chartRows ? 1 : expanded)
         }
         return unit(value)
     }

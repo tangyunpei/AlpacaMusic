@@ -16,36 +16,49 @@ struct ContentView: View {
                 // The room hides the sidebar; its toggle would float alone in the top strip.
                 .toolbar(removing: model.immersive ? .sidebarToggle : nil)
         } detail: {
-            VStack(spacing: 0) {
-                AppHeader(model: model)
-                HStack(spacing: 0) {
-                    ZStack {
-                        ScrollView {
-                            Group {
-                                switch model.destination {
-                                case .home: HomeView(model: model)
-                                case .sources: SourcesView(model: model)
-                                case .albums: AlbumsView(model: model)
-                                case .album: AlbumDetailView(model: model)
-                                default: LibraryView(model: model)
-                                }
-                            }.padding(.horizontal, 34).padding(.top, 30).padding(.bottom, 24)
-                        }
-                        .id(model.destination)
+            ZStack {
+                if model.destination == .home {
+                    // The Now page has no header: its stage runs up under the
+                    // window's top strip and carries Search and Import, and
+                    // the queue opens in the page's own side panel.
+                    NowPageView(model: model)
                         .transition(.opacity.combined(with: .offset(y: 7)))
+                } else {
+                    VStack(spacing: 0) {
+                        AppHeader(model: model)
+                        HStack(spacing: 0) {
+                            ZStack {
+                                ScrollView {
+                                    Group {
+                                        switch model.destination {
+                                        case .sources: SourcesView(model: model)
+                                        case .albums: AlbumsView(model: model)
+                                        case .album: AlbumDetailView(model: model)
+                                        default: LibraryView(model: model)
+                                        }
+                                    }.padding(.horizontal, 34).padding(.top, 30).padding(.bottom, 24)
+                                }
+                                .id(model.destination)
+                                .transition(.opacity.combined(with: .offset(y: 7)))
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+                            .animation(ExperienceMotion.navigation, value: model.destination)
+                            if model.queueOpen && !model.immersive { QueueView(model: model).frame(width: 276).transition(.move(edge: .trailing).combined(with: .opacity)) }
+                        }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-                    .animation(ExperienceMotion.navigation, value: model.destination)
-                    if model.queueOpen && !model.immersive { QueueView(model: model).frame(width: 276).transition(.move(edge: .trailing).combined(with: .opacity)) }
+                    .transition(.opacity.combined(with: .offset(y: 7)))
                 }
-            }.background(palette.background)
+            }
+            .animation(ExperienceMotion.navigation, value: model.destination == .home)
+            .background(palette.background)
                 // Only the covered detail content leaves hit testing and the
                 // accessibility tree; the overlay is added outside this scope.
                 .accessibilityHidden(model.immersive)
                 .allowsHitTesting(!model.immersive)
                 .overlay { if model.immersive { ImmersiveView(model: model).appTheme(.listeningRoom).transition(.opacity) } }
-                // In the room the strip above the content shows the room itself.
-                .toolbarBackgroundVisibility(model.immersive ? .hidden : .automatic, for: .windowToolbar)
+                // In the room the strip above the content shows the room itself,
+                // and on the Now page it shows the stage.
+                .toolbarBackgroundVisibility(model.immersive || model.destination == .home ? .hidden : .automatic, for: .windowToolbar)
         }
         .navigationSplitViewStyle(.balanced)
         .tint(palette.accent)
@@ -187,6 +200,7 @@ struct ContentView: View {
         .onExitCommand {
             if model.queueOpen { model.queueOpen = false }
             else if model.immersive { model.immersive = false }
+            else if model.destination == .home, model.browse.opened != nil { model.browse.close() }
             else { model.navigate(model.destination) }
         }
         .transaction { if reduceMotion || model.visual.reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
@@ -272,121 +286,10 @@ struct AppHeader: View {
         HStack(spacing: 18) {
             Text(model.pageTitle).foregroundStyle(palette.secondary).lineLimit(1).font(.system(size: 10))
             Spacer(minLength: 10)
-            HStack(spacing: 9) {
-                Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(palette.secondary)
-                TextField(L10n.string("搜索歌曲、艺术家或专辑"), text: $model.query).textFieldStyle(.plain).font(.system(size: 11)).focused($searchFocused).onSubmit { model.search() }.accessibilityIdentifier("music-search")
-                if !model.query.isEmpty { Button { model.navigate(model.destination) } label: { Image(systemName: "xmark").font(.system(size: 9)) }.buttonStyle(.plain).help(L10n.string("清除搜索")) }
-                else { Text("⌘ K").font(.system(size: 9)).foregroundStyle(palette.faint) }
-            }.padding(.horizontal, 11).frame(width: 270, height: 33).background(palette.panel, in: .rect(cornerRadius: 7)).overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(palette.line))
+            MusicSearchField(model: model, focused: $searchFocused, fill: palette.panel, line: palette.line, hint: palette.faint)
             Button { searchFocused = true } label: { EmptyView() }.keyboardShortcut("k", modifiers: .command).hidden().frame(width: 0)
-            Menu { Group { Button(L10n.string("选择音频文件…")) { model.beginImport(folder: false) }; Button(L10n.string("导入文件夹…")) { model.beginImport(folder: true) } }.disabled(model.library.busy); Divider(); Button(L10n.string("添加音频链接…")) { model.sheet = .url } } label: { Label(L10n.string("导入"), systemImage: "plus").font(.system(size: 11)) }.menuStyle(.borderlessButton).fixedSize().foregroundStyle(palette.accent)
+            ImportMenu(model: model)
         }.padding(.horizontal, 34).frame(height: 57).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
-    }
-}
-
-struct HomeView: View {
-    @Environment(\.appPalette) private var palette
-    @Bindable var model: AppModel
-    var body: some View {
-        VStack(alignment: .leading, spacing: 25) {
-            HeroView(model: model)
-            NowBrowseSection(model: model)
-            if model.library.tracks.contains(where: { $0.source == .demo }) {
-                VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Text(L10n.string("原创试听")).font(.system(size: 16, weight: .medium))
-                    Spacer(); Button { model.navigate(.library) } label: { HStack(spacing: 5) { Text(L10n.string("全部音乐")); Image(systemName: "chevron.right") }.font(.system(size: 10)).foregroundStyle(palette.secondary) }.buttonStyle(.plain)
-                }
-                HStack(spacing: 20) {
-                    ForEach(Array(model.library.tracks.filter { $0.source == .demo }.prefix(3).enumerated()), id: \.element.id) { index, track in SessionCard(track: track, index: index, model: model) }
-                }
-                }
-            } else if !model.library.ready {
-                ProgressView(L10n.string("正在加载音乐…")).controlSize(.small).frame(maxWidth: .infinity).padding(30)
-            } else if model.library.tracks.isEmpty {
-                EmptyState(symbol: "music.note", title: L10n.string("音乐库为空")) { model.beginImport(folder: false) }
-                    .disabled(model.library.busy)
-            }
-            if model.library.tracks.contains(where: { $0.source != .demo }) {
-                VStack(alignment: .leading, spacing: 12) { Text(L10n.string("最近添加")).font(.system(size: 15, weight: .medium)); TrackList(model: model, tracks: Array(model.library.tracks.filter { $0.source != .demo }.suffix(3).reversed()), compact: true) }
-            }
-        }.foregroundStyle(palette.text)
-    }
-}
-
-struct HeroView: View {
-    @Environment(\.appPalette) private var palette
-    @Bindable var model: AppModel
-    var body: some View {
-        GeometryReader { geometry in
-            HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(model.player.current == nil ? L10n.string("播放预览") : L10n.string("当前歌曲")).font(.system(size: 11)).foregroundStyle(palette.secondary)
-                    Text(model.activeTrack?.title ?? L10n.string("未选择歌曲"))
-                        .font(.system(size: geometry.size.width < 780 ? 32 : 38, weight: .light))
-                        .lineLimit(3).foregroundStyle(palette.text).padding(.top, 19)
-                    if let track = model.activeTrack {
-                        Text(track.artist).font(.system(size: 12)).foregroundStyle(palette.secondary).lineLimit(1).padding(.top, 12)
-                    }
-                    HStack(spacing: 20) {
-                        Button { if let track = model.activeTrack { model.play(track, context: model.library.tracks) } } label: { Label(L10n.string("播放"), systemImage: "play.fill") }.buttonStyle(PrimaryButtonStyle()).disabled(model.activeTrack == nil).accessibilityIdentifier("start-listening")
-                        Button { withAnimation(.smooth(duration: 0.25)) { model.immersive = true } } label: { Label(L10n.string("沉浸模式"), systemImage: "arrow.up.left.and.arrow.down.right").font(.system(size: 10)) }.buttonStyle(.plain).foregroundStyle(palette.secondary)
-                    }.padding(.top, 24)
-                    Spacer(minLength: 12)
-                    Label(model.visualMode.title, systemImage: model.visualMode.symbol).font(.system(size: 10)).foregroundStyle(palette.secondary)
-                }.padding(.leading, 33).padding(.vertical, 29).frame(width: geometry.size.width * 0.47, alignment: .leading)
-                HeroVisualStage(model: model).appTheme(.listeningRoom)
-            }
-        }.frame(height: 354).background(palette.panel)
-            .clipShape(.rect(cornerRadius: 13)).overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(palette.line))
-    }
-}
-
-/// The home preview has its own dark surface; its controls inherit the room
-/// palette while the current-track summary remains part of the light library.
-private struct HeroVisualStage: View {
-    @Environment(\.appPalette) private var palette
-    @Bindable var model: AppModel
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            if !model.immersive { ListeningScene(model: model) }
-            if model.visualMode == .pointCloud {
-                Text(L10n.string("拖动旋转 · 双击复位")).font(.system(size: 9)).foregroundStyle(palette.secondary)
-                    .padding(.bottom, 21).allowsHitTesting(false)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(palette.background)
-        .overlay(alignment: .topTrailing) {
-            // The Bauhaus composition is printed on light paper; give the
-            // room-coloured control a dark backing so it stays visible.
-            ToolButton(symbol: "slider.horizontal.3", label: L10n.string("调整视觉效果")) { model.sheet = .visual }
-                .background(model.visualMode == .bauhaus ? palette.background.opacity(0.78) : Color.clear, in: .rect(cornerRadius: 7))
-                .padding(15)
-        }
-    }
-}
-
-struct SessionCard: View {
-    @Environment(\.appPalette) private var palette
-    var track: Track
-    var index: Int
-    @Bindable var model: AppModel
-    @State private var hovered = false
-    var body: some View {
-        Button { model.play(track, context: model.library.tracks.filter { $0.source == .demo }) } label: {
-            VStack(alignment: .leading, spacing: 12) {
-                GeometryReader { geometry in
-                    ArtworkView(track: track, highResolution: true).frame(width: geometry.size.width, height: geometry.size.height).clipped()
-                        .overlay(alignment: .topLeading) { Text("0\(index + 1)").font(.system(size: 8, design: .monospaced)).tracking(1.5).foregroundStyle(.white.opacity(0.7)).padding(13) }
-                        .overlay(alignment: .bottomTrailing) { Image(systemName: model.player.current?.id == track.id && model.player.status == .playing ? "waveform" : "play.fill").font(.system(size: 14)).frame(width: 33, height: 33).foregroundStyle(palette.onPrimary).background(palette.primary, in: .circle).padding(12).opacity(hovered || model.player.current?.id == track.id ? 1 : 0) }
-                }.frame(height: model.queueOpen ? 115 : 147).clipShape(.rect(cornerRadius: 8))
-                HStack {
-                    Text(track.title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
-                    Spacer(minLength: 5); Text(formattedTime(track.duration)).font(.system(size: 9, design: .monospaced)).foregroundStyle(palette.faint)
-                }
-            }.frame(maxWidth: .infinity).contentShape(.rect)
-        }.buttonStyle(.plain).onHover { hovered = $0 }.animation(.smooth(duration: 0.2), value: hovered).accessibilityLabel(L10n.string("播放 \(track.title)"))
     }
 }
 
@@ -622,13 +525,16 @@ struct KineticBackdrop: ViewModifier {
 struct ListeningScene: View {
     @Environment(\.appPalette) private var palette
     @Bindable var model: AppModel
+    /// Off where the surface around the scene says it itself, as the Now stage does.
+    var showsSignalNotice = true
     @Environment(\.accessibilityReduceMotion) private var reduced
     var body: some View {
         ZStack {
             MusicVisualizationView(track: model.activeTrack, mode: model.visualMode, settings: model.visual,
-                                   isPlaying: model.player.status == .playing, signal: { model.player.readLevels() }, showsStatus: false)
+                                   isPlaying: model.player.status == .playing, signal: { model.player.readLevels() }, showsStatus: false,
+                                   showsMissingAudioStatus: showsSignalNotice)
                 .id(model.visualMode).transition(.opacity)
-            if model.activeTrack?.source.supportsAudioAnalysis == false, model.visualMode.isSignalDisplay,
+            if showsSignalNotice, model.activeTrack?.source.supportsAudioAnalysis == false, model.visualMode.isSignalDisplay,
                !model.immersive || !model.lyricsVisible || model.lyricPresentation == .scroll {
                 VStack(spacing: 10) {
                     Text(L10n.string("\(model.activeTrack?.source.title ?? L10n.string("当前音源")) 暂无实时波形与频谱"))

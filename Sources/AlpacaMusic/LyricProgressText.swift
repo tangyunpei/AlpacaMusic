@@ -11,6 +11,10 @@ struct LyricProgressText: View {
     var appearance: Appearance = .highlight
     var reduceMotion = false
     var timingContext: LyricTimingContext = .init()
+    /// How strong the ink of a part not yet sung is.
+    var unsungOpacity = 0.25
+    /// Off, the whole line keeps the unsung ink, for a surface showing a paused song.
+    var showsProgress = true
 
     var body: some View {
         Text(attributedText)
@@ -23,7 +27,7 @@ struct LyricProgressText: View {
               let units = timeline.fragments([text]).first,
               units.count == text.count else {
             var result = AttributedString(text)
-            result.foregroundColor = palette.text
+            result.foregroundColor = showsProgress ? palette.text : palette.text.opacity(unsungOpacity)
             return result
         }
         var result = AttributedString()
@@ -34,7 +38,7 @@ struct LyricProgressText: View {
             case .highlight:
                 // Unsung words remain available for reading; only the sung
                 // word (or CJK character) lights up, following playback time.
-                glyph.foregroundColor = palette.text.opacity(0.25 + reveal * 0.75)
+                glyph.foregroundColor = palette.text.opacity(unsungOpacity + (showsProgress ? reveal : 0) * (1 - unsungOpacity))
             case .reveal:
                 glyph.foregroundColor = palette.text.opacity(reveal)
             }

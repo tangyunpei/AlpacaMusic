@@ -4,8 +4,8 @@ import Testing
 
 /// One frame of the Now page design canvas and the sizes its layout rules
 /// give. The numbers come from evaluating the canvas's own rules for the
-/// frame, not from this app's layout code. The canvas rounds to whole points;
-/// the app keeps fractions so sizes move without steps, hence the tolerances.
+/// frame, not from this app's layout code. Cards and type sizes are whole
+/// points in both; the app also keeps the stage's height on whole pixels.
 private struct CanvasFrame: Sendable, CustomTestStringConvertible {
     let name: String
     let w: CGFloat, h: CGFloat
@@ -83,13 +83,13 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
         #expect(metrics.pageWidth == frame.pageW)
         #expect(metrics.contentWidth == frame.contentW)
         #expect(metrics.rowWidth == frame.rowW)
-        #expect(near(metrics.cardWidth, frame.cardW, within: 0.5))
-        #expect(near(metrics.cardHeight, frame.cardH, within: 1))
-        #expect(near(metrics.todayHeight, frame.firstBandH, within: 1))
-        #expect(near(metrics.stageHeight, frame.stageH, within: 1))
-        #expect(near(metrics.titleSize, frame.titleSize, within: 0.5))
-        #expect(near(metrics.lyricSize, frame.lyricSize, within: 0.5))
-        #expect(near(metrics.lyricNextSize, frame.lyricNextSize, within: 0.5))
+        #expect(metrics.cardWidth == frame.cardW)
+        #expect(metrics.cardHeight == frame.cardH)
+        #expect(metrics.todayHeight == frame.firstBandH)
+        #expect(near(metrics.stageHeight, frame.stageH, within: 0.5))
+        #expect(metrics.titleSize == frame.titleSize)
+        #expect(metrics.lyricSize == frame.lyricSize)
+        #expect(metrics.lyricNextSize == frame.lyricNextSize)
         #expect(metrics.nextStripHeight == (frame.nextOn ? 72 : 0))
         // The canvas draws at most the eight songs of its sample queue.
         #expect(min(8, NowLayout.nextItemCount(rowWidth: metrics.rowWidth)) == frame.nextItems)
@@ -132,11 +132,14 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
                 let choice = NowLayout.choice(for: input), metrics = NowLayout.settledMetrics(for: input)
                 #expect(choice.cardsPerRow >= 2)
                 #expect(NowLayout.cardWidthRange.contains(metrics.cardWidth))
-                // Unless a limit on the card's width applies, the row is filled exactly.
-                guard metrics.cardWidth > 180.01, metrics.cardWidth < 279.99 else { continue }
-                let filled = CGFloat(choice.cardsPerRow) * (metrics.cardWidth + 18) + 0.4 * metrics.cardWidth
-                #expect(near(filled, metrics.rowWidth, within: 0.01), "window \(windowWidth)×\(windowHeight)")
-                #expect(near(metrics.cardHeight, metrics.cardWidth * 4 / 3, within: 0.001))
+                #expect(metrics.cardWidth == metrics.cardWidth.rounded() && metrics.cardHeight == metrics.cardHeight.rounded())
+                #expect(near(metrics.cardHeight, metrics.cardWidth * 4 / 3, within: 0.5))
+                // Unless a limit on the card's width applies, the row is filled to within the rounding of a card to whole points.
+                guard metrics.cardWidth > 180, metrics.cardWidth < 280 else { continue }
+                let cards = CGFloat(choice.cardsPerRow)
+                let filled = cards * (metrics.cardWidth + 18) + 0.4 * metrics.cardWidth
+                let rounding = 0.5 * (cards + 0.4) + 0.001
+                #expect(near(filled, metrics.rowWidth, within: rounding), "window \(windowWidth)×\(windowHeight)")
             }
         }
     }
@@ -160,21 +163,22 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
         let metrics = NowLayout.settledMetrics(for: input)
         // Not at a limit here, so stage, Next strip and Today fill the page exactly.
         #expect(metrics.stageHeight > 260 && metrics.stageHeight < 0.55 * 840)
-        #expect(near(metrics.stageHeight + metrics.nextStripHeight + metrics.todayHeight, input.height, within: 0.001))
+        #expect(metrics.stageHeight + metrics.nextStripHeight + metrics.todayHeight == input.height)
     }
 
     @Test func theStageNeverGoesBelow260NorAbove720Or55Percent() {
         // The smallest window leaves less than 260.
         #expect(NowLayout.settledMetrics(for: page(1040, 720)).stageHeight == 260)
         // 55% of the available height is the limit in the default window with a short first band.
-        #expect(near(NowLayout.settledMetrics(for: page(1440, 940, connect: true)).stageHeight, 0.55 * 840, within: 0.001))
+        #expect(near(NowLayout.settledMetrics(for: page(1440, 940, connect: true)).stageHeight, 0.55 * 840, within: 0.25))
         // 720 is the limit on tall screens.
         #expect(NowLayout.settledMetrics(for: page(1080, 1920)).stageHeight == 720)
         #expect(NowLayout.settledMetrics(for: page(2560, 1440)).stageHeight == 720)
         for windowWidth in stride(from: CGFloat(1040), through: 3000, by: 53) {
             for windowHeight in stride(from: CGFloat(720), through: 2200, by: 37) {
                 let height = NowLayout.settledMetrics(for: page(windowWidth, windowHeight)).stageHeight
-                #expect(height >= 260 && height <= min(720, max(260, 0.55 * (windowHeight - 100))) + 0.001)
+                // To the nearest pixel: a quarter point at most past the limit.
+                #expect(height >= 260 && height <= min(720, max(260, 0.55 * (windowHeight - 100))) + 0.25)
             }
         }
     }
@@ -199,10 +203,10 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
         let portrait = NowLayout.settledMetrics(for: page(1080, 1920))
         #expect(portrait.stacked == 1)
         #expect(portrait.visualFrame.minX == 0 && portrait.visualFrame.width == portrait.pageWidth)
-        #expect(near(portrait.visualFrame.maxY, portrait.stageHeight - portrait.textHeight, within: 0.001))
+        #expect(near(portrait.visualFrame.maxY, portrait.stageHeight - portrait.textHeight, within: 0.25))
         let landscape = NowLayout.settledMetrics(for: page(1440, 940))
         #expect(landscape.stacked == 0)
-        #expect(near(landscape.visualFrame.minX, landscape.pageWidth * 0.38, within: 0.001))
+        #expect(near(landscape.visualFrame.minX, landscape.pageWidth * 0.38, within: 0.25))
         #expect(landscape.visualFrame.maxX == landscape.pageWidth && landscape.visualFrame.height == landscape.stageHeight)
     }
 
@@ -256,8 +260,9 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
         var previous = NowLayout.metrics(width: 900, height: 840, blend: blend)
         for width in stride(from: CGFloat(901), through: 2400, by: 1) {
             let metrics = NowLayout.metrics(width: width, height: 840, blend: blend)
+            // A card changes by a whole point at most, and its height by the two that go with it.
             #expect(abs(metrics.cardWidth - previous.cardWidth) <= 1)
-            #expect(abs(metrics.stageHeight - previous.stageHeight) <= 1.5)
+            #expect(abs(metrics.stageHeight - previous.stageHeight) <= 2)
             #expect(abs(metrics.rowWidth - previous.rowWidth) <= 1)
             #expect(abs(metrics.visualFrame.minX - previous.visualFrame.minX) <= 1)
             previous = metrics
@@ -266,7 +271,9 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
         for height in stride(from: CGFloat(561), through: 2000, by: 1) {
             let metrics = NowLayout.metrics(width: 1220, height: height, blend: blend)
             #expect(abs(metrics.stageHeight - previous.stageHeight) <= 1)
-            #expect(abs(metrics.titleSize - previous.titleSize) <= 0.13)
+            // Type grows a whole point at a time, as the canvas sets it.
+            #expect(abs(metrics.titleSize - previous.titleSize) <= 1)
+            #expect(metrics.titleSize == metrics.titleSize.rounded() && metrics.lyricSize == metrics.lyricSize.rounded())
             #expect(metrics.cardWidth == previous.cardWidth)
             previous = metrics
         }
@@ -296,7 +303,7 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
                 let metrics = NowLayout.metrics(width: to.width, height: to.height, blend: start + delta)
                 #expect(abs(metrics.cardWidth - previous.cardWidth) <= 2)
                 #expect(abs(metrics.stageHeight - previous.stageHeight) <= 4)
-                #expect(abs(metrics.pageWidth - previous.pageWidth) <= 340 / CGFloat(steps) + 0.001)
+                #expect(abs(metrics.pageWidth - previous.pageWidth) <= 340 / CGFloat(steps) + 0.5)
                 travelled.card += abs(metrics.cardWidth - previous.cardWidth)
                 travelled.stage += abs(metrics.stageHeight - previous.stageHeight)
                 travelled.inset += abs(metrics.rowInset - previous.rowInset)
@@ -307,6 +314,29 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
             // No detours on the way: the row's inset and the page's width go straight there.
             #expect(near(travelled.inset, abs(last.rowInset - first.rowInset), within: 0.01))
             #expect(near(travelled.page, abs(last.pageWidth - first.pageWidth), within: 0.01))
+        }
+    }
+
+    /// Lengths stand on whole pixels and amounts move in fine steps, so the
+    /// last stretch of a glide, where nothing visibly moves, gives the same
+    /// sizes frame after frame and costs the page nothing.
+    @Test func theEndOfAGlideStandsStill() {
+        let from = NowLayout.choice(for: page(1440, 940)).blend, to = NowLayout.choice(for: page(1440, 940, panel: true)).blend
+        let rest = NowLayout.metrics(width: 1220, height: 840, blend: to)
+        for remaining in [0.0004, 0.0002, 0.00005] {
+            var travelled = to - from
+            travelled.scale(by: 1 - remaining)
+            #expect(NowLayout.metrics(width: 1220, height: 840, blend: from + travelled) == rest)
+        }
+        // On the way, every length is on the half-point grid.
+        for step in 0...200 {
+            var travelled = to - from
+            travelled.scale(by: Double(step) / 200)
+            let metrics = NowLayout.metrics(width: 1220, height: 840, blend: from + travelled)
+            for length in [metrics.pageWidth, metrics.rowInset, metrics.stageHeight, metrics.headHeight, metrics.nextStripHeight,
+                           metrics.textHeight, metrics.visualFrame.minX, metrics.visualFrame.height] {
+                #expect(length * 2 == (length * 2).rounded())
+            }
         }
     }
 
@@ -326,11 +356,13 @@ private func page(_ windowWidth: CGFloat, _ windowHeight: CGFloat, panel: Bool =
                 blend.columns2 = 1 - amount; blend.columns3 = amount
                 let metrics = NowLayout.metrics(width: 820, height: 620, blend: blend)
                 let frame = NowLayout.chartFrame(index: index, metrics: metrics)
-                #expect(near(frame.minX, from.minX + (to.minX - from.minX) * amount, within: 0.001))
-                #expect(near(frame.minY, from.minY + (to.minY - from.minY) * amount, within: 0.001))
-                #expect(near(frame.width, from.width + (to.width - from.width) * amount, within: 0.001))
+                // Amounts move in steps of a 1024th, too fine to see.
+                func slack(_ from: CGFloat, _ to: CGFloat) -> CGFloat { abs(to - from) / 1024 + 0.001 }
+                #expect(near(frame.minX, from.minX + (to.minX - from.minX) * amount, within: slack(from.minX, to.minX)))
+                #expect(near(frame.minY, from.minY + (to.minY - from.minY) * amount, within: slack(from.minY, to.minY)))
+                #expect(near(frame.width, from.width + (to.width - from.width) * amount, within: slack(from.width, to.width)))
                 // The first four are in both grids; the fifth and sixth join the three-column one.
-                #expect(near(NowLayout.chartOpacity(index: index, metrics: metrics), index < 4 ? 1 : amount, within: 0.001))
+                #expect(near(NowLayout.chartOpacity(index: index, metrics: metrics), index < 4 ? 1 : amount, within: 0.002))
             }
         }
     }

@@ -224,7 +224,11 @@ enum BrowseAvailability: Equatable, Sendable {
             } apply: { store, result in
                 let value = try? result.get(), date = store.now()
                 store.entries[source]?.picks.apply(result, at: date, hint: value?.refreshesAt)
-                if let value { store.adopt(value.collections, source: source) }
+                if let value {
+                    // An open list of the daily songs follows the new songs, keeping its title.
+                    let songs = store.opened.flatMap { $0.isSongList && $0.source == source ? value.songList(for: source, title: $0.title) : nil }
+                    store.adopt(value.collections + [songs].compactMap { $0 }, source: source)
+                }
                 if let partial = value?.partialError {
                     // Part of the picks is missing: say so, and treat the copy
                     // as stale so a visit after the retry delay asks again.
