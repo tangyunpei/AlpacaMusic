@@ -12,9 +12,8 @@ import UniformTypeIdentifiers
 /// Deterministic original text and labelled synthetic inputs; never opens a
 /// library, account, window or audio device. Exported movies are intentionally silent.
 enum TemporalDesignFixture {
-    static let particleModes: [VisualizationMode] = [.spectrumRing, .ribbons, .starfield]
     static let signalModes: [VisualizationMode] = [.waveform, .spectrumBars]
-    static let modes: [VisualizationMode] = particleModes + signalModes
+    static let modes: [VisualizationMode] = signalModes
     static let document = LyricDocument(lines: [
         "把窗外的雨，交给缓慢旋转的夜", "Small rivers of light cross the room", "我们把回声写成一座桥", "Let the horizon open between these words",
         "让每一次停顿，都有呼吸的空间", "A quiet signal gathers into silver", "在风里，找回此刻的方向", "And all the scattered letters find a home"
@@ -224,14 +223,10 @@ private struct TemporalSignalProbe: View {
 private enum TemporalExportFailure: Error { case missingImage, pixelContext, destination, writerFailed, unsupportedMode }
 
 @MainActor enum TemporalDesignExport {
-    /// All visual captures route to the production renderer, including the
-    /// native Metal particle pipeline rather than an obsolete Canvas stand-in.
+    /// All visual captures route to the production renderer.
     static func visualization(mode: VisualizationMode, time: Double, audio: AudioLevels = AudioLevels(),
                               size: CGSize, seed: UInt64 = 0xA17ACA) throws -> CGImage {
         switch mode {
-        case .spectrumRing, .ribbons, .starfield:
-            return try ParticleFieldOffscreen.image(mode: mode, time: time, audio: audio, size: size,
-                                                    seed: seed, glow: true, lowPower: false)
         case .waveform, .spectrumBars:
             return try signal(mode: mode, time: time, audio: VisualizationAudio(audio), size: size)
         default:
@@ -367,82 +362,5 @@ private enum TemporalExportFailure: Error { case missingImage, pixelContext, des
             await writer.finishWriting()
             guard writer.status == .completed else { throw TemporalExportFailure.writerFailed }
         } catch { writer.cancelWriting(); throw error }
-    }
-}
-
-
-/// An opt-in original rhythm study, isolated from the existing mode fixtures.
-@Suite(.serialized) @MainActor struct OrbitalRhythmExportTests {
-    @Test func exportOrbitalRhythmEvidence() async throws {
-        guard let path = ProcessInfo.processInfo.environment["ALPACA_EXPORT_ORBIT_RHYTHM"] else { return }
-        let directory = URL(fileURLWithPath: path, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let size = CGSize(width: 960, height: 540)
-        let moments: [(String, Double)] = [
-            ("留白 / 0.967 s", 29.0 / 30),
-            ("起音 ① / 1.100 s", 1.1),
-            ("起音之前 / 2.967 s", 89.0 / 30),
-            ("起音 ② / 3.100 s", 3.1),
-            ("起音之前 / 4.967 s", 149.0 / 30),
-            ("起音 ③ / 5.067 s", 152.0 / 30),
-            ("组合节奏 / 7.067 s", 212.0 / 30),
-            ("组合节奏 / 7.567 s", 227.0 / 30),
-            ("节奏间隙 / 12.733 s", 382.0 / 30),
-            ("密集加重 / 14.533 s", 436.0 / 30),
-            ("收尾留白 / 15.767 s", 473.0 / 30)
-        ]
-        var clock = ParticleFieldMotionClock()
-        var captures: [(String, CGImage)] = []
-        var nextMoment = 0
-        var responseRows: [String] = ["time,phase,bass,mid,treble,orbit_energy_x,orbit_energy_y,orbit_energy_z,orbit_pulse_x,orbit_pulse_y,orbit_pulse_z"]
-        // Advance every frame so stills include the same envelope history as the movie.
-        for index in 0..<Int(OrbitRhythmFixture.duration * 30) {
-            let time = Double(index) / 30
-            let levels = OrbitRhythmFixture.levels(at: time)
-            let frame = clock.frame(at: time, animated: true, levels: levels)
-            responseRows.append(String(format: "%.6f,%@,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f", time,
-                OrbitRhythmFixture.phase(at: time), levels.bass, levels.mid, levels.treble,
-                frame.orbitRhythm.energy.x, frame.orbitRhythm.energy.y, frame.orbitRhythm.energy.z,
-                frame.orbitRhythm.pulse.x, frame.orbitRhythm.pulse.y, frame.orbitRhythm.pulse.z))
-            if nextMoment < moments.count, time + 0.00001 >= moments[nextMoment].1 {
-                let image = try ParticleFieldOffscreen.image(mode: .spectrumRing, time: Double(frame.time),
-                    audio: frame.audio, orbitRhythm: frame.orbitRhythm, size: size, seed: 0xA17ACA, glow: true, lowPower: false)
-                try TemporalDesignExport.png(image, to: directory.appending(path: "orbit-rhythm-case-\(nextMoment).png"))
-                captures.append((moments[nextMoment].0, image))
-                nextMoment += 1
-            }
-        }
-        try TemporalDesignExport.contactSheet(captures, columns: 2,
-            to: directory.appending(path: "orbit-rhythm-contact-sheet.png"))
-        try TemporalDesignExport.contactSheet(Array(captures.prefix(6)), columns: 2,
-            to: directory.appending(path: "orbit-onset-pairs.png"))
-        try Data(responseRows.joined(separator: "\n").utf8).write(
-            to: directory.appending(path: "actual-analysis.csv"), options: .atomic)
-        try OrbitRhythmFixture.writePCM(to: directory.appending(path: "original-rhythm.wav"))
-        var movieClock = ParticleFieldMotionClock()
-        try await TemporalDesignExport.movie(to: directory.appending(path: "orbit-rhythm-silent.mp4"),
-                                            duration: OrbitRhythmFixture.duration) { time in
-            let frame = movieClock.frame(at: time, animated: true, levels: OrbitRhythmFixture.levels(at: time))
-            let image = try ParticleFieldOffscreen.image(mode: .spectrumRing, time: Double(frame.time),
-                audio: frame.audio, orbitRhythm: frame.orbitRhythm, size: size, seed: 0xA17ACA, glow: true, lowPower: false)
-            return try TemporalDesignExport.labelled(image,
-                text: "原创合成节奏 / \(OrbitRhythmFixture.phase(at: time)) / \(String(format: "%.2f", time))s", size: size)
-        }
-        let readme = """
-        Original synthetic rhythm study: 16 seconds, 44.1 kHz, mono. No real music or account was accessed.
-        Production AudioBandAnalysis receives 8,192 consecutive PCM samples each frame.
-        Every signed band trace and per-band level comes from that production DSP, with no invented beat markers.
-        Stills and movie advance ParticleFieldMotionClock at 30 fps and pass its orbitRhythm to production Metal.
-        0–1 s: silence. 1 s / 1.5 s: isolated 80 + 160 Hz kick attacks.
-        3 s / 3.5 s: isolated 880 + 1,350 + 2,150 Hz percussive attacks.
-        5–5.75 s: isolated 7,400 + 10,400 + 13,700 Hz eighth-note attacks.
-        7–12 s: 120 BPM mixed groove, quarter kicks / backbeats / eighth hats.
-        12–13 s: rest. 13–15 s: denser sixteenth-note fill with rising actual PCM gain. 15–16 s: ending silence.
-        Production scenes contain no low / mid / high annotations. Contact-sheet captions identify review moments only.
-        original-rhythm.wav is exactly the original PCM input. The silent MP4 may be muxed with that WAV for audible review.
-        Export is visual evidence, not proof of Apple Music audio capture, native frame rate, or user aesthetic approval.
-        """
-        try Data(readme.utf8).write(to: directory.appending(path: "README.txt"), options: .atomic)
-        print("Orbital rhythm evidence: \(directory.path(percentEncoded: false))")
     }
 }

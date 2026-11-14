@@ -1,333 +1,532 @@
 import SwiftUI
 
-/// Harmonograph: a phase portrait of the measured music. The low band's signed
-/// PCM drives x and the mid band's signed PCM drives y, both from the same
-/// source interval, at a fixed full scale (loud music draws a larger figure).
-/// When the band traces are missing but full-band PCM exists, a short delay
-/// embedding of that PCM (x = s[i], y = s[i + d]) is used instead.
+/// Harmonograph, "song figure, measured swing": a two-pendulum harmonograph
+/// whose figure belongs to the song and whose swing is the music.
 ///
-/// This is a signal display. There is no oscillator, automatic gain, seeded
-/// motion or time-driven drift: unavailable audio shows a static waiting
-/// reticle, real silence a steady dot, and only a new audio frame changes the
-/// curve. Phosphor trails are previous measured curves; they are appended and
-/// faded only by elapsed animation time, never on frozen frames.
-struct HarmonographCurve: Equatable, Sendable {
-    /// Unit-square coordinates in temporal order; each coordinate is in [-1, 1]
-    /// and positive y points up.
-    var points: [CGPoint]
-    var state: WaveformGeometry.State
+/// This effect leaves the app's "plot only measured audio" rule in two
+/// declared places. Invented, fixed for the song: which figure the two
+/// pendulums draw (an eight on its side, a pretzel or a ribbon of three
+/// loops), how it leans, and where its slow sway starts, all from the song's
+/// seed. The phase between the pendulums never leaves the range in which the
+/// figure is open. Also invented: the small resting figure shown before a
+/// song's first samples arrive (one fixed small size and a slowly moving pen).
+///
+/// Measured, every frame: how far the pendulums swing, from the levels the
+/// analyser measured (not the clock's eased ones). The sideways reach is the
+/// bass level and the upright reach the mid level, on fixed square-root
+/// scales. A swing is thrown when a level rises about 2 dB above the swing's
+/// own lowest point, and inside one swing the reach only falls as far as the
+/// level fell. Each time it has fallen one step, a loop stays where the
+/// newest loop stood, so the fan of loops is the level's way down.
+///
+/// What each mark means, back to front:
+/// - the bars' disc: the paper. Its top and bottom are a full upright swing,
+///   and ink is brighter on it.
+/// - pale-blue kept loops: where the newest loop stood, one for every step the
+///   level has fallen in the last 1.2 s, fainter the more loops are newer.
+/// - the newest loop, brightest: the song's figure at the reach measured now.
+/// - yellow ends of the newest loop: a hit is arriving now. Far left and right
+///   when the bass was hit, top and bottom when the mids were; when both were,
+///   only the harder hit shows. Treble has no mark.
+/// - four soft-red ticks: the furthest recent reach on each axis.
+/// - a pale-blue dot in a small ring: the pen, at rest in the middle while the
+///   sound is silent.
+struct HarmonographSongFigure: Sendable {
+    // MARK: Fixed scales and display choices. None of these is a measurement.
 
-    static let waiting = HarmonographCurve(points: [], state: .waiting)
-}
+    /// Full sideways reach is bass level 1. Full upright reach is this mid level.
+    static let fullMid = 0.6
+    /// Music without low end keeps an open figure: the sideways reach never
+    /// uses less than this share of the full-band level.
+    static let widthFloor = 0.30
+    /// A level follows a rise within about three frames and a fall over about a tenth of a second.
+    private static let attack = 60.0, release = 9.0
+    /// A reach this much above the swing's lowest point (2 dB of level) throws a new swing; with a detected beat, less.
+    private static let riseMargin = 1.122, beatMargin = 1.03
+    private static let refractory = 0.12, longestRise = 0.20
+    /// One step of the fan, as a share of full reach.
+    static let stepX = 0.05, stepY = 0.08
+    /// Seconds a kept loop lasts, and how much faster it ages once a new swing has been thrown.
+    static let inkLife = 1.2
+    private static let liftedAgeing = 3.0
+    /// The held reach (the soft-red ticks) stands for this long after it was
+    /// last reached, then falls to 37% in `holdRelease`, so it stays outside
+    /// the fan it belongs to.
+    private static let holdTime = 0.7, holdRelease = 0.5
+    /// A hit: a band's level against its own short average, an average that
+    /// falls quickly and rises slowly. Yellow starts at `hitFrom` times the
+    /// average and is full at `hitFull` (bass first, then mid).
+    private static let hitFrom = [1.4, 1.6], hitFull = [1.85, 2.1]
+    private static let averageFall = 0.05, averageRise = 0.20
+    /// The resting figure's fixed size as a share of full reach, and the seconds the pen takes for one pass.
+    private static let idleX = 0.26, idleY = 0.34, idlePass = 14.0
 
-/// One earlier measured curve and the animation time elapsed since it was the
-/// newest frame.
-struct HarmonographTrail: Equatable, Sendable {
-    var points: [CGPoint]
-    var age: Double
+    // MARK: The song's figure
 
-    /// 1 for a fresh trail, 0 once it reaches the persistence lifetime.
-    var fade: Double {
-        guard age.isFinite else { return 0 }
-        return max(0, min(1, 1 - age / HarmonographHistory.lifetime))
+    /// `across` sideways swings against `up` upright swings in one pass.
+    struct Figure: Equatable, Sendable {
+        let across: Double, up: Double
+        /// How far the phase between the pendulums may ever be from the most open figure.
+        let range: Double
+        let points: Int
+        /// The phase at which the figure is most open.
+        var open: Double { (.pi / 2 - across * .pi / (2 * up) + .pi / (2 * up)).truncatingRemainder(dividingBy: .pi / up) }
     }
-}
+    /// Three figures that stay open and readable both wide (a kick) and narrow (no low end).
+    static let figures = [
+        Figure(across: 1, up: 2, range: .pi / 12, points: 84),      // an eight on its side
+        Figure(across: 2, up: 3, range: .pi / 18, points: 120),     // a pretzel
+        Figure(across: 1, up: 3, range: .pi / 18, points: 132)      // a ribbon of three loops
+    ]
 
-struct HarmonographPresentation: Equatable, Sendable {
-    var current: HarmonographCurve
-    /// Oldest first; the newest curve is `current`, not part of this list.
-    var trails: [HarmonographTrail]
-
-    static let waiting = HarmonographPresentation(current: .waiting, trails: [])
-}
-
-/// Bounded phosphor persistence. `step` is pure value logic so history,
-/// freezing and expiry are testable without SwiftUI.
-struct HarmonographHistory: Sendable {
-    static let capacity = 10
-    /// Seconds of animation time for a trail to fade out completely.
-    static let lifetime = 0.18
-
-    private(set) var trails: [HarmonographTrail] = []
-    private(set) var current = HarmonographCurve.waiting
-
-    mutating func reset() {
-        trails = []
-        current = .waiting
+    private struct Dice {
+        var state: UInt64
+        init(_ seed: UInt64) { state = seed ^ 0xA5A5_5A5A_C3C3_3C3C }
+        mutating func next() -> UInt64 {
+            state &+= 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
+        }
+        mutating func unit() -> Double { Double(next() >> 11) / Double(1 << 53) }
+        mutating func index(_ count: Int) -> Int { Int(next() % UInt64(count)) }
     }
 
-    /// `dt` is the elapsed animation time of this frame. A frozen frame
-    /// (dt == 0 or non-finite) neither appends nor ages trails.
-    mutating func step(dt rawDT: Double, audio: VisualizationAudio) -> HarmonographPresentation {
-        let next = HarmonographRenderer.trace(bass: audio.bassWaveform, mid: audio.midWaveform,
-                                              full: audio.waveform, available: audio.available)
-        let dt = rawDT.isFinite ? max(0, rawDT) : 0
-        if dt > 0 {
-            if next.state == .waiting {
-                // Audio disappeared while animating: show the static waiting
-                // composition instead of fading old curves on time alone.
-                trails.removeAll()
+    let figure: Figure
+    private let lean: Double        // the song's own phase, away from the symmetric figure
+    private let sway: Double        // how far the phase moves around it as the music plays
+
+    // MARK: State
+
+    /// A loop left where the newest loop stood.
+    private struct Kept: Sendable {
+        var x: Double, y: Double
+        var phase: Double
+        var heatX: Double, heatY: Double
+        var age = 0.0
+        var lifted = false
+        var tone = 1.0
+        var wiped = false
+        var wipe = 1.0
+    }
+
+    /// Some audio has been shown since the song started.
+    private(set) var measured = false
+    /// Samples are arriving.
+    private(set) var live = false
+    private var followed = [0.0, 0.0, 0.0]          // bass, mid, full band
+    private var average = [0.0, 0.0]
+    private(set) var swinging = false
+    /// The newest loop's reach, as shares of a full swing.
+    private(set) var reachX = 0.0, reachY = 0.0
+    private var risingX = false, risingY = false
+    private var sinceThrow = 1.0
+    private var lastBeat = 0.0, beatWindow = 0.0
+    private(set) var hitX = 0.0, hitY = 0.0
+    /// The soft-red ticks: the furthest recent reach on each axis.
+    private(set) var holdX = 0.0, holdY = 0.0
+    private var heldX = 0.0, heldY = 0.0
+    private var loops: [Kept] = []
+    private var turn: Double
+    /// How much of the resting figure shows: only before the song's first samples.
+    private(set) var idle = 1.0
+    private var pen: Double
+
+    init(seed: UInt64) {
+        var dice = Dice(seed)
+        figure = Self.figures[dice.index(Self.figures.count)]
+        let side: Double = dice.unit() < 0.5 ? -1 : 1
+        let amount = 0.35 + 0.30 * dice.unit()
+        turn = dice.unit()
+        pen = dice.unit() * 2 * .pi
+        lean = side * amount * figure.range
+        sway = 0.22 * figure.range
+    }
+
+    /// The phase between the two pendulums now: the song's lean, moving a little either way as sound goes by.
+    var phase: Double {
+        let position = turn - turn.rounded(.down)
+        return figure.open + lean + sway * (4 * abs(position - 0.5) - 1)
+    }
+
+    /// Kept loops strong enough to draw, the newest loop not included.
+    var drawnKeptLoops: Int {
+        let depths = keptDepths()
+        return loops.indices.filter { strength(of: loops[$0], depth: depths[$0]) > 0.16 }.count
+    }
+
+    private static func unit(_ value: Double) -> Double { value.isFinite ? min(1, max(0, value)) : 0 }
+
+    private func steps(from loop: Kept) -> Double {
+        max(abs(loop.x - reachX) / Self.stepX, abs(loop.y - reachY) / Self.stepY)
+    }
+
+    /// A kept loop's strength by how many loops are newer than it. It comes up as the newest loop moves off it.
+    private static func grade(_ depth: Double) -> Double {
+        let rise = min(1, max(0, depth))
+        let fall = 0.80 * exp(-max(0, depth - 1) / 5.5)
+        let end = min(1, max(0, (8.6 - depth) / 1.2))
+        return rise * rise * (3 - 2 * rise) * fall * end
+    }
+
+    /// How far the newest loop has moved from the last kept loop of this swing, in steps (1 when there is none).
+    private var lead: Double {
+        guard let newest = loops.last(where: { !$0.lifted }) else { return 1 }
+        return min(1, steps(from: newest))
+    }
+
+    private func keptDepths() -> [Double] {
+        let ahead = lead
+        var depths = [Double](repeating: 0, count: loops.count)
+        var newer = 0.0
+        for index in loops.indices.reversed() where !loops[index].lifted {
+            depths[index] = newer + ahead
+            newer += 1
+        }
+        return depths
+    }
+
+    private func strength(of loop: Kept, depth: Double) -> Double {
+        let byAge = max(0, 1 - loop.age / Self.inkLife)
+        return loop.lifted ? loop.tone * loop.wipe * byAge * byAge.squareRoot() : Self.grade(depth) * byAge
+    }
+
+    /// A new swing is being thrown, or the swing is over: the loops on the paper keep the strength they have and age faster.
+    private mutating func lift(keepingNewest: Bool) {
+        let ahead = lead
+        var newer = 0.0
+        for index in loops.indices.reversed() where !loops[index].lifted {
+            loops[index].tone = 0.85 * Self.grade(newer + ahead)
+            loops[index].lifted = true
+            newer += 1
+        }
+        if keepingNewest, ahead >= 0.6, max(reachX, reachY) > 0.03 {
+            loops.append(Kept(x: reachX, y: reachY, phase: phase, heatX: hitX, heatY: hitY, lifted: true, tone: 0.68))
+        }
+    }
+
+    private mutating func ageInk(_ dt: Double) {
+        let settled = swinging && !risingX && !risingY
+        for index in loops.indices {
+            loops[index].age += dt * (loops[index].lifted ? Self.liftedAgeing : 1)
+            loops[index].heatX *= exp(-dt / 0.07); loops[index].heatY *= exp(-dt / 0.07)
+            if loops[index].lifted, settled, !loops[index].wiped,
+               abs(loops[index].x - reachX) < 0.8 * Self.stepX, abs(loops[index].y - reachY) < 0.8 * Self.stepY {
+                loops[index].wiped = true
+            }
+            if loops[index].wiped { loops[index].wipe *= exp(-dt / 0.05) }
+        }
+        loops.removeAll { $0.age >= Self.inkLife || $0.wipe < 0.02 }
+        let kept = loops.reduce(0) { $0 + ($1.lifted ? 0 : 1) }
+        if kept > 10, let oldest = loops.firstIndex(where: { !$0.lifted }) { loops.remove(at: oldest) }
+    }
+
+    /// Advances by `dt` seconds of animation time on the analyser's measured
+    /// levels. A paused or Reduce Motion frame passes `dt == 0`: nothing moves,
+    /// except that a song with nothing shown yet shows its one snapshot still.
+    mutating func advance(dt rawDT: Double, measured audio: VisualizationAudio) {
+        let dt = rawDT.isFinite ? min(0.08, max(0, rawDT)) : 0
+        guard dt > 0 else {
+            if audio.available, !measured {
+                measured = true; live = true; idle = 0
+                followed = [Self.unit(audio.bass), Self.unit(audio.mid), Self.unit(audio.amplitude)]
+                reachX = max(followed[0], Self.widthFloor * followed[2]).squareRoot()
+                reachY = min(1, followed[1] / Self.fullMid).squareRoot()
+                swinging = max(reachX, reachY) > 0.03
+                holdX = reachX; holdY = reachY
+                average = [followed[0], followed[1]]
+            }
+            return
+        }
+        guard audio.available else {
+            // No samples. The swing is over and its ink fades on; nothing is measured.
+            if live {
+                live = false
+                lift(keepingNewest: swinging)
+                swinging = false; reachX = 0; reachY = 0; risingX = false; risingY = false
+                followed = [0, 0, 0]; average = [0, 0]
+                hitX = 0; hitY = 0; lastBeat = 0; beatWindow = 0
+            }
+            ageInk(dt)
+            holdX *= exp(-dt / 0.2); holdY *= exp(-dt / 0.2)
+            // The resting figure belongs to the moment before a song's first
+            // samples; once the song has been heard it does not come back.
+            if !measured {
+                pen = (pen + dt * 2 * .pi / Self.idlePass).truncatingRemainder(dividingBy: 2 * .pi)
+            }
+            return
+        }
+
+        idle = 0
+        measured = true; live = true
+
+        let levels = [Self.unit(audio.bass), Self.unit(audio.mid), Self.unit(audio.amplitude)]
+        for index in followed.indices {
+            let rate = levels[index] > followed[index] ? Self.attack : Self.release
+            followed[index] += (levels[index] - followed[index]) * (1 - exp(-dt * rate))
+            if followed[index] < 0.000_2, levels[index] == 0 { followed[index] = 0 }
+        }
+        let targetX = max(followed[0], Self.widthFloor * followed[2]).squareRoot()
+        let targetY = min(1, followed[1] / Self.fullMid).squareRoot()
+
+        // A hit: a band standing well above its own short average. It cools in about a tenth of a second.
+        var strikes = [0.0, 0.0]
+        for band in 0..<2 {
+            let level = followed[band]
+            if level > 0.04 {
+                strikes[band] = min(1, max(0, (level / (average[band] + 0.02) - Self.hitFrom[band]) / (Self.hitFull[band] - Self.hitFrom[band])))
+            }
+            average[band] += (level - average[band]) * (1 - exp(-dt / (level < average[band] ? Self.averageFall : Self.averageRise)))
+        }
+        hitX = max(strikes[0], hitX * exp(-dt / 0.05))
+        hitY = max(strikes[1], hitY * exp(-dt / 0.05))
+
+        // A new swing is thrown on a measured rise; a detected beat lowers the rise needed for a moment.
+        sinceThrow += dt
+        let beat = Self.unit(audio.beat)
+        let beatRise = (beat - lastBeat) / dt
+        lastBeat = beat
+        if beatRise > 4, beat > 0.15 { beatWindow = 0.12 } else { beatWindow = max(0, beatWindow - dt) }
+        let margin = beatWindow > 0 ? Self.beatMargin : Self.riseMargin
+        var thrown = false
+        if !swinging {
+            thrown = max(targetX, targetY) > 0.03
+        } else if sinceThrow >= Self.refractory {
+            thrown = (!risingX && targetX > reachX * margin + 0.004) || (!risingY && targetY > reachY * margin + 0.004)
+        }
+        if thrown {
+            lift(keepingNewest: swinging)
+            reachX = targetX; reachY = targetY
+            risingX = true; risingY = true; swinging = true; sinceThrow = 0
+        }
+        if swinging {
+            // While a swing is thrown its reach follows the level up. After that it only falls, as far as the level fell.
+            if risingX {
+                reachX = max(reachX, targetX)
+                if targetX < reachX * 0.99 || sinceThrow > Self.longestRise { risingX = false }
             } else {
-                for index in trails.indices { trails[index].age += dt }
-                if current.state == .signal {
-                    trails.append(HarmonographTrail(points: current.points, age: dt))
-                }
-                trails.removeAll { $0.age >= HarmonographHistory.lifetime }
-                if trails.count > HarmonographHistory.capacity {
-                    trails.removeFirst(trails.count - HarmonographHistory.capacity)
-                }
+                reachX = min(reachX, targetX)
+            }
+            if risingY {
+                reachY = max(reachY, targetY)
+                if targetY < reachY * 0.99 || sinceThrow > Self.longestRise { risingY = false }
+            } else {
+                reachY = min(reachY, targetY)
+            }
+            if max(reachX, reachY) < 0.02 {
+                lift(keepingNewest: false)
+                swinging = false; reachX = 0; reachY = 0; risingX = false; risingY = false
             }
         }
-        current = next
-        return presentation
-    }
-
-    var presentation: HarmonographPresentation {
-        HarmonographPresentation(current: current, trails: current.state == .waiting ? [] : trails)
-    }
-}
-
-enum HarmonographRenderer {
-    /// Per-curve point budget; longer buffers are decimated in temporal order.
-    static let maximumPoints = 512
-    /// About -80 dBFS, the same floor as the fixed-dB spectrum. Smoothed traces
-    /// that have decayed below it are drawn as the steady silence dot.
-    static let silenceThreshold = 0.000_1
-
-    /// Pure unit-square curve from measured PCM. Unavailable or absent PCM is
-    /// `.waiting`; nothing is synthesized from scalars or time.
-    static func trace(bass: [Double], mid: [Double], full: [Double], available: Bool) -> HarmonographCurve {
-        guard available else { return .waiting }
-        let usesBands = !bass.isEmpty && !mid.isEmpty
-        let pairCount: Int
-        let delay: Int
-        if usesBands {
-            pairCount = min(bass.count, mid.count)
-            delay = 0
-        } else if !full.isEmpty {
-            delay = full.count >= 2 ? max(1, full.count / 24) : 0
-            pairCount = full.count - delay
-        } else {
-            return .waiting
+        // Each time the reach has fallen one step, a loop stays where the newest loop stood.
+        if swinging, !risingX, !risingY {
+            if let newest = loops.last(where: { !$0.lifted }) {
+                if steps(from: newest) >= 1 { loops.append(Kept(x: reachX, y: reachY, phase: phase, heatX: hitX, heatY: hitY)) }
+            } else {
+                loops.append(Kept(x: reachX, y: reachY, phase: phase, heatX: hitX, heatY: hitY))
+            }
         }
-        guard pairCount > 0 else { return .waiting }
+        ageInk(dt)
 
-        let count = min(pairCount, maximumPoints)
-        var points: [CGPoint] = []
-        points.reserveCapacity(count)
-        var peak = 0.0
-        var anyFinite = false
-        for step in 0..<count {
-            let index = count > 1 ? step * (pairCount - 1) / (count - 1) : 0
-            let rawX = usesBands ? bass[index] : full[index]
-            let rawY = usesBands ? mid[index] : full[index + delay]
-            if rawX.isFinite || rawY.isFinite { anyFinite = true }
-            let x = rawX.isFinite ? min(1, max(-1, rawX)) : 0
-            let y = rawY.isFinite ? min(1, max(-1, rawY)) : 0
-            peak = max(peak, abs(x), abs(y))
-            points.append(CGPoint(x: x, y: y))
+        // The furthest recent reach on each axis stands for a moment, then lets go; at once when the swing is over.
+        if reachX >= holdX { holdX = reachX; heldX = 0 } else {
+            heldX += dt
+            if !swinging { holdX *= exp(-dt / 0.2) } else if heldX > Self.holdTime { holdX = max(reachX, holdX * exp(-dt / Self.holdRelease)) }
         }
-        guard anyFinite else { return .waiting }
-        guard peak >= silenceThreshold else { return HarmonographCurve(points: [.zero], state: .silent) }
-        return HarmonographCurve(points: points, state: .signal)
+        if reachY >= holdY { holdY = reachY; heldY = 0 } else {
+            heldY += dt
+            if !swinging { holdY *= exp(-dt / 0.2) } else if heldY > Self.holdTime { holdY = max(reachY, holdY * exp(-dt / Self.holdRelease)) }
+        }
+        turn += dt * followed[2] / 30
     }
 
-    /// Centered square plot with a margin for strokes and reticle ticks.
-    static func plotRect(size: CGSize) -> CGRect {
-        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return .zero }
-        let side = min(size.width, size.height) * 0.76
-        return CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
+    // MARK: Drawing
+
+    /// Centred on the scene: a full swing reaches as wide as the oscilloscope's
+    /// trace and as tall as the disc, the same disc as the oscilloscope's.
+    struct Layout: Equatable, Sendable {
+        var centre: CGPoint
+        var halfWidth: CGFloat, halfHeight: CGFloat
+        var disc: CGRect
     }
 
-    static func canvasPoint(_ unit: CGPoint, in plot: CGRect) -> CGPoint {
-        let x = unit.x.isFinite ? min(1, max(-1, unit.x)) : 0
-        let y = unit.y.isFinite ? min(1, max(-1, unit.y)) : 0
-        return CGPoint(x: plot.midX + x * plot.width / 2, y: plot.midY - y * plot.height / 2)
+    static func layout(size: CGSize) -> Layout {
+        let centre = CGPoint(x: size.width / 2, y: size.height / 2)
+        let radius = min(size.height * 0.40, size.width * 0.24)
+        // Top and bottom of the disc are a full upright swing; a full sideways
+        // swing reaches as wide as the oscilloscope's trace.
+        return Layout(centre: centre, halfWidth: min(size.width * 0.365, radius * 1.95), halfHeight: radius,
+                      disc: CGRect(x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2))
     }
 
-    static func canvasPoints(_ unit: [CGPoint], in plot: CGRect) -> [CGPoint] {
-        guard !plot.isEmpty else { return [] }
-        return unit.prefix(maximumPoints).map { canvasPoint($0, in: plot) }
+    private func point(at angle: Double, x: CGFloat, y: CGFloat, phase: Double, centre: CGPoint) -> CGPoint {
+        CGPoint(x: centre.x + x * CGFloat(sin(figure.across * angle + phase)), y: centre.y - y * CGFloat(sin(figure.up * angle)))
     }
 
-    static func points(for curve: HarmonographCurve, size: CGSize) -> [CGPoint] {
-        canvasPoints(curve.points, in: plotRect(size: size))
+    /// The points of one closed pass with half-extents `x` and `y`.
+    func outline(x: CGFloat, y: CGFloat, phase: Double, centre: CGPoint) -> [CGPoint] {
+        (0..<figure.points).map { index in
+            point(at: 2 * Double.pi * Double(index) / Double(figure.points), x: x, y: y, phase: phase, centre: centre)
+        }
     }
 
-    /// Canvas points for available PCM, for tests and exports.
-    static func curve(bass: [Double], mid: [Double], full: [Double], size: CGSize) -> [CGPoint] {
-        points(for: trace(bass: bass, mid: mid, full: full, available: true), size: size)
-    }
-
-    /// Smooth path through the points: line to the first midpoint, quadratic
-    /// pieces between midpoints with each sample as control, line to the last
-    /// point. It stays inside the points' convex hull, so inside the plot.
-    /// `pieces` selects a contiguous run of the same curve (n points, n pieces).
-    static func path(_ points: [CGPoint], pieces: Range<Int>? = nil) -> Path {
+    /// A smooth closed line through `points`: quadratic arcs from midpoint to midpoint.
+    private static func closedCurve(_ points: [CGPoint]) -> Path {
         var path = Path()
         let count = points.count
-        guard count >= 2 else { return path }
-        let range = (pieces ?? (0..<count)).clamped(to: 0..<count)
-        guard !range.isEmpty else { return path }
-        func midpoint(_ first: Int, _ second: Int) -> CGPoint {
-            CGPoint(x: (points[first].x + points[second].x) / 2, y: (points[first].y + points[second].y) / 2)
+        guard count >= 3 else { return path }
+        func middle(_ first: CGPoint, _ second: CGPoint) -> CGPoint { CGPoint(x: (first.x + second.x) / 2, y: (first.y + second.y) / 2) }
+        path.move(to: middle(points[count - 1], points[0]))
+        for index in 0..<count {
+            path.addQuadCurve(to: middle(points[index], points[(index + 1) % count]), control: points[index])
         }
-        path.move(to: range.lowerBound == 0 ? points[0] : midpoint(range.lowerBound - 1, range.lowerBound))
-        for piece in range {
-            if piece == count - 1 {
-                path.addLine(to: points[count - 1])
-            } else if piece == 0 {
-                path.addLine(to: midpoint(0, 1))
-            } else {
-                path.addQuadCurve(to: midpoint(piece, piece + 1), control: points[piece])
-            }
-        }
+        path.closeSubpath()
         return path
     }
 
-    static func draw(in context: inout GraphicsContext, size: CGSize, presentation: HarmonographPresentation, glow: Bool) {
-        draw(in: &context, size: size, trails: presentation.trails, current: presentation.current, glow: glow)
-    }
-
-    /// Shared production/offscreen entry point. There is no time parameter:
-    /// only measured curves can change the picture.
-    static func draw(in context: inout GraphicsContext, size: CGSize,
-                     trails: [HarmonographTrail], current: HarmonographCurve, glow: Bool) {
-        let plot = plotRect(size: size)
-        guard !plot.isEmpty else { return }
-        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(red: 0.009, green: 0.017, blue: 0.021)))
-        let waiting = current.state == .waiting
-        drawReticle(in: &context, plot: plot, waiting: waiting)
-        let center = CGPoint(x: plot.midX, y: plot.midY)
-        if waiting {
-            fillDot(in: &context, at: center, radius: 1.6, color: cream.opacity(0.26))
-            return
+    func draw(in context: inout GraphicsContext, size: CGSize, place: EffectPlace) {
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return }
+        let layout = Self.layout(size: size)
+        let centre = layout.centre, halfW = layout.halfWidth, halfH = layout.halfHeight
+        let radius = layout.disc.width / 2
+        let paleBlue = SpectrumBarsRenderer.paleBlue, yellowInk = SpectrumBarsRenderer.yellow
+        context.fill(Path(ellipseIn: layout.disc), with: .color(place == .room ? SpectrumBarsRenderer.roomDisc : SpectrumBarsRenderer.stageDisc))
+        // Ink is brighter where it crosses the disc, as the oscilloscope's trace is: one stroke, two tones.
+        let far = max(size.width, size.height)
+        func ink(_ path: Path, _ color: Color, _ strength: Double, _ width: CGFloat, in target: inout GraphicsContext) {
+            guard strength > 0.004 else { return }
+            let inner = color.opacity(min(1, strength)), outer = color.opacity(strength * 0.80)
+            let edge = radius / far
+            let tones = Gradient(stops: [.init(color: inner, location: 0), .init(color: inner, location: edge),
+                                         .init(color: outer, location: edge), .init(color: outer, location: 1)])
+            target.stroke(path, with: .radialGradient(tones, center: centre, startRadius: 0, endRadius: far),
+                          style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+        }
+        /// A loop in pale blue. While a hit is arriving its ends are yellow on
+        /// the axis that was hit harder; as the hit cools the yellow draws back
+        /// to the very ends and is gone. Two inks side by side, never one over the other.
+        func inkLoop(_ points: [CGPoint], x: CGFloat, y: CGFloat, strength: Double, heatX: Double, heatY: Double, width: CGFloat) {
+            guard strength > 0.004 else { return }
+            let path = Self.closedCurve(points)
+            var ends = Path()
+            let (heat, sideways) = heatX >= heatY ? (heatX, true) : (heatY, false)
+            if heat > 0.15 {
+                let warm = min(1, (heat - 0.15) / 0.45)
+                let beyond = CGFloat(1 - 0.08 * warm * warm * (3 - 2 * warm))
+                for side in [-1.0, 1.0] as [CGFloat] {
+                    if sideways {
+                        ends.addRect(CGRect(x: side > 0 ? centre.x + beyond * x : 0, y: 0,
+                                            width: side > 0 ? size.width : centre.x - beyond * x, height: size.height))
+                    } else {
+                        ends.addRect(CGRect(x: 0, y: side > 0 ? centre.y + beyond * y : 0,
+                                            width: size.width, height: side > 0 ? size.height : centre.y - beyond * y))
+                    }
+                }
+            }
+            guard !ends.isEmpty else {
+                ink(path, paleBlue, strength, width, in: &context)
+                return
+            }
+            var blue = context, yellow = context
+            blue.clip(to: ends, options: .inverse)
+            yellow.clip(to: ends)
+            ink(path, paleBlue, strength, width, in: &blue)
+            ink(path, yellowInk, min(1, strength * 1.15), width, in: &yellow)
         }
 
-        // Phosphor persistence, oldest first: dimmer and thinner with age.
-        for trail in trails.suffix(HarmonographHistory.capacity) {
-            let fade = trail.fade
-            guard fade > 0 else { continue }
-            let trailPoints = canvasPoints(trail.points, in: plot)
-            guard trailPoints.count >= 2 else { continue }
-            context.stroke(path(trailPoints), with: .color(warm(0).opacity(0.5 * fade * fade)),
-                           style: StrokeStyle(lineWidth: 0.5 + 0.55 * CGFloat(fade), lineCap: .round, lineJoin: .round))
+        // The kept loops, oldest first. No ghosts: a loop is a line or it is gone.
+        let depths = keptDepths()
+        for (index, loop) in loops.enumerated() {
+            let strength = strength(of: loop, depth: depths[index])
+            guard strength > 0.16 else { continue }
+            let width = loop.lifted ? 1.3 : 1.3 + 0.2 * max(0, 1 - max(0, depths[index] - 1) / 3)
+            let loopX = CGFloat(loop.x) * halfW, loopY = CGFloat(loop.y) * halfH
+            inkLoop(outline(x: loopX, y: loopY, phase: loop.phase, centre: centre),
+                    x: loopX, y: loopY, strength: strength, heatX: loop.heatX, heatY: loop.heatY, width: width)
         }
 
-        let newest = canvasPoints(current.points, in: plot)
-        if current.state == .silent || newest.count < 2 {
-            let dot = newest.first ?? center
-            if glow { fillDot(in: &context, at: dot, radius: 4.5, color: warm(0).opacity(0.08)) }
-            fillDot(in: &context, at: dot, radius: 2.0, color: cream.opacity(current.state == .silent ? 0.72 : 0.92))
-            return
+        // The newest loop: the figure at the reach measured now.
+        let x = CGFloat(reachX) * halfW, y = CGFloat(reachY) * halfH
+        let presence = swinging ? Double(min(1, max(x, y) / 10)) : 0
+        if presence > 0 {
+            inkLoop(outline(x: x, y: y, phase: phase, centre: centre), x: x, y: y,
+                    strength: 0.95 * presence, heatX: hitX, heatY: hitY, width: 1.6)
         }
-        // A nearly silent figure settles into the same steady silence dot, so
-        // fades below the threshold are continuous rather than a size jump.
-        let figure: CGFloat = extent(of: newest)
-        let settle = Double(max(CGFloat(0), 1 - figure / 6))
-        if settle > 0 {
-            if glow { fillDot(in: &context, at: center, radius: 4.5, color: warm(0).opacity(0.08 * settle)) }
-            fillDot(in: &context, at: center, radius: 2.0, color: cream.opacity(0.72 * settle))
-        }
-        if glow {
-            context.stroke(path(newest), with: .color(warm(0).opacity(0.10)),
-                           style: StrokeStyle(lineWidth: 3.6, lineCap: .round, lineJoin: .round))
-        }
-        // Earlier samples of the buffer are amber, the latest ones cream.
-        let chunks = min(8, newest.count)
-        for chunk in 0..<chunks {
-            let lower = chunk * newest.count / chunks
-            let upper = (chunk + 1) * newest.count / chunks
-            guard lower < upper else { continue }
-            let position = chunks > 1 ? Double(chunk) / Double(chunks - 1) : 1
-            context.stroke(path(newest, pieces: lower..<upper), with: .color(warm(position).opacity(0.94)),
-                           style: StrokeStyle(lineWidth: 1.15, lineCap: .round, lineJoin: .round))
-        }
-    }
 
-    /// Bounding-box diagonal of canvas points, in points; 0 for an empty list.
-    static func extent(of points: [CGPoint]) -> CGFloat {
-        guard let first = points.first else { return 0 }
-        var minX = first.x, maxX = first.x, minY = first.y, maxY = first.y
-        for point in points {
-            minX = min(minX, point.x)
-            maxX = max(maxX, point.x)
-            minY = min(minY, point.y)
-            maxY = max(maxY, point.y)
+        // Soft red: the furthest recent reach on each axis.
+        let softRed = SpectrumBarsRenderer.softRed.opacity(0.9)
+        if holdX > 0.05 {
+            for side in [-1.0, 1.0] as [CGFloat] {
+                let tickX = centre.x + side * (CGFloat(holdX) * halfW + 9)
+                context.fill(Path(roundedRect: CGRect(x: tickX - 1, y: centre.y - 7, width: 2, height: 14), cornerRadius: 1), with: .color(softRed))
+            }
         }
-        let width = maxX - minX
-        let height = maxY - minY
-        let diagonal = (width * width + height * height).squareRoot()
-        return diagonal.isFinite ? diagonal : 0
-    }
-
-    private static var cream: Color { Color(red: 0.97, green: 0.93, blue: 0.85) }
-
-    /// Amber (0) to cream (1).
-    private static func warm(_ position: Double) -> Color {
-        let t = position.isFinite ? min(1, max(0, position)) : 1
-        return Color(red: 0.89 + (0.97 - 0.89) * t, green: 0.60 + (0.93 - 0.60) * t, blue: 0.25 + (0.85 - 0.25) * t)
-    }
-
-    private static func fillDot(in context: inout GraphicsContext, at center: CGPoint, radius: CGFloat, color: Color) {
-        context.fill(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)),
-                     with: .color(color))
-    }
-
-    /// Static full-scale ring with four short cardinal ticks.
-    private static func drawReticle(in context: inout GraphicsContext, plot: CGRect, waiting: Bool) {
-        let tone = Color(red: 0.86, green: 0.80, blue: 0.70)
-        context.stroke(Path(ellipseIn: plot), with: .color(tone.opacity(waiting ? 0.075 : 0.045)),
-                       style: StrokeStyle(lineWidth: 0.6))
-        let radius = plot.width / 2
-        let tick = max(3, radius * 0.05)
-        let center = CGPoint(x: plot.midX, y: plot.midY)
-        var ticks = Path()
-        for direction in [CGPoint(x: 1, y: 0), CGPoint(x: -1, y: 0), CGPoint(x: 0, y: 1), CGPoint(x: 0, y: -1)] {
-            ticks.move(to: CGPoint(x: center.x + direction.x * (radius + 2), y: center.y + direction.y * (radius + 2)))
-            ticks.addLine(to: CGPoint(x: center.x + direction.x * (radius + 2 + tick), y: center.y + direction.y * (radius + 2 + tick)))
+        if holdY > 0.05 {
+            for side in [-1.0, 1.0] as [CGFloat] {
+                let tickY = centre.y + side * (CGFloat(holdY) * halfH + 9)
+                context.fill(Path(roundedRect: CGRect(x: centre.x - 7, y: tickY - 1, width: 14, height: 2), cornerRadius: 1), with: .color(softRed))
+            }
         }
-        context.stroke(ticks, with: .color(tone.opacity(waiting ? 0.10 : 0.07)), style: StrokeStyle(lineWidth: 0.6))
+
+        func drawPen(at point: CGPoint, strength: Double) {
+            guard strength > 0.01 else { return }
+            context.fill(Path(ellipseIn: CGRect(x: point.x - 2.6, y: point.y - 2.6, width: 5.2, height: 5.2)), with: .color(paleBlue.opacity(0.9 * strength)))
+            context.stroke(Path(ellipseIn: CGRect(x: point.x - 8, y: point.y - 8, width: 16, height: 16)), with: .color(paleBlue.opacity(0.45 * strength)), lineWidth: 1)
+        }
+
+        // Before the song's first samples: its figure at one fixed small size,
+        // dim, and the pen going slowly round it. Nothing here is measured.
+        if idle > 0.01 {
+            let idleX = CGFloat(Self.idleX) * halfW, idleY = CGFloat(Self.idleY) * halfH
+            ink(Self.closedCurve(outline(x: idleX, y: idleY, phase: phase, centre: centre)), paleBlue, 0.36 * idle, 1.3, in: &context)
+            func spot(_ angle: Double) -> CGPoint {
+                CGPoint(x: centre.x + idleX * CGFloat(sin(figure.across * angle + phase)), y: centre.y - idleY * CGFloat(sin(figure.up * angle)))
+            }
+            let parts = 4, piece = 0.16
+            for part in 0..<parts {
+                var trail = Path()
+                let from = pen - piece * Double(parts - part), steps = 8
+                trail.move(to: spot(from))
+                for step in 1...steps { trail.addLine(to: spot(from + piece * Double(step) / Double(steps))) }
+                ink(trail, paleBlue, 0.17 * Double(part + 1) * idle, 1.5, in: &context)
+            }
+            drawPen(at: spot(pen), strength: idle)
+        }
+
+        // The pen at rest in the middle, when samples arrive but are silent: the swing has closed on it.
+        drawPen(at: centre, strength: (1 - presence) * (live ? 1 : measured ? 0.5 : 0))
     }
 }
 
-/// Per-stage frame state: the shared signal clock plus the phosphor history,
-/// advanced by the clock's animation-time delta only.
+/// Per-stage state: the shared signal clock (for the measured levels and
+/// animation time) and the song's figure, made again for each song.
 @MainActor final class HarmonographStageModel {
     private let clock = VisualizationClock()
-    private var history = HarmonographHistory()
+    private(set) var figure = HarmonographSongFigure(seed: 0)
     private var lastTime: Double?
     private var started = false
     private var trackID: String?
 
     func resetFrameDate() { clock.resetFrameDate() }
 
-    func reset() {
-        clock.resetSignal()
-        history.reset()
-        lastTime = nil
-    }
-
-    /// Resets inline on a track change so a paused or frozen stage never keeps
-    /// drawing the previous track's figure (`onChange` runs after the frame).
-    func presentation(at date: Date, trackID: String?, animated: Bool, levels: AudioLevels, playing: Bool,
-                      captureStaticSignal: Bool) -> HarmonographPresentation {
+    /// Starts over inline on a track change so a paused or frozen stage never
+    /// keeps drawing the previous song's figure (`onChange` runs after the frame).
+    func figure(at date: Date, trackID: String?, seed: UInt64, animated: Bool, levels: AudioLevels, playing: Bool,
+                captureStaticSignal: Bool) -> HarmonographSongFigure {
         if !started || trackID != self.trackID {
             started = true
             self.trackID = trackID
-            reset()
+            clock.resetSignal()
+            figure = HarmonographSongFigure(seed: seed)
+            lastTime = nil
         }
-        return presentation(at: date, animated: animated, levels: levels, playing: playing,
-                            captureStaticSignal: captureStaticSignal)
-    }
-
-    func presentation(at date: Date, animated: Bool, levels: AudioLevels, playing: Bool,
-                      captureStaticSignal: Bool) -> HarmonographPresentation {
         let frame = clock.frame(at: date, animated: animated, levels: levels, playing: playing,
                                 captureStaticSignal: captureStaticSignal)
         let dt = animated ? max(0, frame.time - (lastTime ?? frame.time)) : 0
         lastTime = frame.time
-        return history.step(dt: dt, audio: frame.audio)
+        figure.advance(dt: dt, measured: frame.measured)
+        return figure
     }
 }
 
@@ -336,9 +535,9 @@ struct HarmonographStage: View {
     let isActive: Bool
     let reduceMotion: Bool
     let lowPower: Bool
-    let glow: Bool
     let seed: UInt64
     let trackID: String?
+    var place: EffectPlace = .room
     let signal: @MainActor () -> AudioLevels
     @State private var model = HarmonographStageModel()
 
@@ -347,11 +546,11 @@ struct HarmonographStage: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: lowPower ? 1.0 / 30 : 1.0 / 60, paused: !animate)) { timeline in
             let levels = isPlaying && isActive ? signal() : AudioLevels()
-            let presentation = model.presentation(at: timeline.date, trackID: trackID, animated: animate,
-                                                  levels: levels, playing: isPlaying,
-                                                  captureStaticSignal: reduceMotion && isPlaying && isActive)
-            Canvas(opaque: true, rendersAsynchronously: false) { context, size in
-                HarmonographRenderer.draw(in: &context, size: size, presentation: presentation, glow: glow)
+            let figure = model.figure(at: timeline.date, trackID: trackID, seed: seed, animated: animate,
+                                      levels: levels, playing: isPlaying,
+                                      captureStaticSignal: reduceMotion && isPlaying && isActive)
+            Canvas(opaque: false, rendersAsynchronously: false) { context, size in
+                figure.draw(in: &context, size: size, place: place)
             }
             .allowsHitTesting(false)
         }

@@ -13,7 +13,6 @@
 "%@ ·「%@」未完整导入" = "%@ · “%@” was only partially imported";
 "%@ 使用氛围动画，无法根据实时音频变化。" = "%@ uses ambient animation without live audio response.";
 "%@ 封面" = "Artwork for %@";
-"%@ 暂无实时波形与频谱" = "Live waveform and spectrum unavailable for %@";
 "%@ 更多操作" = "More actions for %@";
 "%@ 歌曲标识与其他来源冲突，此次歌单未导入" = "%@ song IDs conflict with another source. The playlist was not imported.";
 "%@。%@（%@）" = "%@ %@ (%@)";
@@ -220,7 +219,6 @@
 "使用微信扫一扫并确认" = "Scan with WeChat and confirm";
 "使用手机 QQ 扫码并确认" = "Scan with QQ on your phone and confirm";
 "使用汽水音乐 App 扫一扫登录的二维码" = "Sign-in QR code to scan with the Soda Music app";
-"使用流光绸缎" = "Use Flowing Ribbons";
 "使用系统音量" = "System Volume";
 "使用网页登录" = "Sign in on the website";
 "保存" = "Save";
@@ -417,8 +415,6 @@
 "当前 Apple Music 账户不能播放订阅曲库，请检查订阅。" = "This Apple Music account cannot play subscription catalog songs. Check your subscription.";
 "当前播放使用官方分享音频，可能仅提供试听。" = "Playback uses official shared audio, which may be a preview only.";
 "当前播放通道尚无实时音频采样，显示静候画面" = "Live audio unavailable from this playback channel, showing a waiting visual";
-"当前播放通道无法获取音频采样。" = "Audio samples are unavailable from this playback channel.";
-"当前无法获取 %@ 实时音频，波形与频谱不随音乐变化。" = "Live audio from %@ is unavailable. Waveforms and spectra do not respond to music.";
 "当前歌词" = "Current Lyrics";
 "当前没有可列出的歌单" = "No playlists to show";
 "当前没有网络连接" = "No internet connection.";
@@ -741,12 +737,10 @@
 "没有符合筛选条件的歌曲" = "No Songs Match This Filter";
 "没有足够的图形内存" = "Not enough graphics memory.";
 "波纹密度" = "Ripple Density";
-"流光绸缎" = "Flowing Ribbons";
 "流动速度" = "Flow Speed";
 "测试连接" = "Test connection";
 "浏览音乐库" = "Browse Library";
 "浮雕深度" = "Relief Depth";
-"深空航行" = "Deep Space";
 "深邃" = "Deep";
 "添加到歌单" = "Add to Playlist";
 "添加到歌单…" = "Add to Playlist…";
@@ -926,7 +920,6 @@
 "跃动" = "Lively";
 "跟随系统" = "Follow System";
 "跳转到 %@" = "Seek to %@";
-"轨道光场" = "Orbital Light";
 "轻盈跃动" = "Gentle Bounce";
 "输入显示名称" = "Enter a display name";
 "输入歌单名称" = "Enter a playlist name";
@@ -1248,3 +1241,8 @@
 "随后随机播放 %lld 首" = "Then shuffling %lld more";
 "随机播放其余 %lld 首" = "Shuffling %lld more";
 "%lld 首歌" = "%lld songs";
+"来自封面" = "From the Cover";
+"图形" = "Shapes";
+"需要实时音频" = "Needs Live Audio";
+"%@ · 无实时音频" = "%@ · no live audio";
+"非常密集" = "Very Dense";

@@ -1,5 +1,7 @@
 # Continuous spectrum / 连续竖条频谱
 
+> 2026-11-13：竖条频谱改为「此刻」页舞台的设计：96 根细柱，圆顶，浅蓝为主、少数固定位置的黄色和柔红色，越高越亮，基线下有淡倒影，背后一枚深色圆盘；不再画峰值帽和辉光。直接画在沉浸房间或舞台上，没有自己的底色。下文为历史记录。
+
 The vertical spectrum uses 72 slim continuous rounded columns, blue bodies, cyan-white tips, restrained glow and warm color reserved for tall measured peaks. The inactive segmented wall is removed. Silence and unavailable PCM show a quiet baseline, without invented columns.
 
 竖条频谱采用 72 根纤细连续圆角柱：蓝色主体、青白色顶端与克制辉光，只有较高的真实峰值使用少量暖色。未点亮的分段格墙已移除，静音或缺少 PCM 时仅保留安静基线，不生成假柱形。

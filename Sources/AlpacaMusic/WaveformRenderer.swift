@@ -12,16 +12,59 @@ struct WaveformGeometry: Equatable, Sendable {
     var centerY: CGFloat { plotRect.midY }
 }
 
+/// The widest swing of the last second or so, for the oscilloscope's
+/// soft-red ticks: it rises with the trace at once and falls by e every 1.2 s
+/// of animation time. A frozen frame neither raises nor lowers it.
+struct OscilloscopePeakHold: Equatable, Sendable {
+    static let fall = 1.2
+    private(set) var peak = 0.0
+
+    mutating func reset() { peak = 0 }
+
+    mutating func step(dt: Double, audio: VisualizationAudio) -> Double {
+        guard audio.available else { peak = 0; return peak }
+        let swing = audio.waveform.lazy.filter(\.isFinite).map { min(1, abs($0)) }.max() ?? 0
+        let elapsed = dt.isFinite ? max(0, dt) : 0
+        guard elapsed > 0 || swing > peak else { return peak }
+        peak = max(swing, peak * exp(-elapsed / Self.fall))
+        return peak
+    }
+}
+
 enum WaveformRenderer {
+    static let paleBlue = SpectrumBarsRenderer.paleBlue
+    static let yellow = SpectrumBarsRenderer.yellow
+    static let softRed = SpectrumBarsRenderer.softRed
+    static let cream = Color(red: 0xF1 / 255, green: 0xEB / 255, blue: 0xDD / 255)
+    /// The trace's width in points.
+    static let stroke: CGFloat = 1.6
+
+    struct Layout: Equatable, Sendable {
+        /// The disc from Spectrum bars: the oscilloscope's screen.
+        var disc: CGRect
+        /// The trace runs across this rect: its middle is the centre line and
+        /// its top and bottom are full scale.
+        var plot: CGRect
+    }
+
+    /// Centred on the scene: a disc of 40% of the height (at most 24% of the
+    /// width) as radius, and a trace about 1.95 radii to each side.
+    static func layout(size: CGSize) -> Layout {
+        let width = max(0, size.width), height = max(0, size.height)
+        let centre = CGPoint(x: width / 2, y: height / 2)
+        let radius = min(height * 0.40, width * 0.24)
+        let half = min(width * 0.365, radius * 1.95), full = radius * 0.82
+        return Layout(disc: CGRect(x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2),
+                      plot: CGRect(x: centre.x - half, y: centre.y - full, width: half * 2, height: full * 2))
+    }
+
     /// A fixed +/-1 PCM scale leaves room for full-scale peaks and their stroke.
     /// Linear segments cannot overshoot the measured signal between samples.
     static func geometry(samples: [Double], available: Bool, size: CGSize) -> WaveformGeometry {
         guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else {
             return .init(points: [], plotRect: .zero, state: .waiting)
         }
-        let inset = min(size.width * 0.15, max(12, min(64, size.width * 0.055)))
-        let plot = CGRect(x: inset, y: size.height * 0.16,
-                          width: size.width - inset * 2, height: size.height * 0.68)
+        let plot = layout(size: size).plot
         let resting = [CGPoint(x: plot.minX, y: plot.midY), CGPoint(x: plot.maxX, y: plot.midY)]
         guard available, !samples.isEmpty, samples.contains(where: \.isFinite) else {
             return .init(points: resting, plotRect: plot, state: .waiting)
@@ -79,33 +122,57 @@ enum WaveformRenderer {
         return path
     }
 
-    /// Shared production/offscreen entry point. Time is accepted for renderer
-    /// integration, but only a new PCM buffer can change the displayed trace.
+    /// One trace of the measured samples (about 23 ms) at a fixed scale,
+    /// drawn on the room with the bars' dark disc as its screen and brighter
+    /// inside it. Small ticks mark half and full scale and each quarter of
+    /// the window, with no labels. The yellow dot marks where every trace
+    /// starts: a rising crossing of the centre line. Soft-red ticks hold the
+    /// widest swing of the last second or so. Before samples arrive, or in
+    /// silence, the trace rests on its centre line.
     static func draw(in context: inout GraphicsContext, size: CGSize,
-                     audio: VisualizationAudio, time _: Double, glow: Bool) {
+                     audio: VisualizationAudio, time _: Double, glow _: Bool,
+                     peak: Double = 0, place: EffectPlace = .room) {
         let geometry = geometry(samples: audio.waveform, available: audio.available, size: size)
         guard !geometry.points.isEmpty else { return }
-        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(red: 0.009, green: 0.017, blue: 0.021)))
+        let layout = layout(size: size)
+        let plot = geometry.plotRect
+        let disc = Path(ellipseIn: layout.disc)
+        context.fill(disc, with: .color(place == .room ? SpectrumBarsRenderer.roomDisc : SpectrumBarsRenderer.stageDisc))
 
-        // Three quiet horizontal references, with no animated grid or scale
-        // labels competing with the signal or the enclosing player's metadata.
-        for level in [-0.5, 0, 0.5] {
-            let y = geometry.centerY - CGFloat(level) * geometry.plotRect.height / 2
-            var rule = Path()
-            rule.move(to: .init(x: geometry.plotRect.minX, y: y))
-            rule.addLine(to: .init(x: geometry.plotRect.maxX, y: y))
-            context.stroke(rule, with: .color(Color(red: 0.50, green: 0.69, blue: 0.72).opacity(level == 0 ? 0.065 : 0.028)),
-                           style: StrokeStyle(lineWidth: 0.5))
+        var rule = Path()
+        rule.move(to: CGPoint(x: plot.minX, y: plot.midY)); rule.addLine(to: CGPoint(x: plot.maxX, y: plot.midY))
+        context.stroke(rule, with: .color(cream.opacity(0.10)), lineWidth: 1)
+        var ticks = Path()
+        for level in [-1.0, -0.5, 0.5, 1.0] {
+            let y = plot.midY - CGFloat(level) * plot.height / 2
+            ticks.move(to: CGPoint(x: plot.midX - 5, y: y)); ticks.addLine(to: CGPoint(x: plot.midX + 5, y: y))
         }
+        for quarter in 1...3 {
+            let x = plot.minX + plot.width * CGFloat(quarter) / 4
+            ticks.move(to: CGPoint(x: x, y: plot.midY - 3)); ticks.addLine(to: CGPoint(x: x, y: plot.midY + 3))
+        }
+        context.stroke(ticks, with: .color(cream.opacity(0.22)), lineWidth: 1)
+
+        guard geometry.state == .signal else {
+            // Waiting or silent: one resting line, dimmer while no samples arrive at all.
+            context.stroke(rule, with: .color(paleBlue.opacity(geometry.state == .silent ? 0.55 : 0.30)),
+                           style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+            return
+        }
+        let style = StrokeStyle(lineWidth: stroke, lineCap: .round, lineJoin: .round)
         let trace = path(for: geometry)
-        let waiting = geometry.state == .waiting
-        // A narrow low-opacity halo supplies separation without a blur surface
-        // or a bright envelope that would turn dense PCM into a solid ribbon.
-        if glow, geometry.state == .signal {
-            context.stroke(trace, with: .color(Color(red: 0.34, green: 0.82, blue: 0.85).opacity(0.055)),
-                           style: StrokeStyle(lineWidth: 3.2, lineCap: .round, lineJoin: .round))
+        context.stroke(trace, with: .color(paleBlue.opacity(0.42)), style: style)
+        var inside = context
+        inside.clip(to: disc)
+        inside.stroke(trace, with: .color(paleBlue.opacity(0.96)), style: style)
+        context.fill(Path(ellipseIn: CGRect(x: plot.minX - 3.5, y: plot.midY - 3.5, width: 7, height: 7)), with: .color(yellow))
+        let held = peak.isFinite ? min(1, max(0, peak)) : 0
+        if held > 0.02 {
+            for sign in [-1.0, 1.0] {
+                let y = plot.midY - CGFloat(sign * held) * plot.height / 2
+                context.fill(Path(roundedRect: CGRect(x: plot.maxX + 8, y: y - 1, width: 14, height: 2), cornerRadius: 1),
+                             with: .color(softRed.opacity(0.9)))
+            }
         }
-        context.stroke(trace, with: .color(Color(red: 0.76, green: 0.94, blue: 0.95).opacity(waiting ? 0.30 : 0.92)),
-                       style: StrokeStyle(lineWidth: waiting ? 0.8 : 1.05, lineCap: .round, lineJoin: .round))
     }
 }

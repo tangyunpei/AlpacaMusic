@@ -19,7 +19,7 @@ struct NowStageView: View {
             // shows instead. While one gives way to the other both are here; at
             // rest only one is, so a visual that is not shown costs nothing.
             if metrics.cover < 0.999 {
-                NowStageVisual(model: model)
+                NowStageVisual(model: model, stacked: metrics.stacked)
                     .frame(width: metrics.visualFrame.width, height: metrics.visualFrame.height)
                     .offset(x: metrics.visualFrame.minX, y: metrics.visualFrame.minY)
                     .opacity(Double(1 - metrics.cover))
@@ -64,9 +64,7 @@ struct NowStageView: View {
     /// listener's choice is not touched, so it is back with the next song
     /// that has live audio. Whether a source can give audio decides this, not
     /// whether samples have arrived: a song still loading keeps its visual.
-    static func standsIn(_ model: AppModel) -> Bool {
-        model.player.current?.source.supportsAudioAnalysis == false && model.visualMode.isSignalDisplay
-    }
+    static func standsIn(_ model: AppModel) -> Bool { model.coverStandsIn }
     /// The cover shows: as the chosen visual, or standing in for one.
     static func shows(_ model: AppModel) -> Bool { model.visualMode == .artwork || standsIn(model) }
 }
@@ -80,6 +78,8 @@ struct NowStageView: View {
 private struct NowStageVisual: View {
     @Environment(\.nowMotion) private var motion
     let model: AppModel
+    /// How far the text has moved below the visual, 0 to 1.
+    let stacked: CGFloat
     /// The visual last drawn here.
     @State private var last: VisualizationMode?
 
@@ -91,7 +91,8 @@ private struct NowStageVisual: View {
                 MusicVisualizationView(track: model.activeTrack, mode: mode, settings: model.visual,
                                        // A visual on its way out for want of audio rests rather than wait for samples.
                                        isPlaying: model.player.status == .playing && !NowCover.standsIn(model),
-                                       signal: { model.player.readLevels() }, showsStatus: false, showsMissingAudioStatus: false)
+                                       signal: { model.player.readLevels() }, showsStatus: false, showsMissingAudioStatus: false,
+                                       place: .stage(stacked: stacked))
                     .id(mode).transition(.opacity)
             }
         }
@@ -459,9 +460,7 @@ private struct NowVisualChip: View {
         .background(style.chipFill, in: .rect(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(style.chipLine))
         .nowMenu {
-            Picker(L10n.string("视觉效果"), selection: Binding(get: { model.visualMode }, set: { model.visualMode = $0 })) {
-                ForEach(VisualizationMode.allCases) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
-            }.pickerStyle(.inline)
+            VisualizationModePicker(selection: Binding(get: { model.visualMode }, set: { model.visualMode = $0 }))
             Divider()
             Button(L10n.string("调整视觉效果…")) { model.sheet = .visual }
         }

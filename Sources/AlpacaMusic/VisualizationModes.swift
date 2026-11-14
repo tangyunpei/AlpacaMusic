@@ -1,15 +1,30 @@
 import Foundation
 
+/// The effects, in menu order. A saved choice of an effect that no longer
+/// exists is restored as the default, because the choice is stored by name.
 enum VisualizationMode: String, CaseIterable, Codable, Identifiable, Sendable {
-    case pointCloud, spectrumRing, ribbons, starfield, waveform, spectrumBars, harmonograph, spectralHorizon, bauhaus, artwork
+    case artwork, pointCloud, bauhaus, spectrumBars, waveform, spectralHorizon, harmonograph
+
+    /// Where an effect sits in the menu.
+    enum Group: CaseIterable, Identifiable, Sendable {
+        case cover, shapes, liveAudio
+        var id: Self { self }
+        var title: String {
+            switch self {
+            case .cover: L10n.string("来自封面")
+            case .shapes: L10n.string("图形")
+            case .liveAudio: L10n.string("需要实时音频")
+            }
+        }
+        var modes: [VisualizationMode] { VisualizationMode.allCases.filter { $0.group == self } }
+    }
+
+    static let standard = VisualizationMode.artwork
 
     var id: String { rawValue }
     var title: String {
         switch self {
         case .pointCloud: L10n.string("点云封面")
-        case .spectrumRing: L10n.string("轨道光场")
-        case .ribbons: L10n.string("流光绸缎")
-        case .starfield: L10n.string("深空航行")
         case .waveform: L10n.string("音频示波器")
         case .spectrumBars: L10n.string("竖条频谱")
         case .harmonograph: L10n.string("谐波图")
@@ -21,9 +36,6 @@ enum VisualizationMode: String, CaseIterable, Codable, Identifiable, Sendable {
     var symbol: String {
         switch self {
         case .pointCloud: "square.stack.3d.up"
-        case .spectrumRing: "circle.dotted.circle"
-        case .ribbons: "water.waves"
-        case .starfield: "sparkles"
         case .waveform: "waveform.path"
         case .spectrumBars: "chart.bar.xaxis"
         case .harmonograph: "infinity"
@@ -32,14 +44,16 @@ enum VisualizationMode: String, CaseIterable, Codable, Identifiable, Sendable {
         case .artwork: "square.on.square"
         }
     }
-    var isAudioReactive: Bool { self != .artwork }
-    /// Signal displays plot measured audio and stay still without new samples.
-    var isSignalDisplay: Bool {
+    var group: Group {
         switch self {
-        case .waveform, .spectrumBars, .harmonograph, .spectralHorizon: true
-        case .pointCloud, .spectrumRing, .ribbons, .starfield, .bauhaus, .artwork: false
+        case .artwork, .pointCloud: .cover
+        case .bauhaus: .shapes
+        case .spectrumBars, .waveform, .spectralHorizon, .harmonograph: .liveAudio
         }
     }
+    var isAudioReactive: Bool { self != .artwork }
+    /// Signal displays plot measured audio and have nothing to draw without it.
+    var isSignalDisplay: Bool { group == .liveAudio }
 }
 
 /// Unavailable audio never becomes synthesized energy or a fabricated spectrum.

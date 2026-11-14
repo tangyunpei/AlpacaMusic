@@ -125,25 +125,30 @@ struct VisualSettingsView: View {
                 .accessibilityLabel(L10n.string("迷你播放器样式"))
                 .accessibilityIdentifier("mini-player-style-picker")
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
-                ForEach(VisualizationMode.allCases) { mode in
-                    Button { model.visualMode = mode } label: {
-                        VStack(spacing: 10) {
-                            Image(systemName: mode.symbol).font(.system(size: 22, weight: .light))
-                            Text(mode.title).font(.system(size: 10)).lineLimit(2)
-                                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                                .frame(minHeight: 28)
-                        }.foregroundStyle(model.visualMode == mode ? palette.accent : palette.secondary)
-                            .frame(maxWidth: .infinity).padding(.vertical, 15)
-                            .background(palette.accent.opacity(model.visualMode == mode ? 0.12 : 0.03), in: .rect(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.accent.opacity(model.visualMode == mode ? 0.4 : 0.09)))
-                    }.buttonStyle(.plain).accessibilityLabel(L10n.string("视觉效果：\(mode.title)"))
-                        .accessibilityAddTraits(model.visualMode == mode ? [.isSelected] : [])
+            ForEach(VisualizationMode.Group.allCases) { group in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(group.title).font(.system(size: 10, weight: .medium)).foregroundStyle(palette.secondary)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                        ForEach(group.modes) { mode in
+                            Button { model.visualMode = mode } label: {
+                                VStack(spacing: 10) {
+                                    Image(systemName: mode.symbol).font(.system(size: 22, weight: .light))
+                                    Text(mode.title).font(.system(size: 10)).lineLimit(2)
+                                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                                        .frame(minHeight: 28)
+                                }.foregroundStyle(model.visualMode == mode ? palette.accent : palette.secondary)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 15)
+                                    .background(palette.accent.opacity(model.visualMode == mode ? 0.12 : 0.03), in: .rect(cornerRadius: 10))
+                                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.accent.opacity(model.visualMode == mode ? 0.4 : 0.09)))
+                            }.buttonStyle(.plain).accessibilityLabel(L10n.string("视觉效果：\(mode.title)"))
+                                .accessibilityAddTraits(model.visualMode == mode ? [.isSelected] : [])
+                        }
+                    }
                 }
             }
-            if !model.canVisualizeActiveTrack {
+            if model.player.current?.source.supportsAudioAnalysis == false {
                 Label(model.visualMode.isSignalDisplay
-                      ? L10n.string("当前无法获取 \(model.activeTrack?.source.title ?? L10n.string("此音源")) 实时音频，波形与频谱不随音乐变化。")
+                      ? L10n.string("\(model.visualMode.title)需要实时音频，这个音源没有，暂由专辑封面代替。")
                       : L10n.string("\(model.activeTrack?.source.title ?? L10n.string("此音源")) 使用氛围动画，无法根据实时音频变化。"), systemImage: "sparkles")
                     .font(.system(size: 10)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
             }
@@ -156,7 +161,7 @@ struct VisualSettingsView: View {
                     }
                 }
                 HStack(spacing: 22) {
-                    VStack(alignment: .leading, spacing: 9) { Text(L10n.string("点云密度")).font(.system(size: 11)); Picker(L10n.string("点云密度"), selection: $model.visual.density) { Text(L10n.string("稀疏")).tag(96); Text(L10n.string("均衡")).tag(160); Text(L10n.string("密集")).tag(224) }.labelsHidden() }
+                    VStack(alignment: .leading, spacing: 9) { Text(L10n.string("点云密度")).font(.system(size: 11)); Picker(L10n.string("点云密度"), selection: $model.visual.density) { Text(L10n.string("稀疏")).tag(96); Text(L10n.string("均衡")).tag(160); Text(L10n.string("密集")).tag(224); Text(L10n.string("非常密集")).tag(320) }.labelsHidden() }
                     Spacer()
                     VStack(alignment: .leading, spacing: 9) { Text(L10n.string("运动方式")).font(.system(size: 11)); Picker(L10n.string("运动方式"), selection: $model.visual.scheme) { Text(L10n.string("轻盈跃动")).tag(0); Text(L10n.string("纵深呼吸")).tag(1) }.labelsHidden() }
                 }.foregroundStyle(palette.secondary)
@@ -180,7 +185,8 @@ struct VisualSettingsView: View {
                 toggle(L10n.string("减少动态效果"), $model.visual.reduceMotion)
                 toggle(L10n.string("低电量模式节能"), $model.visual.batterySaver)
                 // The point cloud shows this toggle with its own controls above.
-                if model.visualMode != .pointCloud && model.visualMode.isAudioReactive { toggle(L10n.string("柔和辉光"), $model.visual.glow) }
+                // Only the Bauhaus composition still draws a glow; the redesigned effects have none.
+                if model.visualMode == .bauhaus { toggle(L10n.string("柔和辉光"), $model.visual.glow) }
             }
             if osReduced { Text(L10n.string("已遵循系统的“减少动态效果”设置。")).font(.system(size: 10)).foregroundStyle(palette.secondary).frame(maxWidth: .infinity, alignment: .leading) }
         }.tint(palette.accent).animation(ExperienceMotion.control, value: model.visualMode)

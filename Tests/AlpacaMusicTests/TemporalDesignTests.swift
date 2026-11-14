@@ -168,26 +168,7 @@ import Testing
         }
     }
 
-    @Test func orbitalFieldUsesMeasuredBandTracesWhilePreservingItsAmbientMotion() throws {
-        let probeSize = CGSize(width: 640, height: 360)
-        let noAudio = try TemporalDesignExport.rgba(TemporalDesignExport.visualization(mode: .spectrumRing, time: 3, size: probeSize))
-        let scalarsWithoutTraces = AudioLevels(energy: 0.9, beat: 1, available: true,
-                                             amplitude: 0.8, bass: 1, mid: 1, treble: 1)
-        let scalarFrame = try TemporalDesignExport.rgba(TemporalDesignExport.visualization(
-            mode: .spectrumRing, time: 3, audio: scalarsWithoutTraces, size: probeSize))
-        // The orbital appearance has its own gentle motion. A beat or a band
-        // scalar alone must not be presented as an invented oscilloscope trace.
-        #expect(noAudio == scalarFrame)
-        let laterAmbient = try TemporalDesignExport.rgba(TemporalDesignExport.visualization(mode: .spectrumRing, time: 4, size: probeSize))
-        #expect(noAudio != laterAmbient)
-        let tones = [80.0, 1_000, 8_000].map { TemporalDesignFixture.tone(frequencies: [$0]) }
-        let pixels = try tones.map { try TemporalDesignExport.rgba(TemporalDesignExport.visualization(
-            mode: .spectrumRing, time: 3, audio: $0, size: probeSize)) }
-        #expect(pixels.allSatisfy { $0 != noAudio })
-        #expect(pixels[0] != pixels[1] && pixels[1] != pixels[2] && pixels[0] != pixels[2])
-    }
-
-    /// Focused production-Metal orbit and Canvas bar evidence. Inputs are
+    /// Focused Canvas bar evidence. Inputs are
     /// original deterministic PCM, analysed by the same production DSP helper.
     @Test func exportBandScopeEvidence() async throws {
         guard let directoryPath = ProcessInfo.processInfo.environment["ALPACA_EXPORT_BAND_SCOPES"] else { return }
@@ -203,7 +184,7 @@ import Testing
         ]
         var contact: [(String, CGImage)] = []
         for (index, item) in cases.enumerated() {
-            for mode in [VisualizationMode.spectrumRing, .spectrumBars] {
+            for mode in [VisualizationMode.spectrumBars] {
                 let frame = try TemporalDesignExport.visualization(mode: mode, time: 0, audio: item.1, size: size)
                 let name = "\(mode.title) / \(item.0)"
                 contact.append((name, frame))
@@ -212,32 +193,23 @@ import Testing
         }
         try TemporalDesignExport.contactSheet(contact, columns: 2, to: directory.appending(path: "band-scopes-contact-sheet.png"))
         let readme = """
-        Original production 3D orbital particle field and Canvas vertical bars receive original synthetic QA PCM.
+        Production Canvas vertical bars receive original synthetic QA PCM.
         8,192 signed samples at 44.1 kHz pass through AudioBandAnalysis.analyze.
-        All three orbital band traces and FFT bins come from that production DSP helper.
+        All FFT bins come from that production DSP helper.
         Tone checks: silence; 80 Hz; 1 kHz; 8 kHz; equally weighted mixed tones.
-        Production orbit rendering has no LOW/MID/HIGH labels; only export captions identify QA input cases.
-        With no band PCM, the original orbital ambience remains, without manufactured audio modulation.
-        Still images use raw analysis values. Orbit movies use ParticleFieldMotionClock; bars use VisualizationClock.
+        Still images use raw analysis values. Movies use VisualizationClock.
         Movies are intentionally silent and labelled as synthetic test inputs.
         They do not establish Apple Music capture support or native frame rate.
         """
         try Data(readme.utf8).write(to: directory.appending(path: "README.txt"), options: .atomic)
         if ProcessInfo.processInfo.environment["ALPACA_BAND_SCOPES_VIDEO"] == "1" {
-            for mode in [VisualizationMode.spectrumRing, .spectrumBars] {
+            for mode in [VisualizationMode.spectrumBars] {
                 let signalClock = VisualizationClock()
-                var particleClock = ParticleFieldMotionClock()
                 try await TemporalDesignExport.movie(to: directory.appending(path: "\(mode.rawValue)-preview.mp4"), duration: 12) { time in
                     let levels = TemporalDesignFixture.signal(at: time)
-                    let image: CGImage
-                    if mode.isSignalDisplay {
-                        let frame = signalClock.frame(at: Date(timeIntervalSinceReferenceDate: time), animated: true,
-                                                      levels: levels, playing: true)
-                        image = try TemporalDesignExport.signal(mode: mode, time: frame.time, audio: frame.audio, size: size)
-                    } else {
-                        let frame = particleClock.frame(at: time, animated: true, levels: levels)
-                        image = try TemporalDesignExport.visualization(mode: mode, time: Double(frame.time), audio: frame.audio, size: size)
-                    }
+                    let frame = signalClock.frame(at: Date(timeIntervalSinceReferenceDate: time), animated: true,
+                                                  levels: levels, playing: true)
+                    let image = try TemporalDesignExport.signal(mode: mode, time: frame.time, audio: frame.audio, size: size)
                     return try TemporalDesignExport.labelled(image,
                         text: "合成测试音频 / \(TemporalDesignFixture.phase(at: time)) / \(String(format: "%.2f", time))s", size: size)
                 }
@@ -296,13 +268,11 @@ import Testing
         try TemporalDesignExport.contactSheet(lyricContact, columns: 3, to: directory.appending(path: "lyric-storyboard.png"))
         let instructions = """
         Engineering exports only; no visual-quality acceptance is implied.
-        Production particle renderer: native Metal pipeline into a shared sRGB texture, fixed seed.
-        Original 3D orbital field: native Metal preserves the particle-tube composition while actual band-filtered PCM modulates its three tubes.
         Production signal renderers: waveform and vertical bars use Canvas receiving analysed signed QA PCM.
         Static snapshots and adjacent-frame diagnostics use raw fixture inputs to isolate renderer behavior.
-        Videos advance the production ParticleFieldMotionClock or VisualizationClock sequentially at 30fps before drawing.
+        Videos advance the production VisualizationClock sequentially at 30fps before drawing.
         The available source supplies zeros at the stop, so the production clocks perform their normal release rather than discarding the signal.
-        Unavailable-audio captures at 0/1/3 seconds: particles show ambience; signal displays remain stationary.
+        Unavailable-audio captures at 0/1/3 seconds: signal displays remain stationary.
         Production kinetic view: original line-timed text (no invented word timing).
         Optional videos are silent, 960x540 at 30fps. Watch them at normal speed, not just their contact sheets.
         Synthetic QA signal: silence 0–2s, 80Hz impulses 2–5s, 80Hz-to-12kHz sweep 5–7s, mixed-band crescendo 7–10s, silence 10–12s.
@@ -314,19 +284,12 @@ import Testing
         try Data(instructions.utf8).write(to: directory.appending(path: "README.txt"), options: .atomic)
         if ProcessInfo.processInfo.environment["ALPACA_TEMPORAL_QA_VIDEO"] == "1" {
             for mode in TemporalDesignFixture.modes {
-                var particleClock = ParticleFieldMotionClock()
                 let waveformClock = VisualizationClock()
                 try await TemporalDesignExport.movie(to: directory.appending(path: "\(mode.rawValue)-signal-study.mp4"), duration: 12) { time in
                     let levels = TemporalDesignFixture.signal(at: time)
-                    let frame: CGImage
-                    if mode.isSignalDisplay {
-                        let smoothed = waveformClock.frame(at: Date(timeIntervalSinceReferenceDate: time), animated: true,
-                                                           levels: levels, playing: true)
-                        frame = try TemporalDesignExport.signal(mode: mode, time: smoothed.time, audio: smoothed.audio, size: size)
-                    } else {
-                        let smoothed = particleClock.frame(at: time, animated: true, levels: levels)
-                        frame = try TemporalDesignExport.visualization(mode: mode, time: Double(smoothed.time), audio: smoothed.audio, size: size)
-                    }
+                    let smoothed = waveformClock.frame(at: Date(timeIntervalSinceReferenceDate: time), animated: true,
+                                                       levels: levels, playing: true)
+                    let frame = try TemporalDesignExport.signal(mode: mode, time: smoothed.time, audio: smoothed.audio, size: size)
                     return try TemporalDesignExport.labelled(frame,
                         text: "SYNTHETIC QA / \(TemporalDesignFixture.phase(at: time)) / \(String(format: "%.2f", time))s", size: size)
                 }

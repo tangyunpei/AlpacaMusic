@@ -8,7 +8,7 @@ struct SpectrumBarsPresentation: Equatable, Sendable {
     var peaks: [Double]
     var state: WaveformGeometry.State
 
-    static let barCount = 72
+    static let barCount = 96
     static let empty = SpectrumBarsPresentation(levels: [], peaks: [], state: .waiting)
 }
 

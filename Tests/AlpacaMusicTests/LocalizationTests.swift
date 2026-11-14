@@ -27,7 +27,7 @@ import Testing
         #expect(L10n.string("播放队列", language: .english) == "Play Queue")
         #expect(L10n.string("播放队列", language: .simplifiedChinese) == "播放队列")
         #expect(L10n.string("跟随系统", language: .english) == "Follow System")
-        #expect(L10n.string("轨道光场", language: .english) == "Orbital Light")
+        #expect(L10n.string("谐波图", language: .english) == "Harmonograph")
     }
     @Test func typedInterpolationKeepsUserContentAndSupportsPluralCounts() {
         let name = "我的歌单 🎵"

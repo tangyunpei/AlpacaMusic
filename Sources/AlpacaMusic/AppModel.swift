@@ -115,6 +115,7 @@ final class AppModel {
     var officialPlaybackTrack: Track?
     var notice: String?
     var visual: VisualSettings { didSet { persistVisual() } }
+    static let abstractionDefaultMoved = "visual-abstraction-default-moved-to-0"
     var presets: [VisualPreset] { didSet { if let data = try? JSONEncoder().encode(presets) { preferences.set(data, forKey: "visual-presets") } } }
     @ObservationIgnored private let preferences: UserDefaults
     @ObservationIgnored private var visibleCache: (key: VisibleTrackKey, tracks: [Track])?
@@ -152,7 +153,7 @@ final class AppModel {
         automaticLyricAudioAlignment = audioAlignment
         lyrics = LyricsController(client: native, directory: directory, automaticAppleMusicLookup: automaticLyrics,
                                   platformWordLyrics: platformWords, automaticAudioAlignment: audioAlignment)
-        visualMode = preferences.string(forKey: "visualization-mode").flatMap(VisualizationMode.init(rawValue:)) ?? .pointCloud
+        visualMode = preferences.string(forKey: "visualization-mode").flatMap(VisualizationMode.init(rawValue:)) ?? .standard
         lyricPresentation = preferences.string(forKey: "lyrics-presentation").flatMap(LyricPresentationMode.init(rawValue:)) ?? .scroll
         sourceService = SourceService(native: native)
         appleMusic = AppleMusicService(defaults: preferences)
@@ -160,13 +161,32 @@ final class AppModel {
         player = PlayerController(sources: sourceService, defaults: preferences, appleMusic: appleMusic, spotify: spotify)
         autoImport = AutoImportCoordinator(library: library, accounts: accounts, appleMusic: appleMusic, spotify: spotify)
         browse = BrowseStore(loader: browseLoader ?? PlatformBrowseLoader(accounts: accounts, appleMusic: appleMusic), defaults: preferences)
-        visual = (preferences.data(forKey: "visual-settings").flatMap { try? JSONDecoder().decode(VisualSettings.self, from: $0) } ?? .standard).validated()
+        var savedVisual = (preferences.data(forKey: "visual-settings").flatMap { try? JSONDecoder().decode(VisualSettings.self, from: $0) } ?? .standard).validated()
+        // Abstraction's default moved from 0.2 to 0 (true colours, every point).
+        // Settings saved at the old default move with it, once; a value the
+        // listener chose themselves stays.
+        if !preferences.bool(forKey: Self.abstractionDefaultMoved) {
+            if savedVisual.abstraction == 0.2, preferences.data(forKey: "visual-settings") != nil {
+                savedVisual.abstraction = 0
+                if let data = try? JSONEncoder().encode(savedVisual) { preferences.set(data, forKey: "visual-settings") }
+            }
+            preferences.set(true, forKey: Self.abstractionDefaultMoved)
+        }
+        visual = savedVisual
         presets = preferences.data(forKey: "visual-presets").flatMap { try? JSONDecoder().decode([VisualPreset].self, from: $0) }?.map { VisualPreset(id: $0.id, name: $0.name, settings: $0.settings.validated()) } ?? []
         autoImport.onNotice = { [weak self] message in self?.notify(message) }
     }
 
     var activeTrack: Track? { player.current ?? library.tracks.first }
-    var canVisualizeActiveTrack: Bool { activeTrack?.source.supportsAudioAnalysis ?? true }
+    /// A "Needs live audio" effect has nothing to draw for a source that
+    /// gives no audio (Apple Music, Spotify), so the cover stands in while
+    /// such a song is the current one, on the Now stage and in the room.
+    /// Decided when drawn: `visualMode` keeps the listener's choice, which is
+    /// back with the next song that has live audio. Whether the source can
+    /// give audio decides this, not whether samples have arrived yet.
+    var coverStandsIn: Bool { player.current?.source.supportsAudioAnalysis == false && visualMode.isSignalDisplay }
+    /// The effect actually drawn: the chosen one, or Album artwork standing in.
+    var shownVisualMode: VisualizationMode { coverStandsIn ? .artwork : visualMode }
     var selectedPlaylist: MusicPlaylist? {
         if case let .playlist(id) = destination { return library.playlists.first { $0.id == id } }
         return nil
@@ -573,8 +593,8 @@ extension VisualSettings {
     func validated() -> Self {
         var v = self
         func clamp(_ value: Float, _ low: Float, _ high: Float, _ fallback: Float) -> Float { value.isFinite ? min(high, max(low, value)) : fallback }
-        v.density = [96, 160, 224].contains(v.density) ? v.density : 160
-        v.abstraction = clamp(v.abstraction, 0, 1, 0.2)
+        v.density = VisualSettings.densities.contains(v.density) ? v.density : 160
+        v.abstraction = clamp(v.abstraction, 0, 1, 0)
         v.pointSize = clamp(v.pointSize, 0.5, 4, 1.8); v.depth = clamp(v.depth, 0, 1, 0.35)
         v.bounce = clamp(v.bounce, 0, 0.4, 0.16); v.speed = clamp(v.speed, 0.5, 8, 3.5)
         v.frequency = clamp(v.frequency, 1, 10, 4); v.idle = clamp(v.idle, 0, 0.05, 0.012)
