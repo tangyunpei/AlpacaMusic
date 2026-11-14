@@ -69,20 +69,16 @@ import Testing
         let silent = VisualizationAudio(input())
         let silence = try pixels(.init(time: 0, audio: silent), size: size, glow: false)
         #expect(empty == silence)
-        // Sample a wide two-dimensional area. Only the room and the disc
-        // behind the bars may show (its antialiased rim aside): any dormant
-        // segmented wall, fake bars or noise would add colours.
-        let disc = SpectrumBarsRenderer.layout(size: size, count: SpectrumBarsPresentation.barCount, place: .room).disc
+        // Sample a wide two-dimensional area. Only the room may show: any
+        // dormant segmented wall, fake bars, a backdrop or noise would add colours.
         var colours = Set<[UInt8]>()
         for y in stride(from: 4, through: 176, by: 3) {
             for x in stride(from: 4, through: 316, by: 3) {
-                let distance = hypot(CGFloat(x) + 0.5 - disc.midX, CGFloat(y) + 0.5 - disc.midY)
-                guard abs(distance - disc.width / 2) > 1.5 else { continue }
                 let offset = (y * 320 + x) * 4
                 colours.insert(Array(empty[offset..<offset + 3]))
             }
         }
-        #expect(colours.count == 2)
+        #expect(colours.count == 1)
     }
 
     @Test @MainActor func activeColumnReadsAsOneContinuousFrequencyShape() throws {

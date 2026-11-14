@@ -37,8 +37,8 @@ enum SpectrumBarsRenderer {
     static let paleBlue = Color(red: 0xAA / 255, green: 0xC7 / 255, blue: 0xEE / 255)
     static let yellow = Color(red: 0xE4 / 255, green: 0xBC / 255, blue: 0x35 / 255)
     static let softRed = Color(red: 0xE0 / 255, green: 0x70 / 255, blue: 0x5C / 255)
-    /// The disc behind the bars: lighter in the room, where the darker stage
-    /// tone vanished against the room's centre glow.
+    /// The disc behind the Harmonograph: lighter in the room, where the darker
+    /// stage tone vanished against the room's centre glow.
     static let roomDisc = Color(red: 0x25 / 255, green: 0x2E / 255, blue: 0x3F / 255)
     static let stageDisc = Color(red: 0x17 / 255, green: 0x1E / 255, blue: 0x2B / 255)
 
@@ -76,20 +76,17 @@ enum SpectrumBarsRenderer {
         var pitch: CGFloat
         /// The gap between the baseline and the top of the mirror.
         var mirrorGap: CGFloat
-        var disc: CGRect
-        var discColor: Color
     }
 
-    /// The room: 96 columns, 6 wide with 5 between at the default window,
-    /// centred, on a disc that sits on the baseline. The Now stage: columns
-    /// 4 wide with 3 between across the visual's whole width, and a darker
-    /// disc to the right (centred once the text sits below).
     /// The height of the largest 1440 x 676 box (the room's scene in the
     /// default window) that fits in `size`: what room effects scale with.
     static func roomUnit(_ size: CGSize) -> CGFloat {
         max(0, min(size.height, size.width * 676 / 1440))
     }
 
+    /// The room: 96 columns, 6 wide with 5 between at the default window,
+    /// centred. The Now stage: columns 4 wide with 3 between across the
+    /// visual's whole width.
     static func layout(size: CGSize, count: Int, place: EffectPlace) -> Layout {
         let width = max(0, size.width), height = max(0, size.height)
         let count = CGFloat(max(1, count))
@@ -97,17 +94,14 @@ enum SpectrumBarsRenderer {
         case .room:
             // Measured on the room frame, a 1440 x 676 scene, and scaled to the
             // largest such box that fits, centred: a tall window does not
-            // stretch the disc past its sides.
+            // stretch the bars.
             let unit = roomUnit(size)
             let baseline = height / 2 + (0.728 - 0.5) * unit
             let tall = unit * 0.503
             let plotWidth = min(width * 0.73, unit * 1.56)
             let pitch = plotWidth / count
-            let disc = unit * 0.71
             return Layout(plot: CGRect(x: (width - plotWidth) / 2, y: baseline - tall, width: plotWidth, height: tall),
-                          columnWidth: pitch * 6 / 11, pitch: pitch, mirrorGap: 3,
-                          disc: CGRect(x: (width - disc) / 2, y: baseline - disc, width: disc, height: disc),
-                          discColor: roomDisc)
+                          columnWidth: pitch * 6 / 11, pitch: pitch, mirrorGap: 3)
         case .stage:
             let stacked = place.stacked
             // Beside the text the baseline sits at 73% of the stage; below it,
@@ -115,13 +109,8 @@ enum SpectrumBarsRenderer {
             let baseline = (height * 0.73) * (1 - stacked) + max(0, height - 40) * stacked
             let tall = max(0, min(height * 0.46, baseline - 70))
             let pitch = width / count
-            let disc = height * 0.6
-            let besideRight = width * 0.79
-            let discMinX = (besideRight - disc) * (1 - stacked) + ((width - disc) / 2) * stacked
             return Layout(plot: CGRect(x: 0, y: baseline - tall, width: width, height: tall),
-                          columnWidth: pitch * 4 / 7, pitch: pitch, mirrorGap: 3,
-                          disc: CGRect(x: discMinX, y: baseline - disc, width: disc, height: disc),
-                          discColor: stageDisc)
+                          columnWidth: pitch * 4 / 7, pitch: pitch, mirrorGap: 3)
         }
     }
 
@@ -171,7 +160,7 @@ enum SpectrumBarsRenderer {
         return .init(bars: bars, plotRect: plot, state: state)
     }
 
-    /// Thin columns with rounded tops on a dark disc, drawn on the room or the
+    /// Thin columns with rounded tops, drawn on the room or the
     /// stage with no panel of their own. A column's colour is fixed by its
     /// place in the row; its height and brightness are the measured level.
     /// Below the baseline a faint mirror repeats each column at 38%.
@@ -181,9 +170,6 @@ enum SpectrumBarsRenderer {
         let geometry = geometry(audio: audio, size: size, presentation: presentation, place: place)
         guard !geometry.bars.isEmpty else { return }
         let layout = layout(size: size, count: geometry.bars.count, place: place)
-        if layout.disc.width > 0 {
-            context.fill(Path(ellipseIn: layout.disc), with: .color(layout.discColor))
-        }
         let plot = geometry.plotRect
         guard plot.width > 0, plot.height > 0 else { return }
         var mirror = context

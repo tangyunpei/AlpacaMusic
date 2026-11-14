@@ -30,9 +30,6 @@ import Testing
         #expect(abs(layout.columnWidth - 6) < 0.1 && abs(layout.pitch - layout.columnWidth - 5) < 0.1)
         // Baseline at y 600 of the window and full columns 340 tall.
         #expect(abs(layout.plot.maxY - (600 - 108)) < 1.5 && abs(layout.plot.height - 340) < 1.5)
-        // A 480 disc, centred, sitting on the baseline.
-        #expect(abs(layout.disc.width - 480) < 1.5 && abs(layout.disc.midX - 720) < 0.5)
-        #expect(abs(layout.disc.maxY - layout.plot.maxY) < 0.01)
         // The mirror stays inside the scene.
         #expect(layout.plot.maxY + layout.mirrorGap + layout.plot.height * SpectrumBarsRenderer.mirrorShare < 676)
     }
@@ -42,28 +39,25 @@ import Testing
     func theRoomKeepsItsProportionsAtOtherWindows(_ size: CGSize) {
         let layout = SpectrumBarsRenderer.layout(size: size, count: 96, place: .room)
         #expect(layout.plot.minX >= 0 && layout.plot.maxX <= size.width)
-        #expect(layout.disc.minX >= 0 && layout.disc.maxX <= size.width && layout.disc.minY >= 0)
-        #expect(abs(layout.disc.maxY - layout.plot.maxY) < 0.001)
+        #expect(layout.plot.minY >= 0)
         // Proportions are the default window's, scaled: never stretched.
-        #expect(abs(layout.disc.width / layout.plot.height - 0.71 / 0.503) < 0.001)
+        #expect(abs(layout.plot.height / SpectrumBarsRenderer.roomUnit(size) - 0.503) < 0.001)
         #expect(layout.plot.maxY + 3 + layout.plot.height * 0.38 < size.height)
         #expect(abs(layout.columnWidth / layout.pitch - 6.0 / 11) < 0.001)
     }
 
     /// On the Now stage the columns run across the visual's width, 4 wide
-    /// with 3 between, with the darker disc to the right; once the text sits
-    /// below, the disc is centred and the baseline sits 40 pt above the text.
+    /// with 3 between; once the text sits below, the baseline sits 40 pt
+    /// above the text.
     @Test func theStageLayoutGlidesFromBesideToBelow() {
         let size = CGSize(width: 756, height: 420)
         let beside = SpectrumBarsRenderer.layout(size: size, count: 96, place: .stage(stacked: 0))
         #expect(beside.plot.minX == 0 && beside.plot.width == size.width)
         #expect(abs(beside.columnWidth / beside.pitch - 4.0 / 7) < 0.001)
         #expect(abs(beside.plot.maxY - 420 * 0.73) < 0.01)
-        #expect(beside.disc.midX > size.width / 2 && beside.disc.maxY == beside.plot.maxY)
         let below = SpectrumBarsRenderer.layout(size: size, count: 96, place: .stage(stacked: 1))
-        #expect(abs(below.plot.maxY - 380) < 0.01 && abs(below.disc.midX - size.width / 2) < 0.01)
+        #expect(abs(below.plot.maxY - 380) < 0.01)
         let halfway = SpectrumBarsRenderer.layout(size: size, count: 96, place: .stage(stacked: 0.5))
         #expect(halfway.plot.maxY > beside.plot.maxY && halfway.plot.maxY < below.plot.maxY)
-        #expect(halfway.disc.midX < beside.disc.midX && halfway.disc.midX > below.disc.midX)
     }
 }

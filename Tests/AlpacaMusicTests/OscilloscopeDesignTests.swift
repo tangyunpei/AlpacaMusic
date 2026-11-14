@@ -11,13 +11,14 @@ import Testing
         return VisualizationAudio(levels)
     }
 
-    /// In a 1440 x 940 window the room's scene is 1440 x 676: the disc is the
-    /// 540 pt one of the canvas frame, centred, and the trace runs well past it.
-    @Test func theScreenIsTheBarsDiscCentredInTheRoom() {
+    /// In a 1440 x 940 window the room's scene is 1440 x 676: full scale is
+    /// 82% of the Harmonograph disc's radius, and the trace runs well past it.
+    @Test func theTraceIsCentredOnTheRoomWithNoScreenOfItsOwn() {
         let layout = WaveformRenderer.layout(size: CGSize(width: 1440, height: 676))
-        #expect(abs(layout.disc.width - 540.8) < 0.5 && abs(layout.disc.midX - 720) < 0.01 && abs(layout.disc.midY - 338) < 0.01)
+        let harmonograph = HarmonographSongFigure.layout(size: CGSize(width: 1440, height: 676))
+        #expect(abs(layout.plot.midX - 720) < 0.01 && abs(layout.plot.midY - 338) < 0.01)
         #expect(abs(layout.plot.width / 2 - 525.6) < 0.5)
-        #expect(abs(layout.plot.height / 2 - 0.82 * layout.disc.width / 2) < 0.01)
+        #expect(abs(layout.plot.height / 2 - 0.82 * harmonograph.disc.width / 2) < 0.01)
         #expect(layout.plot.minX > 0 && layout.plot.maxX + 22 < 1440)
         #expect(WaveformRenderer.stroke == 1.6)
     }

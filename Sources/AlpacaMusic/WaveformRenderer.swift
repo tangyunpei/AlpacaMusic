@@ -40,22 +40,20 @@ enum WaveformRenderer {
     static let stroke: CGFloat = 1.6
 
     struct Layout: Equatable, Sendable {
-        /// The disc from Spectrum bars: the oscilloscope's screen.
-        var disc: CGRect
         /// The trace runs across this rect: its middle is the centre line and
         /// its top and bottom are full scale.
         var plot: CGRect
     }
 
-    /// Centred on the scene: a disc of 40% of the height (at most 24% of the
-    /// width) as radius, and a trace about 1.95 radii to each side.
+    /// Centred on the scene, on the scale of the Harmonograph's disc: full
+    /// scale is 82% of a radius of 40% of the height (at most 24% of the
+    /// width), and the trace runs about 1.95 radii to each side.
     static func layout(size: CGSize) -> Layout {
         let width = max(0, size.width), height = max(0, size.height)
         let centre = CGPoint(x: width / 2, y: height / 2)
         let radius = min(height * 0.40, width * 0.24)
         let half = min(width * 0.365, radius * 1.95), full = radius * 0.82
-        return Layout(disc: CGRect(x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2),
-                      plot: CGRect(x: centre.x - half, y: centre.y - full, width: half * 2, height: full * 2))
+        return Layout(plot: CGRect(x: centre.x - half, y: centre.y - full, width: half * 2, height: full * 2))
     }
 
     /// A fixed +/-1 PCM scale leaves room for full-scale peaks and their stroke.
@@ -123,21 +121,17 @@ enum WaveformRenderer {
     }
 
     /// One trace of the measured samples (about 23 ms) at a fixed scale,
-    /// drawn on the room with the bars' dark disc as its screen and brighter
-    /// inside it. Small ticks mark half and full scale and each quarter of
+    /// drawn on the room with no screen of its own. Small ticks mark half and full scale and each quarter of
     /// the window, with no labels. The yellow dot marks where every trace
     /// starts: a rising crossing of the centre line. Soft-red ticks hold the
     /// widest swing of the last second or so. Before samples arrive, or in
     /// silence, the trace rests on its centre line.
     static func draw(in context: inout GraphicsContext, size: CGSize,
                      audio: VisualizationAudio, time _: Double, glow _: Bool,
-                     peak: Double = 0, place: EffectPlace = .room) {
+                     peak: Double = 0, place _: EffectPlace = .room) {
         let geometry = geometry(samples: audio.waveform, available: audio.available, size: size)
         guard !geometry.points.isEmpty else { return }
-        let layout = layout(size: size)
         let plot = geometry.plotRect
-        let disc = Path(ellipseIn: layout.disc)
-        context.fill(disc, with: .color(place == .room ? SpectrumBarsRenderer.roomDisc : SpectrumBarsRenderer.stageDisc))
 
         var rule = Path()
         rule.move(to: CGPoint(x: plot.minX, y: plot.midY)); rule.addLine(to: CGPoint(x: plot.maxX, y: plot.midY))
@@ -161,10 +155,7 @@ enum WaveformRenderer {
         }
         let style = StrokeStyle(lineWidth: stroke, lineCap: .round, lineJoin: .round)
         let trace = path(for: geometry)
-        context.stroke(trace, with: .color(paleBlue.opacity(0.42)), style: style)
-        var inside = context
-        inside.clip(to: disc)
-        inside.stroke(trace, with: .color(paleBlue.opacity(0.96)), style: style)
+        context.stroke(trace, with: .color(paleBlue.opacity(0.92)), style: style)
         context.fill(Path(ellipseIn: CGRect(x: plot.minX - 3.5, y: plot.midY - 3.5, width: 7, height: 7)), with: .color(yellow))
         let held = peak.isFinite ? min(1, max(0, peak)) : 0
         if held > 0.02 {
