@@ -225,7 +225,6 @@ struct SearchBackPathTests {
         #expect(model.trail == [.favorites])
         await until { !model.searchResults.held }
         let rows = model.searchResults.rows.map(\.id)
-        model.searchResults.scrollAnchor = "qq:2"
         model.searchResults.filter = .notSaved
         let album = try #require(model.libraryAlbumID(containing: first.id))
         model.open(.album(album))
@@ -235,7 +234,6 @@ struct SearchBackPathTests {
         model.goBack()
         #expect(model.destination == .search)
         #expect(model.searchResults.rows.map(\.id) == rows)
-        #expect(model.searchResults.scrollAnchor == "qq:2")
         #expect(model.searchResults.filter == .notSaved)
         #expect(model.query == "Morning")
         #expect(loader.pageRequests.isEmpty)

@@ -28,11 +28,17 @@ struct ContentView: View {
                         AppHeader(model: model)
                         HStack(spacing: 0) {
                             ZStack {
-                                if model.destination == .search {
-                                    // The results scroll on their own, so their place survives a visit to an album.
+                                // The results stay alive, hidden, under a page opened from them,
+                                // so Back finds them scrolled exactly where they were.
+                                if model.searchResults.active && (model.destination == .search || model.trail.contains(.search)) {
+                                    let shown = model.destination == .search
                                     SearchPageView(model: model)
+                                        .opacity(shown ? 1 : 0)
+                                        .allowsHitTesting(shown)
+                                        .accessibilityHidden(!shown)
                                         .transition(.opacity.combined(with: .offset(y: 7)))
-                                } else {
+                                }
+                                if model.destination != .search {
                                     ScrollView {
                                         Group {
                                             switch model.destination {

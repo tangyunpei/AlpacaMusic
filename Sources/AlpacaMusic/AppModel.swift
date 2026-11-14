@@ -195,6 +195,8 @@ final class AppModel {
         let libraryRevision: UInt64
     }
     var visibleTracks: [Track] {
+        // The results change without the library changing; they are not cached here.
+        if destination == .search { return searchResults.shownRows.map(\.track) }
         let key = VisibleTrackKey(destination: destination, filter: sourceFilter, libraryRevision: library.listingRevision)
         if let cached = visibleCache, cached.key == key { return cached.tracks }
         let base: [Track]
@@ -202,7 +204,6 @@ final class AppModel {
         case .favorites: base = library.tracks.filter { library.favorites.contains($0.id) }
         case .playlist: base = selectedPlaylist.map { library.tracks(withIDs: $0.trackIDs) } ?? []
         case .album: base = albumTracks
-        case .search: base = searchResults.shownRows.map(\.track)
         default: base = library.tracks
         }
         let result = sourceFilter.map { source in base.filter { $0.source == source } } ?? base

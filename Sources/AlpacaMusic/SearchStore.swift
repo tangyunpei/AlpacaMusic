@@ -38,8 +38,6 @@ final class SearchStore {
     /// "Not one singer?" was pressed: one card per spelling.
     var split = false
     var filter: SearchFilter = .all
-    /// The first row in view, so coming back lands at the same place.
-    var scrollAnchor: String?
     /// Fold everything but the songs away. Remembered.
     var songsOnly: Bool { didSet { preferences.set(songsOnly, forKey: Self.songsOnlyKey) } }
 
@@ -112,7 +110,7 @@ final class SearchStore {
         generation &+= 1
         tasks.forEach { $0.cancel() }; tasks = []
         term = ""; link = nil; sources = []; rows = []; held = false; preparing = false
-        shape = .songs; split = false; filter = .all; scrollAnchor = nil
+        shape = .songs; split = false; filter = .all
         library = []; firstPages = [:]
     }
 

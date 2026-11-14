@@ -49,7 +49,7 @@ private struct SearchPageBody: View, Animatable {
     var width: CGFloat
     var height: CGFloat
     var blend: SearchLayoutBlend
-    @State private var position = ScrollPosition(idType: String.self)
+    @State private var position = ScrollPosition()
 
     nonisolated var animatableData: SearchLayoutBlend {
         get { blend }
@@ -85,9 +85,8 @@ private struct SearchPageBody: View, Animatable {
                 .padding(.bottom, 24)
                 .frame(width: metrics.contentWidth, alignment: .topLeading)
             }
-            .scrollPosition($position, anchor: .top)
-            .onChange(of: position.viewID(type: String.self)) { _, id in if let id { store.scrollAnchor = id } }
-            .onAppear { if let anchor = store.scrollAnchor { position.scrollTo(id: anchor, anchor: .top) } }
+            .scrollPosition($position)
+            .onChange(of: store.filter) { _, _ in position.scrollTo(edge: .top) }
         }
         .padding(.horizontal, SearchLayout.sidePadding)
         .frame(width: width, height: height, alignment: .topLeading)
@@ -196,7 +195,7 @@ private struct SearchSourceBar: View {
         let store = model.searchResults
         let selected = store.filter == filter
         let ink = failed ? failureInk : selected ? palette.accent : palette.secondary
-        return Button { store.filter = filter; store.scrollAnchor = nil } label: {
+        return Button { store.filter = filter } label: {
             HStack(spacing: 6) {
                 if let mark { PlatformMark(source: mark) }
                 Text(title).foregroundStyle(ink)
@@ -519,8 +518,9 @@ private struct SearchSongList: View {
             if store.held || (store.rows.isEmpty && store.searching) {
                 header.padding(.top, 14)
                 ForEach(0..<7, id: \.self) { SkeletonRow(index: $0) }
-            } else if store.rows.isEmpty, store.link == nil {
-                SearchNothingFound(model: model)
+            } else if store.rows.isEmpty {
+                // A pasted link stands alone; anything else found nothing.
+                if store.link == nil { SearchNothingFound(model: model) }
             } else {
                 if store.noLinkedService { NoLinkedServiceLine(model: model).padding(.top, 14) }
                 header.padding(.top, 14)
@@ -529,7 +529,6 @@ private struct SearchSongList: View {
                         SearchSongRow(model: model, row: row, index: index, queue: tracks, metrics: metrics)
                     }
                 }
-                .scrollTargetLayout()
                 if rows.isEmpty, !store.rows.isEmpty {
                     Text(store.filter == .notSaved ? L10n.string("这里的歌曲都已在你的音乐库中。") : L10n.string("这个筛选下没有歌曲。"))
                         .font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.vertical, 24)
