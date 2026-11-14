@@ -163,4 +163,27 @@ import Testing
         #expect(paused.audio.bassWaveform == reformatted.audio.bassWaveform)
     }
 
+
+    /// Effects get the analyser's reading beside the eased one: a hit is in
+    /// `measured` on the frame it arrives, while `audio` is still rising.
+    @Test func effectsGetTheMeasuredLevelsBesideTheEasedOnes() {
+        let clock = VisualizationClock(), start = Date(timeIntervalSince1970: 0)
+        let quiet = AudioLevels(spectrum: [0.1, 0.1], available: true, amplitude: 0.1, bass: 0.1, mid: 0.1, treble: 0.1,
+                                sampleRate: 44_100, spectrumBinWidth: 44_100.0 / 2_048)
+        _ = clock.frame(at: start, animated: true, levels: quiet, playing: true)
+        _ = clock.frame(at: start.addingTimeInterval(1.0 / 60), animated: true, levels: quiet, playing: true)
+        var hit = quiet; hit.bass = 0.9; hit.mid = 0.6; hit.treble = 0.3; hit.amplitude = 0.8; hit.spectrum = [0.9, 0.2]
+        let frame = clock.frame(at: start.addingTimeInterval(2.0 / 60), animated: true, levels: hit, playing: true)
+        #expect(frame.measured.bass == Double(Float(0.9)) && frame.measured.mid == Double(Float(0.6)))
+        #expect(frame.measured.treble == Double(Float(0.3)) && frame.measured.amplitude == Double(Float(0.8)))
+        #expect(frame.measured.spectrum == [0.9, 0.2].map { Double(Float($0)) })
+        #expect(frame.audio.bass < 0.5 && frame.audio.bass > 0.1)
+        // A frozen frame keeps the reading it froze on.
+        let frozen = clock.frame(at: start.addingTimeInterval(1), animated: false, levels: quiet, playing: true)
+        #expect(frozen.measured.bass == frame.measured.bass && frozen.audio.bass == frame.audio.bass)
+        // A new song starts from nothing.
+        clock.resetSignal()
+        let after = clock.frame(at: start.addingTimeInterval(2), animated: false, levels: AudioLevels(), playing: true)
+        #expect(!after.measured.available)
+    }
 }

@@ -141,8 +141,13 @@ struct MusicVisualizationView: View {
 
 struct VisualizationFrame {
     var time: Double
+    /// The levels eased at 12 a second, for effects that want a steady picture.
     var audio: VisualizationAudio
     var spectrumBars: SpectrumBarsPresentation = .empty
+    /// The levels exactly as the analyser last measured them, before any
+    /// easing, for effects that answer a hit as it arrives. A frozen frame
+    /// holds the reading it was frozen on.
+    var measured = VisualizationAudio()
 }
 
 /// Timeline dates resume after pauses, while this clock only advances on active
@@ -151,12 +156,16 @@ struct VisualizationFrame {
     private var previousDate: Date?
     private var time = 0.0
     private var smoothed = VisualizationAudio()
+    private var measured = VisualizationAudio()
     private var barsClock = SpectrumBarsMotionClock()
     private var barsPresentation = SpectrumBarsPresentation.empty
 
     func resetFrameDate() { previousDate = nil }
     func resetSpectrumBars() { barsClock.reset(); barsPresentation = .empty }
-    func resetSignal() { previousDate = nil; smoothed = VisualizationAudio(); barsClock.reset(); barsPresentation = .empty }
+    func resetSignal() {
+        previousDate = nil; smoothed = VisualizationAudio(); measured = VisualizationAudio()
+        barsClock.reset(); barsPresentation = .empty
+    }
 
     func frame(at date: Date, animated: Bool, levels: AudioLevels, playing: Bool,
                captureStaticSignal: Bool = false, spectrumBarsActive: Bool = false) -> VisualizationFrame {
@@ -171,19 +180,21 @@ struct VisualizationFrame {
                 if !initial.available || !smoothed.available || smoothed.sampleRate != initial.sampleRate
                     || smoothed.spectrumBinWidth != initial.spectrumBinWidth || smoothed.waveformDuration != initial.waveformDuration {
                     smoothed = initial
+                    measured = initial
                     if spectrumBarsActive { barsPresentation = barsClock.step(dt: 0, audio: initial, resetInput: true) }
                 }
             }
-            return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation)
+            return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation, measured: measured)
         }
         let dt = previousDate.map { min(0.08, max(0, date.timeIntervalSince($0))) } ?? 0
         previousDate = date
         time += dt
         let incoming = VisualizationAudio(levels, playing: playing)
+        measured = incoming
         if spectrumBarsActive { barsPresentation = barsClock.step(dt: dt, audio: incoming) }
         guard incoming.available else {
             smoothed = incoming
-            return VisualizationFrame(time: time, audio: incoming, spectrumBars: barsPresentation)
+            return VisualizationFrame(time: time, audio: incoming, spectrumBars: barsPresentation, measured: incoming)
         }
         let follow = 1 - exp(-dt * 12)
         smoothed.energy += (incoming.energy - smoothed.energy) * follow
@@ -213,7 +224,7 @@ struct VisualizationFrame {
         }
         smoothed.spectrumBinWidth = incoming.spectrumBinWidth
         smoothed.available = true
-        return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation)
+        return VisualizationFrame(time: time, audio: smoothed, spectrumBars: barsPresentation, measured: incoming)
     }
 }
 
