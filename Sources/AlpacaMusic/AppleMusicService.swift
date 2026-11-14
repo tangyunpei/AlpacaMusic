@@ -52,6 +52,8 @@ struct AppleMusicPlaybackSnapshot: Sendable {
     func requestAuthorization() async -> MusicAuthorization.Status
     func subscription() async throws -> AppleMusicCapabilities
     func search(_ query: String) async throws -> [Track]
+    /// One page of catalog songs, `offset` songs into the results.
+    func search(_ query: String, offset: Int) async throws -> [Track]
     func librarySongs(validate: @MainActor () throws -> Void, progress: @MainActor (ImportProgress) -> Void) async throws -> [Track]
     func libraryPlaylists(validate: @MainActor () throws -> Void) async throws -> [AppleMusicLibraryPlaylist]
     func libraryTracks(in playlist: AppleMusicLibraryPlaylist, validate: @MainActor () throws -> Void,
@@ -235,6 +237,22 @@ final class AppleMusicService {
         guard generation == token else { throw CancellationError() }
         return tracks
     }
+    /// A later page of the same catalog search, for "More songs". The search
+    /// above stays as it is for lyric matching.
+    func searchPage(_ query: String, offset: Int) async throws -> [Track] {
+        try requireAccess()
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines); guard !term.isEmpty else { return [] }
+        let token = generation
+        let tracks: [Track]
+        do { tracks = try await adapter.search(term, offset: max(0, offset)) }
+        catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw AppleMusicErrorMessage.readable(error)
+        }
+        try Task.checkCancellation(); try requireAccess()
+        guard generation == token else { throw CancellationError() }
+        return tracks
+    }
     func validateLibrarySession(_ id: UUID) throws {
         try Task.checkCancellation()
         guard generation == id else { throw CancellationError() }
@@ -363,6 +381,12 @@ final class AppleMusicService {
     }
     func search(_ query: String) async throws -> [Track] {
         var request = MusicCatalogSearchRequest(term: query, types: [Song.self]); request.limit = AppleMusicService.catalogSearchLimit
+        let result = try await request.response()
+        return result.songs.map { Self.catalogTrack($0) }
+    }
+    func search(_ query: String, offset: Int) async throws -> [Track] {
+        var request = MusicCatalogSearchRequest(term: query, types: [Song.self])
+        request.limit = AppleMusicService.catalogSearchLimit; request.offset = offset
         let result = try await request.response()
         return result.songs.map { Self.catalogTrack($0) }
     }
