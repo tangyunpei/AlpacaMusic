@@ -82,7 +82,7 @@ struct MusicVisualizationView: View {
         switch mode {
         case .harmonograph:
             HarmonographStage(isPlaying: isPlaying, isActive: scenePhase == .active, reduceMotion: reduceMotion,
-                              lowPower: lowPower, glow: settings.glow, seed: Artwork.seed(for: track), trackID: track?.id,
+                              lowPower: lowPower, seed: Artwork.seed(for: track), trackID: track?.id, place: place,
                               signal: { track?.source.supportsAudioAnalysis != false ? signal() : AudioLevels() })
         case .spectralHorizon:
             SpectralHorizonStage(isPlaying: isPlaying, isActive: scenePhase == .active, reduceMotion: reduceMotion,
