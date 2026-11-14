@@ -332,22 +332,25 @@ private struct SkeletonBand: View {
     }
 }
 
-/// The singer's picture when a service gave one, else the initial.
+/// The singer's picture when a service gave one, else the initial, in a
+/// square with rounded corners (the owner's call, 14 November).
 struct SingerAvatar: View {
     @Environment(\.appPalette) private var palette
     var name: String
     var size: CGFloat
     var pictureURL: URL? = nil
+    private var radius: CGFloat { (size * 0.14).rounded() }
     var body: some View {
         ZStack {
             Text(verbatim: String(name.prefix(1)).uppercased())
                 .font(.system(size: size * 0.4, weight: .light)).foregroundStyle(palette.secondary)
                 .frame(width: size, height: size)
-                .background(LinearGradient(colors: [palette.raised, palette.panel], startPoint: .topLeading, endPoint: .bottomTrailing), in: .circle)
+                .background(LinearGradient(colors: [palette.raised, palette.panel], startPoint: .topLeading, endPoint: .bottomTrailing),
+                            in: .rect(cornerRadius: radius))
             if let pictureURL {
                 ArtworkView(track: Track(id: "singer:\(pictureURL.absoluteString)", title: name, artist: name, album: "", duration: 0,
-                                         source: .netease, artworkURL: pictureURL), radius: size / 2)
-                    .frame(width: size, height: size).clipShape(.circle)
+                                         source: .netease, artworkURL: pictureURL), radius: radius)
+                    .frame(width: size, height: size)
             }
         }
         .accessibilityHidden(true)
@@ -440,12 +443,15 @@ private struct SingerBandCards: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 14) {
-                    SingerAvatar(name: card.names.first ?? "", size: 52, pictureURL: singer.pictureURL)
-                    VStack(alignment: .leading, spacing: 4) {
+                // The picture stands at the right of the name (the owner's call, 14 November).
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Eyebrow(text: L10n.string("歌手"))
                         SingerName(card: card, size: 21)
                     }
+                    .padding(.top, 4)
+                    Spacer(minLength: 0)
+                    SingerAvatar(name: card.names.first ?? "", size: 60, pictureURL: singer.pictureURL)
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .leading, spacing: 5) {
